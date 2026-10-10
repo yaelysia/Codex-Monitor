@@ -48,7 +48,7 @@ def safe_cwd(value):
 def normalize_title(value):
     if not isinstance(value, str):
         return None
-    title = ' '.join(re.sub(r'[\\x00-\\x1f\\x7f]', ' ', value).split())
+    title = ' '.join(re.sub(r'[\x00-\x1f\x7f]', ' ', value).split())
     return title[:180] + ('…' if len(title) > 180 else '') if title else None
 
 
