@@ -4,6 +4,14 @@ import type { Settings } from '../src/shared/types';
 import { readSettings, writeSettings } from './config';
 import { listWslDistros, refresh } from './collector';
 
+// Windows can crash its Chromium GPU child during sandbox startup (Electron #51761).
+// Opt-in workaround only: disabling the GPU sandbox weakens process isolation.
+// Apply this before app.whenReady() so Chromium child processes see the switch.
+if (process.platform === 'win32' && process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX === '1') {
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  console.warn('[Codex Monitor] GPU sandbox disabled by CODEX_MONITOR_DISABLE_GPU_SANDBOX=1');
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1150, height: 760, minWidth: 820, minHeight: 500,
