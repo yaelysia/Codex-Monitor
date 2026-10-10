@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings } from '../shared/types';
+import { groupByExecutionLocation, type WorkspaceGroup } from '../shared/grouping';
 
 const STATUS: Record<SessionStatus, { text: string; className: string }> = {
   working: { text: '可能执行中', className: 'working' },
@@ -26,6 +27,50 @@ function workspaceName(path: string | null): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
 function describeError(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+
+
+function SessionRow({ item, now, grouped = false }: { item: SessionRecord; now: number; grouped?: boolean }) {
+  return <tr>
+    <td>
+      <div className="session-title" title={item.title || '未命名会话'}>{item.title || '未命名会话'}</div>
+      {!grouped && <div className="workspace-path" title={item.workspace || '会话未记录 cwd'}>
+        <span>{item.workspace || '未记录工作目录'}</span>
+        {item.workspace && <button className="copy-button" title="复制工作目录" onClick={() => void window.monitorApi.copyWorkspace(item.workspace!)}>复制</button>}
+      </div>}
+      <div className="session-id">{item.id}</div>
+    </td>
+    {!grouped && <td><span className="source-name">{item.sourceLabel}</span></td>}
+    <td><span className={`status ${STATUS[item.status].className}`} title={item.statusReason}>
+      <span className="status-dot"/>{STATUS[item.status].text}</span></td>
+    <td><span className="activity" title={formatTime(item.updatedAt)}>{ageText(item.updatedAt, now)}</span>
+      <span className="timestamp">{formatTime(item.updatedAt)}</span></td>
+  </tr>;
+}
+
+function WorkspaceSection({ group, now }: { group: WorkspaceGroup; now: number }) {
+  const [expanded, setExpanded] = useState(group.working > 0 || group.waiting > 0);
+  useEffect(() => { if (group.working > 0 || group.waiting > 0) setExpanded(true); }, [group.working, group.waiting]);
+  return <section className="workspace-group">
+    <button type="button" className="workspace-group-head" aria-expanded={expanded}
+      onClick={() => setExpanded(value => !value)}>
+      <span className="workspace-ident">
+        <span className="workspace-name">{workspaceName(group.workspace)}</span>
+        <span className="workspace-group-path" title={group.workspace || ''}>{group.workspace || '未记录工作目录'}</span>
+      </span>
+      <span className="workspace-group-info">{group.sessions.length} 个会话
+        {group.working > 0 && <span className="group-active"> · {group.working} 可能执行中</span>}
+        {group.waiting > 0 && <span className="group-waiting"> · {group.waiting} 待处理</span>}
+      </span>
+      <span className="expand-mark" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+    </button>
+    {expanded && <div className="workspace-group-body">
+      <table className="grouped-table">
+        <thead><tr><th>会话标题</th><th>状态</th><th>最后活动</th></tr></thead>
+        <tbody>{group.sessions.map(session => <SessionRow key={session.key} item={session} now={now} grouped />)}</tbody>
+      </table>
+    </div>}
+  </section>;
+}
 
 function SettingsPanel({ config, onClose, onSave }: {
   config: ConfigResponse;
@@ -108,6 +153,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SessionStatus | 'all'>('all');
+  const [view, setView] = useState<'list' | 'locations'>('list');
   const [recentOnly, setRecentOnly] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -140,8 +186,9 @@ export default function App() {
     if (filter !== 'all' && session.status !== filter) return false;
     if (recentOnly && now - session.updatedAt > LAST_WEEK_MS) return false;
     const term = query.trim().toLowerCase();
-    return !term || `${session.id} ${session.workspace || ''} ${session.sourceLabel}`.toLowerCase().includes(term);
+    return !term || `${session.id} ${session.title || ''} ${session.workspace || ''} ${session.sourceLabel}`.toLowerCase().includes(term);
   }), [allSessions, query, filter, recentOnly, now]);
+  const grouped = useMemo(() => groupByExecutionLocation(shown), [shown]);
   const counts = useMemo(() => ({
     total: allSessions.length,
     working: allSessions.filter(s => s.status === 'working').length,
@@ -169,7 +216,14 @@ export default function App() {
     </header>
 
     <main>
-      <section className="intro"><div><h2>会话总览</h2><p>所有环境的 Codex 会话、工作目录与当前可推断状态。</p></div>
+      <nav className="view-tabs" aria-label="会话视图">
+        <button type="button" aria-current={view === 'list' ? 'page' : undefined}
+          className={view === 'list' ? 'view-tab selected' : 'view-tab'} onClick={() => setView('list')}>全部会话</button>
+        <button type="button" aria-current={view === 'locations' ? 'page' : undefined}
+          className={view === 'locations' ? 'view-tab selected' : 'view-tab'} onClick={() => setView('locations')}>按执行位置分组</button>
+      </nav>
+      <section className="intro"><div><h2>{view === 'list' ? '会话总览' : '执行位置'}</h2>
+        <p>{view === 'list' ? '所有环境的 Codex 会话、标题、工作目录与当前可推断状态。' : '先按执行机器，再按完整工作目录分组；相同项目名不会跨机器合并。'}</p></div>
         <span className="scan-time">{scan ? `最后扫描 ${formatTime(scan.scannedAt)}` : '尚未完成扫描'}</span>
       </section>
 
@@ -205,26 +259,25 @@ export default function App() {
             <input className="search" aria-label="搜索会话" value={query} placeholder="搜索路径 / 机器 / ID" onChange={e => setQuery(e.target.value)}/>
           </div>
         </div>
-        <div className="table-scroll">
-          <table><thead><tr><th>会话 / 工作目录</th><th>来源</th><th>状态</th><th>最后活动</th></tr></thead>
-            <tbody>{shown.map(item => <tr key={item.key}>
-              <td><div className="workspace-title" title={item.workspace || ''}>{workspaceName(item.workspace)}</div>
-                <div className="workspace-path" title={item.workspace || '会话未记录 cwd'}>
-                  <span>{item.workspace || '未记录 cwd'}</span>
-                  {item.workspace && <button className="copy-button" title="复制工作目录" onClick={() => void window.monitorApi.copyWorkspace(item.workspace!)}>复制</button>}
-                </div>
-                <div className="session-id">{item.id}</div>
-              </td>
-              <td><span className="source-name">{item.sourceLabel}</span></td>
-              <td><span className={`status ${STATUS[item.status].className}`} title={item.statusReason}>
-                <span className="status-dot"/>{STATUS[item.status].text}</span></td>
-              <td><span className="activity" title={formatTime(item.updatedAt)}>{ageText(item.updatedAt, now)}</span>
-                <span className="timestamp">{formatTime(item.updatedAt)}</span></td>
-            </tr>)}</tbody></table>
+        {view === 'list' ? <div className="table-scroll">
+          <table><thead><tr><th>会话标题 / 工作目录</th><th>来源</th><th>状态</th><th>最后活动</th></tr></thead>
+            <tbody>{shown.map(item => <SessionRow key={item.key} item={item} now={now} />)}</tbody>
+          </table>
           {shown.length === 0 && <div className="empty-state"><h3>{busy && !scan ? '扫描进行中…' : '没有匹配的会话'}</h3>
             <p>{scan ? '可调整筛选条件，或在数据源设置中检查 CODEX_HOME / SSH 配置。' : '首次扫描需要读取本地、WSL 和远程服务器的会话索引。'}</p>
           </div>}
-        </div>
+        </div> : <div className="location-scroll">
+          {grouped.map(location => <section key={location.sourceId} className="location-group">
+            <header className="location-heading">
+              <div><h3>{location.sourceLabel}</h3><span>{location.workspaces.length} 个工作目录 · {location.count} 个会话</span></div>
+              {location.working > 0 && <span className="group-active">{location.working} 可能执行中</span>}
+            </header>
+            <div className="location-workspaces">
+              {location.workspaces.map(workspace => <WorkspaceSection key={workspace.key} group={workspace} now={now} />)}
+            </div>
+          </section>)}
+          {grouped.length === 0 && <div className="empty-state"><h3>没有匹配的会话</h3><p>可调整状态、最近 7 天或搜索筛选条件。</p></div>}
+        </div>}
         <div className="panel-footer"><span>显示 {shown.length} / {allSessions.length} 个会话 · 每个来源最多读取最近 200 条</span>
           <span>每 12 秒刷新 · 状态依据日志事件推断</span></div>
       </section>
