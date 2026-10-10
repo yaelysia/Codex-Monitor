@@ -12,6 +12,7 @@ export default defineConfig({
     build: { rollupOptions: { input: { index: resolve(__dirname, 'electron/preload.ts') } } },
   },
   renderer: {
+    base: './',
     root: 'src/renderer',
     plugins: [react()],
     build: { rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html') } } },
