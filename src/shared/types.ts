@@ -8,6 +8,8 @@ export interface SessionRecord {
   sourceId: string;
   sourceLabel: string;
   workspace: string | null;
+  /** Codex's user-facing thread name or title, with a first-user-message fallback. */
+  title: string | null;
   status: SessionStatus;
   /** User-facing evidence; no transcript contents are exposed. */
   statusReason: string;

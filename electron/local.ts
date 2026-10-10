@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionRecord } from '../src/shared/types';
-import { extractSessionId, extractWorkspace, inferStatus } from './rollout';
+import { extractFirstUserTitle, extractSessionId, extractWorkspace, inferStatus } from './rollout';
+import { enrichLocalTitles } from './titles';
 
 const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 192 * 1024;
@@ -106,13 +107,15 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
         state = inferStatus(extended.text, mtime, now, extended.clipped);
       }
       return { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
-        ...state, updatedAt: mtime, byteSize: size, startedAt: null };
+        title: extractFirstUserTitle(head), ...state, updatedAt: mtime, byteSize: size, startedAt: null };
     } catch { return null; } // rollover, deletion, permissions, partial writes
   });
   const seen = new Set<string>();
-  return sessions.filter((s): s is SessionRecord => {
+  const unique = sessions.filter((s): s is SessionRecord => {
     if (!s || seen.has(s.id)) return false;
     seen.add(s.id);
     return true;
   });
+  await enrichLocalTitles(root, unique);
+  return unique;
 }

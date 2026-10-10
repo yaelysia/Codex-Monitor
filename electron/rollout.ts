@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { SessionStatus } from '../src/shared/types';
+import { normalizeTitle } from './titles';
 
 const ACTIVE_WINDOW_MS = 90_000;
 const WAIT_WINDOW_MS = 10 * 60_000;
@@ -53,6 +54,28 @@ export function extractWorkspace(head: string, tail: string): string | null {
     if (row.type === 'turn_context') workspace = safeCwd(object(row.payload)?.cwd) ?? workspace;
   }
   return workspace;
+}
+
+/** First user prompt is a fallback if Codex's SQLite/name index has no title. */
+export function extractFirstUserTitle(head: string): string | null {
+  let responseItemTitle: string | null = null;
+  for (const row of jsonlRows(head, false)) {
+    const payload = object(row.payload);
+    if (row.type === 'event_msg' && payload?.type === 'user_message') {
+      const title = normalizeTitle(payload.message);
+      if (title) return title;
+    }
+    if (row.type === 'response_item' && payload?.type === 'message' && payload.role === 'user') {
+      const content = payload.content;
+      if (typeof content === 'string') responseItemTitle ??= normalizeTitle(content);
+      if (Array.isArray(content)) {
+        const text = content.filter(item => object(item)?.type === 'input_text')
+          .map(item => object(item)?.text).filter((item): item is string => typeof item === 'string').join(' ');
+        responseItemTitle ??= normalizeTitle(text);
+      }
+    }
+  }
+  return responseItemTitle;
 }
 
 export function extractSessionId(head: string, filename: string): string {

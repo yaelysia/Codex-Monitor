@@ -8,7 +8,7 @@ function source(session: SessionRecord): SourceResult {
 function record(id: string, updatedAt: number, byteSize: number): SessionRecord {
   return {
     key: `ssh:test:${id}`, id, sourceId: 'ssh:test', sourceLabel: 'Linux',
-    workspace: '/tmp/example', status: 'unknown', statusReason: 'none',
+    workspace: '/tmp/example', title: null, status: 'unknown', statusReason: 'none',
     updatedAt, byteSize, startedAt: null,
   };
 }

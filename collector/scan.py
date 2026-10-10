@@ -7,9 +7,12 @@ import base64
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 from pathlib import Path
+
+INDEX_TAIL_BYTES = 2 * 1024 * 1024
 
 HEAD_BYTES = 128 * 1024
 TAIL_BYTES = 192 * 1024
@@ -40,6 +43,106 @@ def rows(text, clipped=False):
 def safe_cwd(value):
     return value if isinstance(value, str) and value.strip() else None
 
+
+
+def normalize_title(value):
+    if not isinstance(value, str):
+        return None
+    title = ' '.join(value.split())
+    return title[:180] + ('…' if len(title) > 180 else '') if title else None
+
+
+def title_from_head(head):
+    fallback = None
+    for row in rows(head):
+        payload = row.get('payload')
+        if not isinstance(payload, dict):
+            continue
+        if row.get('type') == 'event_msg' and payload.get('type') == 'user_message':
+            title = normalize_title(payload.get('message'))
+            if title:
+                return title
+        if row.get('type') == 'response_item' and payload.get('type') == 'message' and payload.get('role') == 'user':
+            content = payload.get('content')
+            if isinstance(content, str):
+                fallback = fallback or normalize_title(content)
+            elif isinstance(content, list):
+                text = ' '.join(part.get('text', '') for part in content
+                                if isinstance(part, dict) and part.get('type') == 'input_text'
+                                and isinstance(part.get('text'), str))
+                fallback = fallback or normalize_title(text)
+    return fallback
+
+
+def names_from_index(root, ids):
+    path = root / 'session_index.jsonl'
+    names = {}
+    try:
+        with path.open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            length = min(size, INDEX_TAIL_BYTES)
+            stream.seek(size - length)
+            lines = stream.read(length).decode('utf-8', errors='replace').splitlines()
+        if size > length:
+            lines = lines[1:]  # Discard potentially truncated JSONL row.
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            uid = entry.get('id')
+            if uid in ids and uid not in names:
+                name = normalize_title(entry.get('thread_name'))
+                if name:
+                    names[uid] = name
+    except OSError:
+        pass
+    return names
+
+
+def titles_from_state(root, ids):
+    path = root / 'state_5.sqlite'
+    if not path.is_file() or not ids:
+        return {}
+    conn = None
+    try:
+        conn = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=0.5)
+        columns = {row[1] for row in conn.execute('PRAGMA table_info(threads)')}
+        fields = [field for field in ('name', 'title', 'first_user_message', 'preview') if field in columns]
+        if 'id' not in columns or not fields:
+            return {}
+        values = list(ids)
+        found = {}
+        for start in range(0, len(values), 150):
+            batch = values[start:start + 150]
+            sql = 'SELECT id, ' + ', '.join(fields) + ' FROM threads WHERE id IN (' + ','.join('?' for _ in batch) + ')'
+            for row in conn.execute(sql, batch):
+                found[row[0]] = dict(zip(fields, row[1:]))
+        return found
+    except (sqlite3.Error, OSError, ValueError):
+        return {}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def enrich_titles(root, sessions):
+    ids = {session['id'] for session in sessions}
+    indexed = names_from_index(root, ids)
+    stored = titles_from_state(root, ids)
+    for session in sessions:
+        row = stored.get(session['id'], {})
+        session['title'] = (
+            normalize_title(row.get('name'))
+            or indexed.get(session['id'])
+            or normalize_title(row.get('title'))
+            or normalize_title(row.get('first_user_message'))
+            or normalize_title(row.get('preview'))
+            or session['title']
+        )
 
 def details(head, tail, filename, clipped, modified, now):
     session_id = None
@@ -101,6 +204,7 @@ def details(head, tail, filename, clipped, modified, now):
     return {
         'id': session_id,
         'workspace': cwd,
+        'title': title_from_head(head),
         'status': status,
         'statusReason': reason,
         'updatedAt': modified,
@@ -150,6 +254,7 @@ def scan(root, now=None, limit=MAX_RETURNED):
                 result.append(item)
         except (OSError, ValueError, UnicodeError):
             continue
+    enrich_titles(Path(root).expanduser().resolve(), result)
     return result
 
 

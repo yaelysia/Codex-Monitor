@@ -119,6 +119,7 @@ function normalizeRemote(rows: unknown, id: string, label: string): SessionRecor
       sourceId: id,
       sourceLabel: label,
       workspace: typeof entry.workspace === 'string' ? entry.workspace : null,
+      title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.slice(0, 181) : null,
       status: status === 'working' || status === 'waiting' || status === 'finished' ? status : 'unknown',
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
       updatedAt: entry.updatedAt,
