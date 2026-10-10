@@ -33,6 +33,35 @@ npm run dist:win
 
 The installer is saved under `release/`. CI also packages Windows installers as workflow artifacts.
 
+### Windows startup crash: GPU process isn't usable
+
+Some Windows installations have a Chromium/Electron GPU subprocess crash at startup
+(`exit_code=-2147483645`, `GPU process isn't usable`), as described in
+[Electron #51761](https://github.com/electron/electron/issues/51761).
+It can be triggered by problematic inherited ACL entries, but the error alone
+does not establish the cause.
+
+To test a **GPU-sandbox-only** workaround in PowerShell (not a global Electron
+sandbox disable):
+
+```powershell
+$env:CODEX_MONITOR_DISABLE_GPU_SANDBOX = "1"
+npm run dev
+```
+
+This must be set **before launching** Electron. The same environment variable
+works with the packaged `Codex Monitor.exe` when started from that shell.
+To return to normal behavior, close the app, then run
+`Remove-Item Env:CODEX_MONITOR_DISABLE_GPU_SANDBOX` and launch again.
+
+**Security:** This reduces Chromium GPU process isolation. The setting is
+opt-in and disabled by default. For a permanent environment fix, inspect the
+ACLs of the Electron executable and its parent directories, particularly
+inherited, unknown `S-1-15-2-*` entries. Back up permissions and identify
+the exact problem before making ACL changes; do not blindly run
+`icacls /reset /T` on your user profile or a shared programs directory.
+
+
 ## Configure sources
 
 - **Local Windows:** Automatically reads `%CODEX_HOME%/sessions` when the Electron process inherits `CODEX_HOME`; otherwise `%USERPROFILE%/.codex/sessions`. Override in **数据源设置** if needed.
