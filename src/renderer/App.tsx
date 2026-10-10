@@ -92,7 +92,13 @@ function SessionTable({ sessions, now, selectedKey, onSelect }: {
       <tbody>{sessions.map(item => <tr key={item.key} className={selectedKey === item.key ? 'is-selected' : ''}>
         <td><button type="button" className="table-title" onClick={() => onSelect(item)}>
           {item.title || '未命名会话'}</button>
-          <div className="mono table-path" title={item.workspace || '未记录工作目录'}>{item.workspace || '未记录工作目录'}</div>
+          <div className="table-path-line">
+            <span className="mono table-path" title={item.workspace || '未记录工作目录'}>{item.workspace || '未记录工作目录'}</span>
+            {item.workspace && <button type="button" className="table-copy" title="复制工作目录"
+              aria-label={'复制 ' + item.workspace}
+              onClick={() => { if (item.workspace) void window.monitorApi.copyWorkspace(item.workspace); }}>
+              <Icon name="copy" size={13}/></button>}
+          </div>
           <div className="mono session-identifier">{item.id}</div>
         </td>
         <td><span className="table-source">{item.sourceLabel}</span></td>
@@ -282,10 +288,10 @@ export default function App() {
     [allSessions, selectedKey]);
 
   useEffect(() => {
-    if (!allSessions.length) { setSelectedKey(null); return; }
-    if (selectedKey && allSessions.some(session => session.key === selectedKey)) return;
-    setSelectedKey((allSessions.find(session => session.status === 'working') ?? allSessions[0])?.key ?? null);
-  }, [allSessions, selectedKey]);
+    if (!shown.length) { setSelectedKey(null); setDetailOpen(false); return; }
+    if (selectedKey && shown.some(session => session.key === selectedKey)) return;
+    setSelectedKey((shown.find(session => session.status === 'working') ?? shown[0])?.key ?? null);
+  }, [shown, selectedKey]);
 
   const totals = useMemo(() => ({
     all: allSessions.length,

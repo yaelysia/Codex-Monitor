@@ -318,7 +318,7 @@ button svg { flex-shrink: 0; }
 .detail-header { height: 61px; flex-shrink: 0; padding: 0 21px; border-bottom: 1px solid #363849;
   display: flex; align-items: center; justify-content: space-between; color: #8d95af; font-size: 10px; letter-spacing: .1em; }
 .detail-close { border: 0; background: none; color: #9599b0; width: 28px; height: 28px;
-  display: grid; place-items: center; border-radius: 5px; }
+  display: none; place-items: center; border-radius: 5px; }
 .detail-close:hover { background: #303044; color: #edecf6; }
 .detail-content { padding: 26px 22px; }
 .detail-content h2 { margin: 0; font-size: 18px; font-weight: 670; line-height: 1.43; overflow-wrap: anywhere; }
@@ -380,6 +380,7 @@ button svg { flex-shrink: 0; }
     box-shadow: -20px 0 70px #06050dc2; border-left: 1px solid #5b536d;
   }
   .detail-panel.detail-open { display: flex; }
+  .detail-close { display: grid; }
   .detail-veil { display: block; position: fixed; inset: 0; z-index: 54; background: #05050aad; border: 0; }
   .page-heading h1 { font-size: 25px; }
   .main-scroll { padding: 24px; }
@@ -418,3 +419,8 @@ button svg { flex-shrink: 0; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+.table-path-line { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.table-path-line .table-path { flex: 1; min-width: 0; }
+.table-copy { border: 0; background: transparent; color: #a18fbe; border-radius: 5px; padding: 4px; display: inline-grid; place-items: center; }
+.table-copy:hover { background: #393049; color: #e5cfff; }
