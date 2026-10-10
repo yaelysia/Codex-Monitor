@@ -25,6 +25,10 @@ function workspaceKey(sourceId: string, workspace: string | null): string {
   return sourceId === 'local' ? normalized.toLocaleLowerCase() : normalized;
 }
 
+export function workspaceGroupKey(sourceId: string, workspace: string | null): string {
+  return sourceId + ':' + workspaceKey(sourceId, workspace);
+}
+
 /** Keeps identically named projects on different machines, or in different directories, separate. */
 export function groupByExecutionLocation(sessions: SessionRecord[]): ExecutionGroup[] {
   const sources = new Map<string, { group: ExecutionGroup; workspaces: Map<string, WorkspaceGroup> }>();

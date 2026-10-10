@@ -1,75 +1,138 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings } from '../shared/types';
-import { groupByExecutionLocation, type WorkspaceGroup } from '../shared/grouping';
+import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
+import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
 
-const STATUS: Record<SessionStatus, { text: string; className: string }> = {
-  working: { text: '可能执行中', className: 'working' },
-  waiting: { text: '可能待处理', className: 'waiting' },
-  finished: { text: '本轮已完成', className: 'finished' },
-  unknown: { text: '状态未知', className: 'unknown' },
+type View = 'board' | 'sessions' | 'locations';
+type GlyphName = 'grid' | 'list' | 'folder' | 'monitor' | 'server' | 'search' | 'refresh' | 'settings' |
+  'copy' | 'clock' | 'check' | 'alert' | 'close' | 'chevron-right' | 'chevron-down' | 'chevron-left' | 'activity' | 'sliders';
+
+const STATUS: Record<SessionStatus, { text: string; className: string; short: string }> = {
+  working: { text: '可能执行中', className: 'working', short: '执行中 · 推断' },
+  waiting: { text: '可能待处理', className: 'waiting', short: '待处理 · 推断' },
+  finished: { text: '本轮已完成', className: 'finished', short: '本轮完成' },
+  unknown: { text: '状态未知', className: 'unknown', short: '状态未知' },
 };
-const EMPTY: Settings = { localRoot: '', wslRoots: {}, remotes: [] };
 const REFRESH_MS = 12_000;
-const LAST_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_SIDEBAR_FOLDERS = 6;
+const BATCH_SIZE = 8;
 
+const ICONS: Record<GlyphName, ReactNode> = {
+  grid: <><rect x="3" y="3" width="7" height="7" rx="1.3"/><rect x="14" y="3" width="7" height="7" rx="1.3"/><rect x="3" y="14" width="7" height="7" rx="1.3"/><rect x="14" y="14" width="7" height="7" rx="1.3"/></>,
+  list: <><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01" strokeWidth="3" strokeLinecap="round"/></>,
+  folder: <path d="M3 7.5v11A2.5 2.5 0 0 0 5.5 21h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 7H12l-2.2-2H5.5A2.5 2.5 0 0 0 3 7.5Z"/>,
+  monitor: <><rect x="2.5" y="4" width="19" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></>,
+  server: <><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></>,
+  search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></>,
+  refresh: <><path d="M20 10a8 8 0 0 0-14.8-4M4 4v5h5M4 14a8 8 0 0 0 14.8 4M20 20v-5h-5"/></>,
+  settings: <><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></>,
+  sliders: <><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="16" cy="17" r="2"/></>,
+  copy: <><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></>,
+  clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+  check: <path d="m5 12 4.5 4.5L19 7"/>,
+  alert: <><path d="m12 3 9 16H3L12 3Z"/><path d="M12 9v4M12 17h.01"/></>,
+  close: <path d="M5 5 19 19M19 5 5 19"/>,
+  'chevron-right': <path d="m9 5 7 7-7 7"/>,
+  'chevron-down': <path d="m5 9 7 7 7-7"/>,
+  'chevron-left': <path d="m15 5-7 7 7 7"/>,
+  activity: <path d="M2 12h4l3-7 5 14 3-7h5"/>,
+};
+function Icon({ name, size = 16 }: { name: GlyphName; size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{ICONS[name]}</svg>;
+}
 function ageText(timestamp: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (seconds < 60) return `${seconds} 秒前`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
-  return `${Math.floor(seconds / 86400)} 天前`;
+  if (seconds < 60) return seconds + ' 秒前';
+  if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟前';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时前';
+  return Math.floor(seconds / 86400) + ' 天前';
 }
 function formatTime(value: number): string {
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(value);
+  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit',
+    minute: '2-digit', second: '2-digit' }).format(value);
 }
-function workspaceName(path: string | null): string {
-  if (!path) return '未记录工作目录';
-  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+function workspaceName(value: string | null): string {
+  if (!value) return '未记录目录';
+  return value.split(/[\\/]/).filter(Boolean).pop() || value;
 }
 function describeError(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
-
-function SessionRow({ item, now, grouped = false }: { item: SessionRecord; now: number; grouped?: boolean }) {
-  return <tr>
-    <td>
-      <div className="session-title" title={item.title || '未命名会话'}>{item.title || '未命名会话'}</div>
-      {!grouped && <div className="workspace-path" title={item.workspace || '会话未记录 cwd'}>
-        <span>{item.workspace || '未记录工作目录'}</span>
-        {item.workspace && <button className="copy-button" title="复制工作目录" onClick={() => void window.monitorApi.copyWorkspace(item.workspace!)}>复制</button>}
-      </div>}
-      <div className="session-id">{item.id}</div>
-    </td>
-    {!grouped && <td><span className="source-name">{item.sourceLabel}</span></td>}
-    <td><span className={`status ${STATUS[item.status].className}`} title={item.statusReason}>
-      <span className="status-dot"/>{STATUS[item.status].text}</span></td>
-    <td><span className="activity" title={formatTime(item.updatedAt)}>{ageText(item.updatedAt, now)}</span>
-      <span className="timestamp">{formatTime(item.updatedAt)}</span></td>
-  </tr>;
+function StatusPill({ status }: { status: SessionStatus }) {
+  return <span className={'status-pill status-' + status}>
+    <span className="status-dot" />{STATUS[status].text}
+  </span>;
 }
 
-function WorkspaceSection({ group, now }: { group: WorkspaceGroup; now: number }) {
+function SessionCard({ session, now, selected, onSelect }: {
+  session: SessionRecord; now: number; selected: boolean; onSelect: (session: SessionRecord) => void;
+}) {
+  return <button type="button" className={'task-card status-' + session.status + (selected ? ' is-selected' : '')}
+    aria-pressed={selected} onClick={() => onSelect(session)}>
+    <div className="task-topline">
+      <span className="task-source">{session.sourceLabel}</span>
+      <span className="task-age">{ageText(session.updatedAt, now)}</span>
+    </div>
+    <div className="task-title">{session.title || '未命名会话'}</div>
+    <div className="task-path" title={session.workspace || '未记录工作目录'}>{session.workspace || '未记录工作目录'}</div>
+    <div className="task-footer"><span className="task-state"><span className="status-dot" />{STATUS[session.status].short}</span>
+      <Icon name="chevron-right" size={15}/>
+    </div>
+  </button>;
+}
+
+function SessionTable({ sessions, now, selectedKey, onSelect }: {
+  sessions: SessionRecord[]; now: number; selectedKey: string | null;
+  onSelect: (session: SessionRecord) => void;
+}) {
+  return <div className="table-scroll">
+    <table className="session-table">
+      <thead><tr><th>会话标题 / 工作目录</th><th>执行位置</th><th>状态</th><th>最后活动</th></tr></thead>
+      <tbody>{sessions.map(item => <tr key={item.key} className={selectedKey === item.key ? 'is-selected' : ''}>
+        <td><button type="button" className="table-title" onClick={() => onSelect(item)}>
+          {item.title || '未命名会话'}</button>
+          <div className="mono table-path" title={item.workspace || '未记录工作目录'}>{item.workspace || '未记录工作目录'}</div>
+          <div className="mono session-identifier">{item.id}</div>
+        </td>
+        <td><span className="table-source">{item.sourceLabel}</span></td>
+        <td><StatusPill status={item.status}/></td>
+        <td><span className="table-age">{ageText(item.updatedAt, now)}</span>
+          <span className="table-date">{formatTime(item.updatedAt)}</span></td>
+      </tr>)}</tbody>
+    </table>
+    {!sessions.length && <EmptyState text="没有符合条件的会话" />}
+  </div>;
+}
+
+function WorkspaceSection({ group, now, selectedKey, onSelect }: {
+  group: WorkspaceGroup; now: number; selectedKey: string | null;
+  onSelect: (session: SessionRecord) => void;
+}) {
   const [expanded, setExpanded] = useState(group.working > 0 || group.waiting > 0);
-  useEffect(() => { if (group.working > 0 || group.waiting > 0) setExpanded(true); }, [group.working, group.waiting]);
-  return <section className="workspace-group">
-    <button type="button" className="workspace-group-head" aria-expanded={expanded}
-      onClick={() => setExpanded(value => !value)}>
-      <span className="workspace-ident">
-        <span className="workspace-name">{workspaceName(group.workspace)}</span>
-        <span className="workspace-group-path" title={group.workspace || ''}>{group.workspace || '未记录工作目录'}</span>
-      </span>
-      <span className="workspace-group-info">{group.sessions.length} 个会话
-        {group.working > 0 && <span className="group-active"> · {group.working} 可能执行中</span>}
-        {group.waiting > 0 && <span className="group-waiting"> · {group.waiting} 待处理</span>}
-      </span>
-      <span className="expand-mark" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
+  useEffect(() => { if (group.working || group.waiting) setExpanded(true); }, [group.working, group.waiting]);
+  return <section className="workspace-section">
+    <button type="button" className="workspace-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      <span className="workspace-identity"><strong>{workspaceName(group.workspace)}</strong>
+        <span className="mono truncate" title={group.workspace || ''}>{group.workspace || '未记录工作目录'}</span></span>
+      <span className="workspace-totals">{group.sessions.length} 会话{group.working ? ' · ' + group.working + ' 活动' : ''}</span>
+      <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16}/>
     </button>
-    {expanded && <div className="workspace-group-body">
-      <table className="grouped-table">
-        <thead><tr><th>会话标题</th><th>状态</th><th>最后活动</th></tr></thead>
-        <tbody>{group.sessions.map(session => <SessionRow key={session.key} item={session} now={now} grouped />)}</tbody>
-      </table>
-    </div>}
+    {expanded && <div className="workspace-rows">{group.sessions.map(item =>
+      <button key={item.key} type="button" className={'workspace-session' + (selectedKey === item.key ? ' is-selected' : '')}
+        onClick={() => onSelect(item)}>
+        <span className={'workspace-session-indicator status-' + item.status}/>
+        <span className="workspace-session-name">{item.title || '未命名会话'}</span>
+        <span className="workspace-session-time">{ageText(item.updatedAt, now)}</span>
+        <Icon name="chevron-right" size={14}/>
+      </button>
+    )}</div>}
   </section>;
+}
+
+function EmptyState({ text }: { text: string }) {
+  return <div className="empty-state"><Icon name="search" size={22}/><strong>{text}</strong>
+    <span>可调整搜索、时间范围或执行位置筛选。</span></div>;
 }
 
 function SettingsPanel({ config, onClose, onSave }: {
@@ -146,6 +209,8 @@ function SettingsPanel({ config, onClose, onSave }: {
   </div>;
 }
 
+
+
 export default function App() {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [scan, setScan] = useState<ScanResponse | null>(null);
@@ -153,136 +218,309 @@ export default function App() {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SessionStatus | 'all'>('all');
-  const [view, setView] = useState<'list' | 'locations'>('list');
   const [recentOnly, setRecentOnly] = useState(true);
+  const [view, setView] = useState<View>('board');
+  const [sourceId, setSourceId] = useState<string | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [expandedSources, setExpandedSources] = useState<string[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [laneLimit, setLaneLimit] = useState<Record<string, number>>({
+    working: BATCH_SIZE, other: BATCH_SIZE, finished: BATCH_SIZE,
+  });
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  const searchInput = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     try {
-      const response = await window.monitorApi.refresh();
-      if (mounted.current) { setScan(response); setError(''); setNow(Date.now()); }
-    } catch (err) { if (mounted.current) setError(describeError(err)); }
-    finally { inFlight.current = false; if (mounted.current) setBusy(false); }
+      const next = await window.monitorApi.refresh();
+      if (mounted.current) { setScan(next); setError(''); setNow(Date.now()); }
+    } catch (err) {
+      if (mounted.current) setError(describeError(err));
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setBusy(false);
+    }
   }, []);
 
   useEffect(() => {
     mounted.current = true;
-    window.monitorApi.getConfig().then(setConfig).catch(err => setError(describeError(err)));
+    window.monitorApi.getConfig().then(value => { if (mounted.current) setConfig(value); })
+      .catch(err => { if (mounted.current) setError(describeError(err)); });
     void refresh();
-    const timer = setInterval(() => void refresh(), REFRESH_MS);
-    const clock = setInterval(() => setNow(Date.now()), 5_000);
-    return () => { mounted.current = false; clearInterval(timer); clearInterval(clock); };
+    const scanTimer = setInterval(() => void refresh(), REFRESH_MS);
+    const clock = setInterval(() => setNow(Date.now()), 5000);
+    return () => { mounted.current = false; clearInterval(scanTimer); clearInterval(clock); };
   }, [refresh]);
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailOpen(false);
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchInput.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
 
   const allSessions = useMemo(() => (scan?.sources.flatMap(source => source.sessions) ?? [])
     .sort((a, b) => b.updatedAt - a.updatedAt), [scan]);
-  const shown = useMemo(() => allSessions.filter(session => {
-    if (filter !== 'all' && session.status !== filter) return false;
-    if (recentOnly && now - session.updatedAt > LAST_WEEK_MS) return false;
-    const term = query.trim().toLowerCase();
-    return !term || `${session.id} ${session.title || ''} ${session.workspace || ''} ${session.sourceLabel}`.toLowerCase().includes(term);
-  }), [allSessions, query, filter, recentOnly, now]);
-  const grouped = useMemo(() => groupByExecutionLocation(shown), [shown]);
-  const counts = useMemo(() => ({
-    total: allSessions.length,
-    working: allSessions.filter(s => s.status === 'working').length,
-    waiting: allSessions.filter(s => s.status === 'waiting').length,
-    errors: scan?.sources.filter(s => !!s.error).length ?? 0,
+  const sourceGroups = useMemo(() => groupByExecutionLocation(allSessions), [allSessions]);
+  const shown = useMemo(() => filterSessions(allSessions, {
+    query, status: filter, recentOnly, sourceId, workspaceId,
+  }, now), [allSessions, query, filter, recentOnly, sourceId, workspaceId, now]);
+  const groups = useMemo(() => groupByExecutionLocation(shown), [shown]);
+  const lanes = useMemo(() => makeStatusLanes(shown), [shown]);
+  const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
+    [allSessions, selectedKey]);
+
+  useEffect(() => {
+    if (!allSessions.length) { setSelectedKey(null); return; }
+    if (selectedKey && allSessions.some(session => session.key === selectedKey)) return;
+    setSelectedKey((allSessions.find(session => session.status === 'working') ?? allSessions[0])?.key ?? null);
+  }, [allSessions, selectedKey]);
+
+  const totals = useMemo(() => ({
+    all: allSessions.length,
+    working: allSessions.filter(item => item.status === 'working').length,
+    waiting: allSessions.filter(item => item.status === 'waiting').length,
+    finished: allSessions.filter(item => item.status === 'finished').length,
+    errors: scan?.sources.filter(source => source.error).length ?? 0,
   }), [allSessions, scan]);
+
+  const scopeSource = scan?.sources.find(source => source.id === sourceId);
+  const currentWorkspace = sourceGroups.flatMap(group => group.workspaces)
+    .find(group => group.key === workspaceId);
+  const title = view === 'board' ? '任务状态' : view === 'sessions' ? '全部会话' : '执行位置';
 
   async function saveSettings(settings: Settings) {
     const next = await window.monitorApi.setConfig(settings);
     setConfig(next);
-    // Do not restart a running refresh; the next cycle will use updated settings.
     await refresh();
   }
+  function selectScope(nextSource: string | null, nextWorkspace: string | null = null) {
+    setSourceId(nextSource);
+    setWorkspaceId(nextWorkspace);
+    setView('board');
+    setFilter('all');
+  }
+  function openSession(session: SessionRecord) {
+    setSelectedKey(session.key);
+    setDetailOpen(true);
+  }
+  function toggleSource(id: string) {
+    setExpandedSources(ids => ids.includes(id) ? ids.filter(entry => entry !== id) : [...ids, id]);
+  }
 
-  return <div className="app-shell">
-    <header className="app-header">
-      <div className="brand"><div className="brand-mark">C<span>·</span></div><div>
-        <h1>Codex Monitor</h1><p>跨环境会话监视器</p>
-      </div></div>
-      <div className="header-actions">
-        <span className="read-only"><span className="read-only-dot"/>只读模式</span>
-        <button className="secondary-button" onClick={() => setShowSettings(true)} disabled={!config}>数据源设置</button>
-        <button className="primary-button" onClick={() => void refresh()} disabled={busy}>{busy ? '扫描中…' : '↻ 刷新'}</button>
+  return <div className="monitor-layout">
+    <aside className="sidebar" aria-label="主导航和执行位置">
+      <div className="brand">
+        <div className="brand-mark">C<span>·</span></div>
+        <div><strong>Codex Monitor</strong><span>AGENT WORKSPACE</span></div>
       </div>
-    </header>
 
-    <main>
-      <nav className="view-tabs" aria-label="会话视图">
-        <button type="button" aria-current={view === 'list' ? 'page' : undefined}
-          className={view === 'list' ? 'view-tab selected' : 'view-tab'} onClick={() => setView('list')}>全部会话</button>
-        <button type="button" aria-current={view === 'locations' ? 'page' : undefined}
-          className={view === 'locations' ? 'view-tab selected' : 'view-tab'} onClick={() => setView('locations')}>按执行位置分组</button>
+      <nav className="primary-nav" aria-label="页面">
+        <span className="nav-caption">工作台</span>
+        {([
+          ['board', '任务状态', 'grid'],
+          ['sessions', '全部会话', 'list'],
+          ['locations', '执行位置', 'folder'],
+        ] as const).map(([id, label, icon]) => <button key={id} type="button"
+          className={'nav-item' + (view === id ? ' active' : '')} onClick={() => setView(id)}
+          aria-current={view === id ? 'page' : undefined}>
+          <Icon name={icon}/><span>{label}</span>
+          {id === 'sessions' && <span className="nav-count">{totals.all}</span>}
+        </button>)}
+        <button type="button" className="nav-item settings-entry" onClick={() => setShowSettings(true)}
+          disabled={!config}><Icon name="settings"/><span>数据源设置</span></button>
       </nav>
-      <section className="intro"><div><h2>{view === 'list' ? '会话总览' : '执行位置'}</h2>
-        <p>{view === 'list' ? '所有环境的 Codex 会话、标题、工作目录与当前可推断状态。' : '先按执行机器，再按完整工作目录分组；相同项目名不会跨机器合并。'}</p></div>
-        <span className="scan-time">{scan ? `最后扫描 ${formatTime(scan.scannedAt)}` : '尚未完成扫描'}</span>
-      </section>
 
-      <section className="summary" aria-label="统计">
-        <div className="stat"><span>会话总数</span><strong>{counts.total}</strong></div>
-        <div className="stat"><span className="stat-dot working"/> <span>可能执行中</span><strong>{counts.working}</strong></div>
-        <div className="stat"><span className="stat-dot waiting"/> <span>可能待处理</span><strong>{counts.waiting}</strong></div>
-        <div className="stat"><span>数据源异常</span><strong>{counts.errors}</strong></div>
-      </section>
+      <div className="source-tree" aria-label="数据源及工作目录">
+        <div className="source-heading"><span>执行位置</span>
+          <button type="button" className="icon-btn" title="清除位置筛选" aria-label="清除位置筛选"
+            onClick={() => selectScope(null)}><Icon name="refresh" size={14}/></button>
+        </div>
+        <button type="button" className={'tree-all' + (!sourceId ? ' active' : '')}
+          onClick={() => selectScope(null)}><Icon name="grid" size={15}/><span>所有位置</span>
+          <span className="tree-count">{totals.all}</span></button>
+        {scan?.sources.map(source => {
+          const group = sourceGroups.find(item => item.sourceId === source.id);
+          const folders = group?.workspaces ?? [];
+          const expanded = expandedSources.includes(source.id);
+          const visible = expanded ? folders : folders.slice(0, MAX_SIDEBAR_FOLDERS);
+          return <div className="source-node" key={source.id}>
+            <button type="button" className={'tree-source' + (sourceId === source.id && !workspaceId ? ' active' : '')}
+              onClick={() => selectScope(source.id)} title={source.error || source.label}>
+              <Icon name={source.kind === 'ssh' ? 'server' : 'monitor'} size={15}/>
+              <span className="tree-label">{source.label}</span>
+              <span className={'source-light ' + (source.error ? 'error' : 'ok')}/>
+              <span className="tree-count">{source.sessions.length}</span>
+            </button>
+            {visible.map(folder => <button type="button" key={folder.key}
+              title={folder.workspace || '未记录工作目录'}
+              className={'tree-folder' + (workspaceId === folder.key ? ' active' : '')}
+              onClick={() => selectScope(source.id, folder.key)}>
+              <Icon name="folder" size={14}/><span className="tree-label">{workspaceName(folder.workspace)}</span>
+              {folder.working > 0 && <span className="small-activity" title={folder.working + ' 个可能执行中的会话'}/>}
+              <span className="tree-count">{folder.sessions.length}</span>
+            </button>)}
+            {folders.length > MAX_SIDEBAR_FOLDERS && <button type="button" className="tree-more"
+              onClick={() => toggleSource(source.id)}>
+              {expanded ? '收起目录' : '更多 ' + (folders.length - MAX_SIDEBAR_FOLDERS) + ' 个目录'}
+              <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={13}/>
+            </button>}
+          </div>;
+        })}
+        {!scan && <div className="source-placeholder">正在发现 Windows、WSL 与 SSH…</div>}
+      </div>
+      <div className="sidebar-footer">
+        <span className="footer-state"><span className="live-dot"/>只读 · 本地运行</span>
+        <span>{scan ? formatTime(scan.scannedAt) : '尚未扫描'}</span>
+      </div>
+    </aside>
 
-      <section className="source-bar" aria-label="采集来源">
-        <span className="source-title">数据源</span>
-        {scan?.sources.map(source => <span key={source.id} className={`source-pill ${source.error ? 'source-error' : ''}`}
-          title={source.error || `${source.sessions.length} 个会话`}>
-          <span className="source-indicator"/>{source.label} <small>{source.error ? '连接失败' : source.sessions.length}</small>
-        </span>)}
-        {!scan && <span className="muted">正在发现数据源…</span>}
-      </section>
+    <main className="main-content">
+      <header className="topbar">
+        <div className="breadcrumbs">
+          <button type="button" onClick={() => selectScope(null)}>所有位置</button>
+          {scopeSource && <><Icon name="chevron-right" size={12}/>
+            <button type="button" onClick={() => selectScope(scopeSource.id)}>{scopeSource.label}</button></>}
+          {currentWorkspace && <><Icon name="chevron-right" size={12}/>
+            <span title={currentWorkspace.workspace || ''}>{workspaceName(currentWorkspace.workspace)}</span></>}
+        </div>
+        <div className="header-actions">
+          <span className="read-only-mark"><span className="live-dot"/>只读模式</span>
+          <button type="button" className="header-button" disabled={busy} onClick={() => void refresh()}>
+            <Icon name="refresh" size={15}/>{busy ? '扫描中…' : '刷新'}
+          </button>
+        </div>
+      </header>
 
-      {error && <div role="alert" className="alert">{error}</div>}
-      {scan?.sources.filter(s => s.error).map(s => <div role="alert" className="alert" key={s.id}>
-        <strong>{s.label}：</strong>{s.error}
-      </div>)}
-
-      <section className="data-panel">
-        <div className="toolbar">
-          <div className="filter-set" role="group" aria-label="运行状态筛选">
-            {([['all', '全部'], ['working', '可能执行中'], ['waiting', '待处理'], ['finished', '本轮完成'], ['unknown', '未知']] as const).map(([id, label]) =>
-              <button key={id} type="button" className={filter === id ? 'selected' : ''} onClick={() => setFilter(id)}>{label}</button>)}
+      <div className="main-scroll">
+        <div className="page-heading">
+          <div><span className="eyebrow">WORKSPACE / MONITOR</span>
+            <h1>{title}</h1>
+            <p>{view === 'board' ? '优先查看正在发生的工作；状态来自日志，可能并非实时进程状态。'
+              : view === 'sessions' ? '查看全部会话标题、执行位置、工作目录与状态。'
+              : '按实际执行机器和完整工作目录浏览会话。'}</p>
           </div>
-          <div className="toolbar-right">
-            <label className="check-field"><input type="checkbox" checked={recentOnly} onChange={e => setRecentOnly(e.target.checked)}/>近 7 天</label>
-            <input className="search" aria-label="搜索会话" value={query} placeholder="搜索路径 / 机器 / ID" onChange={e => setQuery(e.target.value)}/>
+          <div className="scan-meta"><span className={'scan-indicator' + (busy ? ' scanning' : '')}/>
+            {scan ? '最后扫描 ' + formatTime(scan.scannedAt) : '等待首次扫描'}</div>
+        </div>
+
+        <section className="metrics" aria-label="会话统计">
+          <div><strong>{totals.all}</strong><span>会话总数</span></div>
+          <div><strong className="positive">{totals.working}</strong><span>可能执行中</span></div>
+          <div><strong className="warm">{totals.waiting}</strong><span>可能待处理</span></div>
+          <div><strong>{scan?.sources.filter(source => !source.error).length ?? 0}</strong><span>有效数据源</span></div>
+        </section>
+
+        <div className="filterbar">
+          <div className="filter-tabs" role="group" aria-label="运行状态筛选">
+            {([['all', '全部'], ['working', '可能执行中'], ['waiting', '待处理'], ['finished', '本轮完成'], ['unknown', '未知']] as const)
+              .map(([id, label]) => <button type="button" key={id} className={filter === id ? 'active' : ''}
+                aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
+          </div>
+          <div className="filter-tools">
+            <label className="recent-checkbox"><input type="checkbox" checked={recentOnly}
+              onChange={event => setRecentOnly(event.target.checked)}/>近 7 天</label>
+            <label className="search-box"><Icon name="search" size={15}/><input ref={searchInput}
+              aria-label="搜索会话" placeholder="搜索标题 / 工作目录 / ID" value={query}
+              onChange={event => setQuery(event.target.value)}/><kbd>Ctrl K</kbd></label>
           </div>
         </div>
-        {view === 'list' ? <div className="table-scroll">
-          <table><thead><tr><th>会话标题 / 工作目录</th><th>来源</th><th>状态</th><th>最后活动</th></tr></thead>
-            <tbody>{shown.map(item => <SessionRow key={item.key} item={item} now={now} />)}</tbody>
-          </table>
-          {shown.length === 0 && <div className="empty-state"><h3>{busy && !scan ? '扫描进行中…' : '没有匹配的会话'}</h3>
-            <p>{scan ? '可调整筛选条件，或在数据源设置中检查 CODEX_HOME / SSH 配置。' : '首次扫描需要读取本地、WSL 和远程服务器的会话索引。'}</p>
-          </div>}
-        </div> : <div className="location-scroll">
-          {grouped.map(location => <section key={location.sourceId} className="location-group">
-            <header className="location-heading">
-              <div><h3>{location.sourceLabel}</h3><span>{location.workspaces.length} 个工作目录 · {location.count} 个会话</span></div>
-              {location.working > 0 && <span className="group-active">{location.working} 可能执行中</span>}
-            </header>
-            <div className="location-workspaces">
-              {location.workspaces.map(workspace => <WorkspaceSection key={workspace.key} group={workspace} now={now} />)}
-            </div>
-          </section>)}
-          {grouped.length === 0 && <div className="empty-state"><h3>没有匹配的会话</h3><p>可调整状态、最近 7 天或搜索筛选条件。</p></div>}
+
+        {error && <div className="error-banner" role="alert">{error}</div>}
+        {scan?.sources.filter(source => !!source.error).map(source => <div className="error-banner" role="alert"
+          key={source.id}><Icon name="alert" size={16}/><strong>{source.label}</strong>{source.error}</div>)}
+        {(sourceId || workspaceId) && <div className="scope-banner">
+          <Icon name="folder" size={15}/><span>当前位置筛选：
+            {scopeSource?.label || '全部'}{currentWorkspace ? ' / ' + (currentWorkspace.workspace || '未记录工作目录') : ''}</span>
+          <button type="button" onClick={() => selectScope(null)}>清除筛选 ×</button>
         </div>}
-        <div className="panel-footer"><span>显示 {shown.length} / {allSessions.length} 个会话 · 每个来源最多读取最近 200 条</span>
-          <span>每 12 秒刷新 · 状态依据日志事件推断</span></div>
-      </section>
-      <p className="disclaimer">说明：Codex 的历史会话不等于运行中的进程。「可能执行中 / 待处理」是基于近期日志和生命周期事件的推断；无充分证据时显示「状态未知」。</p>
+
+        {view === 'board' && <div className="board">
+          {lanes.map(lane => <section className={'board-lane lane-' + lane.id} key={lane.id}
+            aria-label={lane.label}>
+            <div className="lane-heading"><div><span className="lane-mark"/>
+              <strong>{lane.label}</strong></div><span className="lane-count">{lane.sessions.length}</span></div>
+            <div className="lane-subtitle">{lane.description}</div>
+            <div className="lane-body">{lane.sessions.slice(0, laneLimit[lane.id] ?? BATCH_SIZE).map(session =>
+              <SessionCard key={session.key} session={session} now={now}
+                selected={selectedKey === session.key} onSelect={openSession}/>)}
+              {!lane.sessions.length && <div className="lane-empty">
+                <Icon name={lane.id === 'working' ? 'activity' : lane.id === 'finished' ? 'check' : 'clock'} size={22}/>
+                <span>{lane.emptyLabel}</span></div>}
+            </div>
+            {lane.sessions.length > (laneLimit[lane.id] ?? BATCH_SIZE) && <button type="button" className="more-cards"
+              onClick={() => setLaneLimit(values => ({
+                ...values, [lane.id]: (values[lane.id] ?? BATCH_SIZE) + BATCH_SIZE,
+              }))}>再显示 {Math.min(BATCH_SIZE, lane.sessions.length - (laneLimit[lane.id] ?? BATCH_SIZE))} 个
+              <Icon name="chevron-down" size={14}/></button>}
+          </section>)}
+        </div>}
+
+        {view === 'sessions' && <section className="records-panel">
+          <div className="panel-heading"><strong>全部会话</strong><span>按最近活动排序 · {shown.length} 条</span></div>
+          <SessionTable sessions={shown} now={now} selectedKey={selectedKey} onSelect={openSession}/>
+        </section>}
+
+        {view === 'locations' && <div className="location-list">
+          {groups.map(group => <section key={group.sourceId} className="location-section">
+            <div className="location-heading"><div><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={18}/>
+              <div><strong>{group.sourceLabel}</strong>
+                <span>{group.workspaces.length} 个工作目录 · {group.count} 个会话</span></div></div>
+              {group.working > 0 && <span className="group-working">{group.working} 可能执行中</span>}</div>
+            <div className="location-workspaces">{group.workspaces.map(workspace =>
+              <WorkspaceSection key={workspace.key} group={workspace} now={now}
+                selectedKey={selectedKey} onSelect={openSession}/>)}</div>
+          </section>)}
+          {!groups.length && <EmptyState text="没有符合条件的执行位置"/>}
+        </div>}
+
+        <footer className="content-footer"><span>当前显示 {shown.length} / {totals.all} 条 · 每个来源最多采集 200 条</span>
+          <span>每 12 秒自动刷新 · 状态为保守推断</span></footer>
+      </div>
     </main>
+
+    {detailOpen && <button type="button" aria-label="关闭会话详情" className="detail-veil"
+      onClick={() => setDetailOpen(false)}/>}
+    <aside className={'detail-panel' + (detailOpen ? ' detail-open' : '')} aria-label="会话详情">
+      <div className="detail-header"><span>当前选中 / SESSION</span><button type="button"
+        className="detail-close" title="关闭详情" aria-label="关闭详情"
+        onClick={() => setDetailOpen(false)}><Icon name="close" size={16}/></button></div>
+      {selected ? <>
+        <div className="detail-content">
+          <h2>{selected.title || '未命名会话'}</h2>
+          <div className="detail-status"><StatusPill status={selected.status}/>
+            <span className="source-tag">{selected.sourceLabel}</span></div>
+          <div className="detail-divider"/>
+          <div className="detail-field"><span>工作空间</span>
+            <div className="detail-path mono">{selected.workspace || '未记录工作目录'}</div>
+            <button className="copy-workspace" type="button" disabled={!selected.workspace}
+              onClick={() => { if (selected.workspace) void window.monitorApi.copyWorkspace(selected.workspace); }}>
+              <Icon name="copy" size={15}/>复制工作目录</button>
+          </div>
+          <div className="detail-field"><span>会话 ID</span><div className="detail-value mono">{selected.id}</div></div>
+          <div className="detail-field"><span>最后活动</span><div className="detail-value">{formatTime(selected.updatedAt)}
+            <span className="detail-muted"> · {ageText(selected.updatedAt, now)}</span></div></div>
+          <div className="detail-divider"/>
+          <div className="detail-field"><span>状态判断依据</span>
+            <div className="detail-reason">{selected.statusReason || '当前没有可靠的状态信息'}</div></div>
+          <p className="detail-note">仅展示 Codex 已持久化的元数据。状态可能滞后，不代表实时进程状态。</p>
+        </div>
+      </> : <div className="detail-placeholder">
+        <Icon name="folder" size={24}/><strong>选择一个会话</strong><span>在任务卡片或列表中选择会话以查看详细信息。</span>
+      </div>}
+    </aside>
+
     {showSettings && config && <SettingsPanel config={config} onClose={() => setShowSettings(false)} onSave={saveSettings}/>}
   </div>;
 }

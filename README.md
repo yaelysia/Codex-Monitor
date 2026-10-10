@@ -63,6 +63,19 @@ the exact problem before making ACL changes; do not blindly run
 `icacls /reset /T` on your user profile or a shared programs directory.
 
 
+## B + D hybrid interface
+
+The desktop UI combines a workspace browser with a status-first Kanban board:
+
+- **Left:** machine/data-source tree, with individual workspaces under each host (including WSL and SSH). Click a source or an absolute workspace to scope the current board. Full paths, rather than folder basenames, are used for grouping and filtering.
+- **Center:** three concise columns for possible active work, pending/unknown evidence, and recently completed turns. The **unknown** and **waiting** statuses keep distinct badges; a log's lack of evidence does not mean an approval is required.
+- **Right:** read-only details of the selected session (title, source, full directory, ID, last activity and status evidence). At narrower window widths, details open as a dismissible drawer instead of squeezing cards.
+- **Other views:** the entire session table and machine/workspace grouping remain in the side navigation. Search, state filters, the seven-day toggle, refresh and data-source configuration work across views.
+- **Performance:** card columns initially render eight sessions apiece, with explicit “show more” controls, so hundreds of historical sessions do not overload the board.
+- **Keyboard:** Ctrl+K focuses search; Esc dismisses the details drawer.
+
+This is a UI-only change: the scan interval, metadata-only collection, existing WSL/SSH adapters, and conservative status inference are unchanged. No Windows installer is built automatically; the CI pipeline only runs tests and a non-packaging build.
+
 ## Views
 
 - **全部会话:** single list with Codex session title (when available), full workspace path, source machine, status, and last activity.
