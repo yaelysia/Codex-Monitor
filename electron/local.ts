@@ -6,6 +6,10 @@ import { extractSessionId, extractWorkspace, inferStatus } from './rollout';
 
 const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 192 * 1024;
+// Avoid rescanning full transcripts: only read further for recently modified,
+// still-unknown sessions whose lifecycle markers left the short tail.
+const EXTENDED_TAIL_BYTES = 8 * 1024 * 1024;
+const RECENT_MS = 5 * 60_000;
 const MAX_DISCOVERED = 10_000;
 const MAX_RETURNED = 200;
 
@@ -55,6 +59,21 @@ async function readEdges(file: string, size: number): Promise<{ head: string; ta
   } finally { await handle.close(); }
 }
 
+async function readExtendedTail(file: string, size: number): Promise<{ text: string; clipped: boolean }> {
+  const length = Math.min(size, EXTENDED_TAIL_BYTES);
+  const handle = await fs.open(file, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    let bytesRead = 0;
+    while (bytesRead < length) {
+      const chunk = await handle.read(buffer, bytesRead, length - bytesRead, size - length + bytesRead);
+      if (chunk.bytesRead === 0) break;
+      bytesRead += chunk.bytesRead;
+    }
+    return { text: buffer.subarray(0, bytesRead).toString('utf8'), clipped: size > length };
+  } finally { await handle.close(); }
+}
+
 async function mapLimited<T, R>(items: T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
   const result: R[] = new Array(items.length);
   let cursor = 0;
@@ -81,9 +100,13 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
       const { head, tail, clipped } = await readEdges(file, size);
       const id = extractSessionId(head, file);
       const workspace = extractWorkspace(head, clipped ? tail.slice(tail.indexOf('\n') + 1) : tail);
-      const state = inferStatus(tail, mtime, now, clipped);
+      let state = inferStatus(tail, mtime, now, clipped);
+      if (state.status === 'unknown' && clipped && now - mtime <= RECENT_MS) {
+        const extended = await readExtendedTail(file, size);
+        state = inferStatus(extended.text, mtime, now, extended.clipped);
+      }
       return { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
-        ...state, updatedAt: mtime, startedAt: null };
+        ...state, updatedAt: mtime, byteSize: size, startedAt: null };
     } catch { return null; } // rollover, deletion, permissions, partial writes
   });
   const seen = new Set<string>();

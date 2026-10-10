@@ -12,6 +12,8 @@ export interface SessionRecord {
   /** User-facing evidence; no transcript contents are exposed. */
   statusReason: string;
   updatedAt: number;
+  /** File metadata used only for observing activity across scans. */
+  byteSize?: number;
   startedAt: number | null;
 }
 

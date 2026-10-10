@@ -13,6 +13,9 @@ from pathlib import Path
 
 HEAD_BYTES = 128 * 1024
 TAIL_BYTES = 192 * 1024
+# For a recent, unknown session look further back for task_started/task_complete.
+EXTENDED_TAIL_BYTES = 8 * 1024 * 1024
+RECENT_MS = 5 * 60_000
 MAX_DISCOVERED = 10000
 MAX_RETURNED = 200
 START = {'task_started', 'turn_started'}
@@ -135,7 +138,13 @@ def scan(root, now=None, limit=MAX_RETURNED):
                 clipped = size > TAIL_BYTES
                 handle.seek(max(0, size - TAIL_BYTES))
                 tail = handle.read().decode('utf-8', errors='replace')
-            item = details(head, tail, file.name, clipped, modified, now)
+                item = details(head, tail, file.name, clipped, modified, now)
+                if item['status'] == 'unknown' and clipped and now - modified <= RECENT_MS:
+                    length = min(EXTENDED_TAIL_BYTES, size)
+                    handle.seek(max(0, size - length))
+                    expanded = handle.read(length).decode('utf-8', errors='replace')
+                    item = details(head, expanded, file.name, size > length, modified, now)
+            item['byteSize'] = size
             if item['id'] not in seen:
                 seen.add(item['id'])
                 result.append(item)

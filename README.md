@@ -14,7 +14,7 @@ No Codex modifications, hooks, remote daemon, credentials stored in the applicat
 | Status | The latest lifecycle events in bounded JSONL tail data |
 | Last activity | Rollout JSONL file modification time |
 
-**Status accuracy:** `本轮已完成` means a `task_complete` / `turn_complete` / `turn_aborted` marker was found, **not** that Codex exited. `可能执行中` means a turn started without a matching finish marker in the scanned tail **and** the file changed within 90 seconds. `可能待处理` requires a logged approval/input event. If the evidence is insufficient or stale, the result is `状态未知`. The app cannot reliably identify all running Codex Desktop/VS Code processes or approvals across independent app servers; it deliberately never pretends to.
+**Status accuracy:** `本轮已完成` means a `task_complete` / `turn_complete` / `turn_aborted` marker was found, **not** that Codex exited. `可能执行中` means either a recent turn start with no corresponding finish event, or **two successive scans observed the JSONL file grow** within 45 seconds. Both are inferences, not a process-level claim. If the evidence is insufficient or stale, the result is `状态未知`. `可能待处理` would require a logged approval/input event, but Codex normally does not persist these transient events to rollouts; this status needs optional Hooks or a live app-server to be reliable. The app cannot reliably identify all running Codex Desktop/VS Code processes or approvals across independent app servers.
 
 ## Quick start (Windows)
 
@@ -65,7 +65,7 @@ the exact problem before making ACL changes; do not blindly run
 ## Configure sources
 
 - **Local Windows:** Automatically reads `%CODEX_HOME%/sessions` when the Electron process inherits `CODEX_HOME`; otherwise `%USERPROFILE%/.codex/sessions`. Override in **数据源设置** if needed.
-- **WSL:** Automatically discovers running or registered WSL distributions with `wsl.exe --list --quiet` and scans each user's `$CODEX_HOME/sessions` using `wsl.exe -d <distro> -- python3 -`. A custom root can be set per distro. If a distro isn't accessible or doesn't contain Codex sessions, its error is shown without hiding other sources.
+- **WSL:** Automatically discovers running or registered WSL distributions with `wsl.exe --list --quiet` and scans each user's `$CODEX_HOME/sessions` using `wsl.exe -d <distro> -- python3 -`. Docker Desktop internal distros (`docker-desktop` / `docker-desktop-data`) are skipped. A custom root can be set per distro. If a distro isn't accessible or doesn't contain Codex sessions, its error is shown without hiding other sources.
 - **SSH:** Add an OpenSSH host alias or `user@host` under **数据源设置**. The app calls the Windows system `ssh` executable, so SSH config options such as `IdentityFile`, `ProxyJump`, and non-default `Port` work as they do in your terminal. **Before adding a host, run `ssh <alias>` once to confirm the known-host fingerprint and key authentication**; interactive passwords are not supported. You may override remote `CODEX_HOME` if noninteractive SSH doesn't inherit it.
 
 Codex Desktop remote SSH and a separately launched SSH CLI using the **same Linux user and `CODEX_HOME`** are read from the **same SSH source**, not duplicated. Configure that remote host only once.
@@ -85,7 +85,7 @@ src/renderer/                React + Vite desktop dashboard
 src/shared/types.ts          IPC contract and source/session DTOs
 ```
 
-Unlike a transcript viewer, this application does **not** read entire sessions, render chat content, or maintain a secondary database. Each refresh scans at most 10,000 file names per source, reads bounded head/tail data from at most the 200 most recently modified rollouts, and returns metadata only. It polls every 12 seconds, without installing any watcher on the target machine.
+Unlike a transcript viewer, this application does **not** read entire sessions, render chat content, or maintain a secondary database. Each refresh scans at most 10,000 file names per source and returns metadata from at most the 200 most recently modified rollouts. The first pass reads a 128 KiB head and 192 KiB tail. Recently modified sessions with missing lifecycle evidence get one more bounded read of at most 8 MiB; no unbounded transcript scan is performed. It polls every 12 seconds, without installing any watcher on the target machine.
 
 ## Verify
 
@@ -102,6 +102,6 @@ Tests exercise lifecycle event aliases, stale activity, malformed/truncated JSON
 
 - Statuses are evidence-based **inferences**, not definitive external process states. To obtain authoritative `running / waiting` state, a later version would need integrations with each existing Codex app-server or opt-in Hooks.
 - Rollouts must live in `<CODEX_HOME>/sessions/YYYY/MM/DD/*.jsonl`; the scanner searches under `sessions` recursively, not archived sessions or arbitrary drives.
-- If a huge session's relevant start/finish event falls outside the 192 KiB tail window, status may be unknown; that is intentional and safer than a false positive.
+- Large tool outputs can push the latest turn start beyond the short tail; fresh unknown sessions get a bounded 8 MiB retry. File growth observed across scans is a separate, tentative activity signal. With neither signal, status remains unknown.
 - WSL requires a discoverable distro and Linux user home; the noninteractive `python3` command must be available in that distro.
 - The table displays up to 200 newest sessions per source (default UI restricts display to last seven days; toggle off for older sessions). No session data is sent to a cloud service.

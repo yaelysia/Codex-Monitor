@@ -10,6 +10,38 @@ const MAX_STDOUT = 5 * 1024 * 1024;
 let wslCache: { at: number; distros: string[] } | null = null;
 let scriptCache: Promise<string> | null = null;
 
+/** Docker Desktop's WSL distributions are internal infrastructure, not user workspaces. */
+export function isInternalWslDistro(name: string): boolean {
+  return /^docker-desktop(?:-data)?$/i.test(name.trim());
+}
+
+// Recent file growth is evidence of agent activity when lifecycle markers are
+// outside our bounded scan window. Keep the observation transient and tentative.
+const RECENT_CHANGE_MS = 45_000;
+const observed = new Map<string, { modified: number; byteSize: number; lastGrowth: number }>();
+
+export function inferObservedActivity(sources: SourceResult[], now: number): void {
+  const liveKeys = new Set<string>();
+  for (const source of sources) {
+    if (source.error) continue;
+    for (const session of source.sessions) {
+      liveKeys.add(session.key);
+      const previous = observed.get(session.key);
+      const currentSize = session.byteSize ?? -1;
+      const lastGrowth = previous && session.updatedAt >= previous.modified && currentSize > previous.byteSize && previous.byteSize >= 0
+        ? now : previous?.lastGrowth ?? 0;
+      if (session.status === 'unknown' && lastGrowth && now - lastGrowth <= RECENT_CHANGE_MS && now - session.updatedAt <= RECENT_CHANGE_MS) {
+        session.status = 'working';
+        session.statusReason = '相邻扫描中检测到会话日志文件增长，可能执行中；未获得客户端实时状态';
+      }
+      observed.set(session.key, { modified: session.updatedAt, byteSize: currentSize, lastGrowth });
+    }
+  }
+  // Remove session identities that are no longer visible; no persistent store needed.
+  for (const key of observed.keys()) if (!liveKeys.has(key)) observed.delete(key);
+}
+
+
 function script(): Promise<string> {
   if (!scriptCache) {
     const file = app.isPackaged
@@ -63,7 +95,7 @@ export async function listWslDistros(): Promise<string[]> {
       if (err || !stdout) return resolve([]);
       const buffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
       const text = buffer.length > 1 && buffer[1] === 0 ? buffer.toString('utf16le') : buffer.toString('utf8');
-      resolve([...new Set(text.replace(/\0/g, '').split(/\r?\n/).map(s => s.trim()).filter(Boolean))]);
+      resolve([...new Set(text.replace(/\0/g, '').split(/\r?\n/).map(s => s.trim()).filter(s => s && !isInternalWslDistro(s)))]);
     });
   });
   wslCache = { at: Date.now(), distros };
@@ -90,6 +122,7 @@ function normalizeRemote(rows: unknown, id: string, label: string): SessionRecor
       status: status === 'working' || status === 'waiting' || status === 'finished' ? status : 'unknown',
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
       updatedAt: entry.updatedAt,
+      byteSize: typeof entry.byteSize === 'number' && Number.isFinite(entry.byteSize) ? entry.byteSize : undefined,
       startedAt: typeof entry.startedAt === 'number' ? entry.startedAt : null,
     });
   }
@@ -126,5 +159,8 @@ export async function refresh(settings: Settings): Promise<ScanResponse> {
       return normalizeRemote(rows, id, label);
     }));
   }
-  return { sources: await Promise.all(scans), scannedAt: Date.now() };
+  const sources = await Promise.all(scans);
+  const scannedAt = Date.now();
+  inferObservedActivity(sources, scannedAt);
+  return { sources, scannedAt };
 }

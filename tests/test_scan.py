@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -42,6 +43,38 @@ class TestLinuxCollector(unittest.TestCase):
                          for event in ['task_started', 'exec_approval_request'])
         details = scanner.details('', tail, 'rollout-abc.jsonl', False, now - 10_000, now)
         self.assertEqual(details['status'], 'waiting')
+
+    def test_recent_long_rollout_recovers_start_beyond_short_tail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / 'sessions' / '2026' / '10' / '10'
+            base.mkdir(parents=True)
+            session_id = '01234567-89ab-4cde-8123-123456789abc'
+            file = base / f'rollout-{session_id}.jsonl'
+            data = [
+                {'type': 'session_meta', 'payload': {'id': session_id, 'cwd': '/tmp/active'}},
+                {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+                {'type': 'response_item', 'payload': {'type': 'reasoning', 'text': 'x' * 250_000}},
+            ]
+            file.write_text('\n'.join(map(json.dumps, data)) + '\n')
+            self.assertEqual(scanner.scan(tmp)[0]['status'], 'working')
+            self.assertGreater(scanner.scan(tmp)[0]['byteSize'], scanner.TAIL_BYTES)
+
+            old = time.time() - 600
+            os.utime(file, (old, old))
+            self.assertEqual(scanner.scan(tmp)[0]['status'], 'unknown')
+
+    def test_completed_long_rollout_not_mistaken_for_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / 'sessions' / '2026' / '10' / '10'
+            base.mkdir(parents=True)
+            file = base / 'rollout-abcd.jsonl'
+            data = [
+                {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+                {'type': 'response_item', 'payload': {'type': 'reasoning', 'text': 'x' * 250_000}},
+                {'type': 'event_msg', 'payload': {'type': 'task_complete'}},
+            ]
+            file.write_text('\n'.join(map(json.dumps, data)) + '\n')
+            self.assertEqual(scanner.scan(tmp)[0]['status'], 'finished')
 
 
 if __name__ == '__main__':
