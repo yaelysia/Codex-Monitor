@@ -1,0 +1,47 @@
+import { describe, expect, it } from 'vitest';
+import { extractSessionId, extractWorkspace, inferStatus } from '../electron/rollout';
+
+const event = (type: string) => JSON.stringify({ type: 'event_msg', payload: { type } });
+const session = (id = '01234567-89ab-4cde-8123-123456789abc', cwd = '/home/dev/code') =>
+  JSON.stringify({ type: 'session_meta', payload: { id, cwd } });
+
+const NOW = 1_800_000_000_000;
+
+describe('bounded JSONL metadata parsing', () => {
+  it('extracts a session id and workspace from session_meta', () => {
+    const head = session() + '\n';
+    expect(extractSessionId(head, 'rollout.jsonl')).toBe('01234567-89ab-4cde-8123-123456789abc');
+    expect(extractWorkspace(head, head)).toBe('/home/dev/code');
+  });
+  it('extracts cwd from an incomplete oversized metadata line', () => {
+    const head = '{"type":"session_meta","payload":{"id":"01234567-89ab-4cde-8123-123456789abc","cwd":"C:\\\\Repo\\\\project","base_instructions":"' + 'x'.repeat(128_000);
+    expect(extractWorkspace(head, '')).toBe('C:\\Repo\\project');
+  });
+  it('uses the latest turn_context cwd after session metadata', () => {
+    const head = session();
+    const tail = [session(), JSON.stringify({ type: 'turn_context', payload: { cwd: '/home/dev/new' } })].join('\n');
+    expect(extractWorkspace(head, tail)).toBe('/home/dev/new');
+  });
+});
+
+describe('conservative status inference', () => {
+  it('shows possible activity only for fresh, unterminated turns', () => {
+    expect(inferStatus(`${event('task_started')}\n`, NOW - 10_000, NOW).status).toBe('working');
+    expect(inferStatus(`${event('task_started')}\n`, NOW - 150_000, NOW).status).toBe('unknown');
+  });
+  it('recognizes task and turn aliases for finished turns', () => {
+    expect(inferStatus(`${event('turn_started')}\n${event('turn_complete')}`, NOW - 1_000_000, NOW).status).toBe('finished');
+    expect(inferStatus(`${event('task_started')}\n${event('turn_aborted')}`, NOW - 2_000, NOW).status).toBe('finished');
+  });
+  it('recognizes explicit permission requests and their resumption', () => {
+    expect(inferStatus(`${event('task_started')}\n${event('request_user_input')}`, NOW - 20_000, NOW).status).toBe('waiting');
+    expect(inferStatus(`${event('task_started')}\n${event('request_user_input')}\n${event('exec_command_begin')}`, NOW - 10_000, NOW).status).toBe('working');
+  });
+  it('ignores clipped first lines and malformed incomplete JSON', () => {
+    const tail = 'partial-line\n' + event('task_started') + '\n' + '{not json';
+    expect(inferStatus(tail, NOW - 4_000, NOW, true).status).toBe('working');
+  });
+  it('never treats mere recent modification as active', () => {
+    expect(inferStatus(session(), NOW - 1_000, NOW).status).toBe('unknown');
+  });
+});

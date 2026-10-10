@@ -1,0 +1,159 @@
+"""Read-only Codex metadata scanner for Linux/WSL; invoked through ssh/wsl stdin.
+
+No install, no daemon, no dependency. Output: JSON array of session metadata.
+CONFIG_B64 may be prepended by the Electron host to override root/limit.
+"""
+import base64
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+HEAD_BYTES = 128 * 1024
+TAIL_BYTES = 192 * 1024
+MAX_DISCOVERED = 10000
+MAX_RETURNED = 200
+START = {'task_started', 'turn_started'}
+END = {'task_complete', 'turn_complete', 'turn_aborted'}
+WAIT = {'exec_approval_request', 'apply_patch_approval_request', 'request_user_input', 'request_permissions', 'elicitation_request'}
+RESUME = {'exec_command_begin', 'patch_apply_begin', 'agent_message', 'agent_reasoning'}
+
+
+def rows(text, clipped=False):
+    lines = text.splitlines()
+    if clipped and lines:
+        lines.pop(0)
+    for line in lines:
+        try:
+            item = json.loads(line)
+            if isinstance(item, dict):
+                yield item
+        except (ValueError, TypeError):
+            pass
+
+
+def safe_cwd(value):
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def details(head, tail, filename, clipped, modified, now):
+    session_id = None
+    cwd = None
+    for row in rows(head):
+        if row.get('type') == 'session_meta':
+            meta = row.get('payload') or {}
+            if isinstance(meta, dict):
+                session_id = meta.get('id') if isinstance(meta.get('id'), str) else None
+                cwd = safe_cwd(meta.get('cwd'))
+            break
+    if not cwd:
+        match = re.search(r'"cwd"\s*:\s*("(?:\\.|[^"\\])*")', head)
+        if match:
+            try:
+                cwd = safe_cwd(json.loads(match.group(1)))
+            except ValueError:
+                pass
+    if not session_id:
+        match = re.search(r'"id"\s*:\s*"([0-9a-fA-F-]{32,36})"', head)
+        if match:
+            session_id = match.group(1)
+    if not session_id:
+        match = re.search(r'([0-9a-fA-F]{8}-[0-9a-fA-F-]{27,})', filename)
+        session_id = match.group(1) if match else filename.removesuffix('.jsonl')
+
+    phase = 'unknown'
+    awaiting = False
+    for row in rows(tail, clipped):
+        payload = row.get('payload') or {}
+        if not isinstance(payload, dict):
+            continue
+        if row.get('type') == 'turn_context':
+            cwd = safe_cwd(payload.get('cwd')) or cwd
+        elif row.get('type') == 'event_msg':
+            event = payload.get('type')
+            if not isinstance(event, str):
+                continue
+            if event in START:
+                phase, awaiting = 'started', False
+            elif event in END:
+                phase, awaiting = 'finished', False
+            elif event in WAIT and phase == 'started':
+                awaiting = True
+            elif event in RESUME and phase == 'started':
+                awaiting = False
+
+    age = max(0, now - modified)
+    if phase == 'finished':
+        status, reason = 'finished', '检测到本轮结束事件；不代表客户端已退出'
+    elif phase == 'started' and awaiting and age <= 600000:
+        status, reason = 'waiting', '日志存在等待用户操作事件（推断）'
+    elif phase == 'started' and age <= 90000:
+        status, reason = 'working', '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）'
+    elif phase == 'started':
+        status, reason = 'unknown', '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行'
+    else:
+        status, reason = 'unknown', '没有足够的执行生命周期记录'
+    return {
+        'id': session_id,
+        'workspace': cwd,
+        'status': status,
+        'statusReason': reason,
+        'updatedAt': modified,
+        'startedAt': None,
+    }
+
+
+def scan(root, now=None, limit=MAX_RETURNED):
+    now = now or int(time.time() * 1000)
+    base = Path(root).expanduser() / 'sessions'
+    if not base.is_dir():
+        raise FileNotFoundError(f'Codex sessions folder not found: {base}')
+    # Bounding both discovery and returned records avoids reading old transcripts unnecessarily.
+    files = []
+    for folder, dirs, names in os.walk(base):
+        dirs[:] = sorted(dirs, reverse=True)
+        for name in names:
+            if name.endswith('.jsonl'):
+                full = Path(folder) / name
+                try:
+                    stat = full.stat()
+                    files.append((stat.st_mtime_ns // 1000000, stat.st_size, full))
+                except OSError:
+                    pass
+                if len(files) >= MAX_DISCOVERED:
+                    break
+        if len(files) >= MAX_DISCOVERED:
+            break
+    files.sort(key=lambda item: item[0], reverse=True)
+    result, seen = [], set()
+    for modified, size, file in files[:max(1, min(limit, MAX_RETURNED))]:
+        try:
+            with file.open('rb') as handle:
+                head = handle.read(min(HEAD_BYTES, size)).decode('utf-8', errors='replace')
+                clipped = size > TAIL_BYTES
+                handle.seek(max(0, size - TAIL_BYTES))
+                tail = handle.read().decode('utf-8', errors='replace')
+            item = details(head, tail, file.name, clipped, modified, now)
+            if item['id'] not in seen:
+                seen.add(item['id'])
+                result.append(item)
+        except (OSError, ValueError, UnicodeError):
+            continue
+    return result
+
+
+def main():
+    config_b64 = globals().get('CONFIG_B64', '')
+    options = json.loads(base64.b64decode(config_b64)) if config_b64 else {}
+    root = options.get('root') or os.environ.get('CODEX_HOME') or str(Path.home() / '.codex')
+    print(json.dumps(scan(root, limit=options.get('limit', MAX_RETURNED)), ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)

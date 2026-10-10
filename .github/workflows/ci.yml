@@ -1,0 +1,33 @@
+name: Verify and package
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win nsis --publish never
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: codex-monitor-windows
+          path: release/*.exe

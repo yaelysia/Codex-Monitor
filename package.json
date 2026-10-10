@@ -1,0 +1,42 @@
+{
+  "name": "codex-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read-only Codex session monitor for Windows, WSL and SSH",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "dist:win": "npm run build && electron-builder --win nsis --publish never"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^4.0.1",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4"
+  },
+  "build": {
+    "appId": "dev.yaelysia.codex-monitor",
+    "productName": "Codex Monitor",
+    "files": ["out/**/*", "package.json"],
+    "extraResources": [
+      { "from": "collector/scan.py", "to": "scan.py" }
+    ],
+    "directories": { "output": "release" },
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}
