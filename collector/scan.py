@@ -48,7 +48,7 @@ def safe_cwd(value):
 def normalize_title(value):
     if not isinstance(value, str):
         return None
-    title = ' '.join(value.split())
+    title = ' '.join(re.sub(r'[\\x00-\\x1f\\x7f]', ' ', value).split())
     return title[:180] + ('…' if len(title) > 180 else '') if title else None
 
 
@@ -94,7 +94,7 @@ def names_from_index(root, ids):
             if not isinstance(entry, dict):
                 continue
             uid = entry.get('id')
-            if uid in ids and uid not in names:
+            if isinstance(uid, str) and uid in ids and uid not in names:
                 name = normalize_title(entry.get('thread_name'))
                 if name:
                     names[uid] = name

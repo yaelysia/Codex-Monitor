@@ -9,6 +9,7 @@ No Codex modifications, hooks, remote daemon, credentials stored in the applicat
 | Column | Source |
 |---|---|
 | Session | `session_meta.id` (or filename fallback) |
+| Title | `state_5.sqlite` `threads.name/title`, then `session_index.jsonl` rename index, then first user message |
 | Workspace | `session_meta.cwd`, overridden by the latest `turn_context.cwd` in the read window |
 | Host | Windows, an autodetected WSL distribution, or a configured SSH host |
 | Status | The latest lifecycle events in bounded JSONL tail data |
@@ -31,7 +32,7 @@ To package a Windows installer:
 npm run dist:win
 ```
 
-The installer is saved under `release/`. CI also packages Windows installers as workflow artifacts.
+The installer is saved under `release/`. **CI runs tests and builds only; it no longer creates installers automatically.** Run `npm run dist:win` locally only when explicitly needed.
 
 ### Windows startup crash: GPU process isn't usable
 
@@ -61,6 +62,14 @@ inherited, unknown `S-1-15-2-*` entries. Back up permissions and identify
 the exact problem before making ACL changes; do not blindly run
 `icacls /reset /T` on your user profile or a shared programs directory.
 
+
+## Views
+
+- **全部会话:** single list with Codex session title (when available), full workspace path, source machine, status, and last activity.
+- **按执行位置分组:** source machine (Windows / each WSL distro / each configured SSH host) → absolute `cwd` → sessions in that directory. Active locations expand automatically; others can be expanded individually. Identical directory names on different machines are kept separate.
+- Search matches titles, absolute workspace paths, machine labels, and session IDs in both views. Status filters and the recent-seven-days filter apply to both views.
+
+Titles are read only from local Codex metadata. SQLite's `name` (explicit title) wins over the legacy rename index, then SQLite `title`, then the first user prompt. Local Windows uses built-in `node:sqlite` when available; remote Linux and WSL use Python's standard-library SQLite reader. If those metadata sources are absent or incompatible, the UI shows an unnamed session rather than inventing a title. Only bounded metadata/short prompts are returned.
 
 ## Configure sources
 

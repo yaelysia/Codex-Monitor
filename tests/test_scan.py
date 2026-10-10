@@ -76,6 +76,47 @@ class TestLinuxCollector(unittest.TestCase):
             file.write_text('\n'.join(map(json.dumps, data)) + '\n')
             self.assertEqual(scanner.scan(tmp)[0]['status'], 'finished')
 
+    def test_titles_from_sqlite_then_legacy_index_then_user_prompt(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / 'sessions' / '2026' / '10' / '10'
+            base.mkdir(parents=True)
+            db = sqlite3.connect(str(Path(tmp) / 'state_5.sqlite'))
+            db.execute('CREATE TABLE threads (id TEXT, name TEXT, title TEXT, first_user_message TEXT, preview TEXT)')
+            db.executemany('INSERT INTO threads VALUES (?, ?, ?, ?, ?)', [
+                ('db', '数据库名称', '旧标题', '首条用户消息', ''),
+                ('index', None, '标题来自数据库', '', ''),
+                ('derived', None, '自动标题', '', ''),
+            ])
+            db.commit()
+            db.close()
+            (Path(tmp) / 'session_index.jsonl').write_text('\n'.join([
+                json.dumps({'id': 'db', 'thread_name': '更早的索引'}),
+                json.dumps({'id': 'index', 'thread_name': '索引标题'}),
+            ]))
+            for uid in ('db', 'index', 'derived', 'prompt'):
+                lines = [
+                    {'type': 'session_meta', 'payload': {'id': uid, 'cwd': '/tmp/work'}},
+                    {'type': 'event_msg', 'payload': {'type': 'user_message', 'message': '首条指令'}},
+                ]
+                (base / f'rollout-{uid}.jsonl').write_text('\n'.join(map(json.dumps, lines)))
+            result = {row['id']: row['title'] for row in scanner.scan(tmp)}
+            self.assertEqual(result, {
+                'db': '数据库名称',
+                'index': '索引标题',
+                'derived': '自动标题',
+                'prompt': '首条指令',
+            })
+
+    def test_title_index_ignores_unhashable_corrupt_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / 'session_index.jsonl'
+            index.write_text('\n'.join([
+                json.dumps({'id': ['bad'], 'thread_name': 'bad'}),
+                json.dumps({'id': 'ok', 'thread_name': 'title'}),
+            ]))
+            self.assertEqual(scanner.names_from_index(Path(tmp), {'ok'}), {'ok': 'title'})
+
 
 if __name__ == '__main__':
     unittest.main()
