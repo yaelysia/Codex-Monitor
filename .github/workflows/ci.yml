@@ -1,4 +1,5 @@
-name: Verify and package
+name: Verify
+
 on:
   push:
   pull_request:
@@ -23,11 +24,3 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: python -m unittest discover -s tests -p 'test_*.py'
-      - name: Build Windows installer
-        if: runner.os == 'Windows'
-        run: npx electron-builder --win nsis --publish never
-      - uses: actions/upload-artifact@v4
-        if: runner.os == 'Windows'
-        with:
-          name: codex-monitor-windows
-          path: release/*.exe
