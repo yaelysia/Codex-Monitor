@@ -325,3 +325,51 @@ describe('opaque MobaXterm MSAA tab tokens and saved metadata safety', () => {
       [{ ...stored, window: { ...stored.window, hwnd: 'attack' } }], NOW)).toEqual([]);
   });
 });
+
+describe('native HWND samples with delayed accessible-tab signals', () => {
+  const event = (at: number, tabId?: string) => ({
+    ...sample(at, 'terminal'), tabHost: 'multi' as const,
+    tabCount: tabId ? 3 : 0, ...(tabId ? { tabId } : {}),
+  });
+
+  it('binds a unique MSAA tab despite interleaved window-only samples', () => {
+    const resolver = new AutoWindowResolver();
+    const id = 'msaa:' + 'e'.repeat(32);
+    resolver.observeFocus(event(NOW - 2500));
+    resolver.observeFocus(event(NOW - 2100, id));
+    resolver.observeFocus(event(NOW - 300));
+    resolver.observeFocus(event(NOW + 150));
+    resolver.observeFocus(event(NOW + 450, id));
+    const scan = makeScan(NOW + 900, 900);
+    resolver.observeScan(scan, NOW + 1000);
+    expect(resolver.get('ssh:server:thread')).toMatchObject({
+      hwnd: '0x1234', tabId: id, tabCount: 3,
+    });
+  });
+
+  it('does not bind a tab when the accessible selected tab changes', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(event(NOW - 2500, 'rid:1.10'));
+    resolver.observeFocus(event(NOW - 200));
+    resolver.observeFocus(event(NOW + 450, 'rid:1.11'));
+    resolver.observeScan(makeScan(NOW + 900, 900), NOW + 1000);
+    expect(resolver.get('ssh:server:thread')).toMatchObject({ tabId: null });
+  });
+
+  it('remains window-only if a late accessibility sample never arrived', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(event(NOW - 2500, 'rid:1.10'));
+    resolver.observeFocus(event(NOW));
+    resolver.observeScan(makeScan(NOW + 900, 900), NOW + 1000);
+    expect(resolver.get('ssh:server:thread')).toMatchObject({ tabId: null });
+  });
+
+  it('does not confuse multiple known tab switches even when beginning and end match', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(event(NOW - 2500, 'rid:1.10'));
+    resolver.observeFocus(event(NOW - 250, 'rid:1.11'));
+    resolver.observeFocus(event(NOW + 120, 'rid:1.10'));
+    resolver.observeScan(makeScan(NOW + 900, 900), NOW + 1000);
+    expect(resolver.get('ssh:server:thread')).toMatchObject({ tabId: null });
+  });
+});

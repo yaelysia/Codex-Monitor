@@ -165,21 +165,26 @@ export class AutoWindowResolver {
         const during = this.history.filter(item =>
           item.at >= matchStart && item.at <= inputAt);
         if (!sameWindow(earliest) || during.some(item => !sameWindow(item))) continue;
-        // A tab identity requires continuity across every observed sample,
-        // including a post-input sample. A partial/ambiguous provider is a
-        // WINDOW-only match and must not be described as exact-tab navigation.
-        const confirmedAfter = this.history.find(item =>
-          item.at > inputAt && item.at <= inputAt + 3000);
-        const tabConfirmed = !!selected.tabId && sameWindow(earliest) &&
-          earliest.tabId === selected.tabId &&
-          during.every(item => item.tabId === selected.tabId) &&
-          !!confirmedAfter && sameWindow(confirmedAfter) &&
-          confirmedAfter.tabId === selected.tabId;
+        // HWND samples are emitted immediately, while accessibility tab IDs
+        // are supplied asynchronously. Missing optional tab data is NOT a tab
+        // switch. Require valid selected-tab evidence shortly before AND after
+        // the user input, and reject any genuinely conflicting tab evidence.
+        const knownTabs = this.history.filter(item =>
+          sameWindow(item) && item.tabId &&
+          item.at >= inputAt - 4000 && item.at <= inputAt + 3000);
+        const tabBefore = [...knownTabs].reverse().find(item => item.at <= inputAt);
+        const tabAfter = knownTabs.find(item => item.at > inputAt);
+        const conflicting = !!tabBefore && !!tabAfter && knownTabs.some(item =>
+          item.at >= tabBefore.at && item.at <= tabAfter.at &&
+          item.tabId !== tabBefore.tabId);
+        const tabConfirmed = !!tabBefore && !!tabAfter &&
+          tabBefore.tabId === tabAfter.tabId && !conflicting &&
+          during.every(item => !item.tabId || item.tabId === tabBefore.tabId);
         this.bindings.set(session.key, {
           ...selected, inputAt,
-          tabId: tabConfirmed ? selected.tabId : null,
+          tabId: tabConfirmed ? tabBefore!.tabId : null,
           tabCount: Math.max(earliest.tabCount ?? 0, selected.tabCount ?? 0,
-            confirmedAfter?.tabCount ?? 0),
+            tabBefore?.tabCount ?? 0, tabAfter?.tabCount ?? 0),
         });
         this.lastInput.set(session.key, token);
         changed.push(session.key);
