@@ -188,7 +188,26 @@ namespace CodexMonitor {
     # Compose one native assembly so the UIA module and Win32 tracker share
     # a concrete, minimal API. Windows PowerShell 5.1 ships these assemblies.
     $tabSource = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'tab-automation.cs'))
-    Add-Type -ErrorAction Stop -TypeDefinition ($nativeSource + "`n" + $tabSource) -ReferencedAssemblies @('UIAutomationClient', 'UIAutomationTypes')
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition ($nativeSource + "`n" + $tabSource) -ReferencedAssemblies @('UIAutomationClient', 'UIAutomationTypes')
+    } catch {
+        # A system lacking UIAutomation must still support original HWND jumps.
+        # Verify mode fails in CI instead of concealing a compilation regression.
+        if ($Mode -eq 'verify') { throw }
+        $tabFallback = @'
+namespace CodexMonitor {
+  public static class TabProbe {
+    public sealed class Snapshot {
+      public string Id; public int Count;
+      public Snapshot(string id, int count) { Id = id; Count = count; }
+    }
+    public static Snapshot Read(System.IntPtr hwnd) { return new Snapshot(null, 0); }
+    public static bool Select(System.IntPtr hwnd, string id) { return false; }
+  }
+}
+'@
+        Add-Type -ErrorAction Stop -TypeDefinition ($nativeSource + "`n" + $tabFallback)
+    }
 } catch {
     Write-Output '{"ok":false,"reason":"native_bridge_unavailable"}'
     exit 2
