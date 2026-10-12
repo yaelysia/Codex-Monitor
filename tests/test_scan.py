@@ -30,6 +30,7 @@ class TestLinuxCollector(unittest.TestCase):
             self.assertEqual(result[0]['id'], session_id)
             self.assertEqual(result[0]['workspace'], '/home/u/other')
             self.assertEqual(result[0]['status'], 'finished')
+            self.assertEqual(result[0]['rolloutPath'], f'2026/10/10/rollout-{session_id}.jsonl')
 
     def test_stale_unfinished_session_is_unknown(self):
         now = 1_800_000_000_000

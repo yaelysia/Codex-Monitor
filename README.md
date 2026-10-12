@@ -76,6 +76,16 @@ The desktop UI combines a workspace browser with a status-first Kanban board:
 
 This is a UI-only change: the scan interval, metadata-only collection, existing WSL/SSH adapters, and conservative status inference are unchanged. No Windows installer is built automatically; the CI pipeline only runs tests and a non-packaging build.
 
+## 最近助手回复预览
+
+主窗口任意视图中**点击会话**后，右侧详情栏将按需读取该会话最后一条已持久化的助手回复，显示约 420 字符的末尾节选。包括旧式 `event_msg.agent_message`、`response_item.message`、新版 `item_completed.AgentMessage` 和结束事件中的 `last_agent_message` 回退。不会读取或展示 `reasoning`、工具输出、压缩摘要及用户消息。
+
+- **Windows、WSL、SSH** 均可读取，远程采集脚本只返回截短文本；主窗口与悬浮窗的会话元数据扫描仍然不读取正文。
+- 只读取当前选中会话，每次最多尝试末尾 256 KiB / 4 MiB，避免为数百条历史会话传输完整对话。
+- 会话文件更新时间变化时会自动更新当前选中的预览，也可点「刷新」重新读取。未找到文本、权限问题或远程失败会直接提示，不伪造内容。
+- 只显示**已保存到 JSONL 的助手回复**；正在生成但还没有落盘的文字不会被实时流式展示。预览可能属于此前一轮，而非正在执行的这轮。
+- IPC 只能通过已扫描会话 ID 选择目标，文件地址始终限制在对应机器的 `CODEX_HOME/sessions` 下，读取过程不修改 Codex 数据。
+
 ## 屏幕边缘悬浮窗（方案 C）
 
 启动应用时，主窗口和 **始终置顶的 55×276 px 边缘窄栏**会同时出现。悬浮窗不会接管或控制任何 Codex 会话。

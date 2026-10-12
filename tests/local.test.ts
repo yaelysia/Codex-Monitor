@@ -21,7 +21,8 @@ describe('local scanner', () => {
     ].join('\n'));
     const rows = await scanLocal(root, 'local', 'Windows');
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id, workspace: '/dev/app', status: 'finished', sourceLabel: 'Windows' });
+    expect(rows[0]).toMatchObject({ id, workspace: '/dev/app', status: 'finished', sourceLabel: 'Windows',
+      rolloutPath: `2026/10/10/rollout-${id}.jsonl` });
   });
   it('rejects a missing sessions directory explicitly', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-monitor-test-'));
