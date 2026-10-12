@@ -230,3 +230,17 @@ describe('UI Automation optional fields must never disable foreground correlatio
     expect(normalizeForegroundWindow({ ...sample(NOW, 'vscode'), pid: -1 })).toBeNull();
   });
 });
+
+describe('native watch interruption preserves verified original windows', () => {
+  it('preserves previously discovered HWND, discards old focus timeline', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW - 1000, 'terminal'));
+    resolver.observeScan(makeScan(NOW, 100), NOW);
+    expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1234');
+    resolver.resetObservationHistory();
+    expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1234');
+    const newScan = makeScan(NOW + 3000, 100, 'terminal', 'ssh:server:new-thread');
+    resolver.observeScan(newScan, NOW + 3000);
+    expect(resolver.get('ssh:server:new-thread')).toBeNull();
+  });
+});

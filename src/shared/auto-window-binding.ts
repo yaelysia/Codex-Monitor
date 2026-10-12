@@ -148,5 +148,9 @@ export class AutoWindowResolver {
   }
 
   invalidate(sessionKey: string): void { this.bindings.delete(sessionKey); }
+  /** A broken native watcher cannot justify any correlation across its blind gap.
+   * Existing session→HWND mappings remain safe for read-only native revalidation.
+   */
+  resetObservationHistory(): void { this.history = []; }
   clear(): void { this.history = []; this.bindings.clear(); this.lastInput.clear(); }
 }

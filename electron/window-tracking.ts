@@ -80,7 +80,7 @@ export class AutoWindowTracker {
       this.watching = false;
       // Focus gaps invalidate association timing. Never retain stale history
       // across an observer restart, but keep any Codex session data unaffected.
-      this.resolver.clear();
+      this.resolver.resetObservationHistory();
       if (!this.stopRequested) this.restart();
     };
 
