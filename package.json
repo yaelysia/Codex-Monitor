@@ -13,7 +13,8 @@
     "test:probe": "node --test tests/app-server-probe.node.mjs",
     "probe:app-server": "node scripts/probe-app-server.mjs",
     "dist:win": "npm run build && electron-builder --win nsis --publish never",
-    "probe:desktop-logs": "node scripts/probe-desktop-logs.mjs"
+    "probe:desktop-logs": "node scripts/probe-desktop-logs.mjs",
+    "diagnose:tracking": "node scripts/diagnose-tracking.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",
