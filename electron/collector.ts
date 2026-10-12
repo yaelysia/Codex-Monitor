@@ -5,7 +5,7 @@ import { app } from 'electron';
 import type { ScanResponse, SessionRecord, Settings, SourceKind, SourceResult } from '../src/shared/types';
 import { resolveLocalRoot, scanLocal } from './local';
 import { SessionActivityTracker } from '../src/shared/activity-tracker';
-import { readDesktopLogSignals } from './desktop-runtime-logs';
+import { inspectDesktopLogSignals } from './desktop-runtime-logs';
 import { applyDesktopLogEvidence } from '../src/shared/desktop-log-status';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
@@ -150,8 +150,23 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
     if (process.platform === 'win32') {
       // Passive Desktop's *own* app log (including MSIX virtualized paths).
       // No new App Server and no access to private stdio streams.
-      const events = await readDesktopLogSignals().catch(() => new Map());
-      applyDesktopLogEvidence(rows, events);
+      const scan = await inspectDesktopLogSignals().catch(() => ({
+        events: new Map(), logFilesRead: 0, signalCount: 0,
+      }));
+      applyDesktopLogEvidence(rows, scan.events);
+      for (const row of rows) {
+        if (row.clientKind !== 'desktop' || row.isSubagent ||
+            row.status !== 'unknown') continue;
+        const matched = scan.events.has(row.id.toLowerCase());
+        const probeDetail = matched
+          ? '已找到该会话的 Desktop 生命周期日志，但未能据此确认当前运行状态'
+          : scan.logFilesRead === 0
+            ? '未找到可读的 Codex Desktop 应用日志（包括 MSIX 目录）'
+            : scan.signalCount === 0
+              ? 'Desktop 应用日志可读取，但尚未识别到受支持的轮次事件'
+              : 'Desktop 日志含其他会话事件，但未能关联到当前会话 ID';
+        row.statusReason += '；' + probeDetail;
+      }
     }
     return rows;
   }));

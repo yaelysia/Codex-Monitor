@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseDesktopLogEvent, newestDesktopEvents, applyDesktopLogEvidence } from
   '../src/shared/desktop-log-status';
-import { findDesktopLogRoots, readDesktopLogSignals } from '../electron/desktop-runtime-logs';
+import { findDesktopLogRoots, readDesktopLogSignals, inspectDesktopLogSignals } from '../electron/desktop-runtime-logs';
 import type { SessionRecord } from '../src/shared/types';
 
 const NOW = Date.parse('2026-10-12T10:00:00Z');
@@ -107,6 +107,9 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
     const root = temp();
     expect(await readDesktopLogSignals(NOW, root)).toEqual(new Map());
     expect(fs.readdirSync(root)).toHaveLength(0);
+    expect(await inspectDesktopLogSignals(NOW, root)).toMatchObject({
+      logFilesRead: 0, signalCount: 0,
+    });
   });
 
   it('reads the actual local Desktop app log instead of a separate app server', async () => {
@@ -116,6 +119,9 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
     expect(map.get(SESSION)?.type).toBe('turn-displayed-complete');
     expect(map.get(OTHER)?.type).toBe('turn-start-accepted');
     expect(JSON.stringify([...map.values()])).not.toMatch(/PRIVATE_REQUEST_ID|requestId/);
+    const details = await inspectDesktopLogSignals(NOW, root);
+    expect(details.logFilesRead).toBe(1);
+    expect(details.signalCount).toBe(3);
   });
 
   it('finds MSIX virtualized Codex/Logs and ignores unrelated package paths', async () => {

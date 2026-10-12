@@ -32,12 +32,18 @@ export async function findDesktopLogRoots(localAppData: string): Promise<string[
 
 interface Candidate { path: string; size: number; mtimeMs: number }
 
+export interface DesktopLogSummary {
+  events: Map<string, DesktopLogEvent>;
+  logFilesRead: number;
+  signalCount: number;
+}
+
 /** Bounded metadata-only read: retain parsed event types and UUIDs, never text.
  * Most installations emit a small number of Desktop log files per day, but
  * stop scanning after a fixed file/byte budget to protect runtime performance.
  */
-export async function readDesktopLogSignals(now = Date.now(),
-  localAppData = process.env.LOCALAPPDATA ?? ''): Promise<Map<string, DesktopLogEvent>> {
+export async function inspectDesktopLogSignals(now = Date.now(),
+  localAppData = process.env.LOCALAPPDATA ?? ''): Promise<DesktopLogSummary> {
   const roots = await findDesktopLogRoots(localAppData);
   const datePaths: string[] = [];
   for (const root of roots) {
@@ -72,6 +78,7 @@ export async function readDesktopLogSignals(now = Date.now(),
   }
   candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
   const events: DesktopLogEvent[] = [];
+  let filesRead = 0;
   let budget = MAX_TOTAL_BYTES;
   for (const item of candidates.slice(0, MAX_LOG_FILES)) {
     if (budget <= 0) break;
@@ -82,6 +89,7 @@ export async function readDesktopLogSignals(now = Date.now(),
       const buffer = Buffer.alloc(length);
       const { bytesRead } = await handle.read(buffer, 0, length, item.size - length);
       budget -= bytesRead;
+      if (bytesRead) filesRead++;
       const chunk = buffer.subarray(0, bytesRead).toString('utf8');
       const lines = chunk.split(/\r?\n/);
       if (length < item.size) lines.shift(); // Incomplete initial line
@@ -93,5 +101,11 @@ export async function readDesktopLogSignals(now = Date.now(),
     } catch { /* A live Desktop may rotate a log mid-read. */ }
     finally { await handle?.close().catch(() => {}); }
   }
-  return newestDesktopEvents(events);
+  return { events: newestDesktopEvents(events),
+    logFilesRead: filesRead, signalCount: events.length };
+}
+
+export async function readDesktopLogSignals(now = Date.now(),
+  localAppData = process.env.LOCALAPPDATA ?? ''): Promise<Map<string, DesktopLogEvent>> {
+  return (await inspectDesktopLogSignals(now, localAppData)).events;
 }
