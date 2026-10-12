@@ -3,6 +3,7 @@ import type { MonitorAlert, MonitorState, ScanResponse } from '../src/shared/typ
 import { readSettings } from './config';
 import { refresh as collect } from './collector';
 import { WatchCoordinator } from './watchers';
+import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 
 const POLLING_FALLBACK_MS = 12_000;
 const MIN_FULL_SCAN_GAP_MS = 9_000;
@@ -121,15 +122,7 @@ export class MonitorService {
       // cached sources as freshly scanned could fabricate transitions.
       const alerts = this.tracker.observe(delta);
       if (partial && this.lastScan) {
-        const updated = new Map(delta.sources.map(source => [source.id, source]));
-        this.lastScan = {
-          scannedAt: delta.scannedAt,
-          sources: [
-            ...this.lastScan.sources.map(source => updated.get(source.id) ?? source),
-            ...delta.sources.filter(source =>
-              !this.lastScan?.sources.some(previous => previous.id === source.id)),
-          ],
-        };
+        this.lastScan = mergeSourceSnapshots(this.lastScan, delta);
       } else {
         this.lastScan = delta;
         this.lastFullScanAt = delta.scannedAt;
