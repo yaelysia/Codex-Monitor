@@ -69,7 +69,11 @@ export function applyDesktopLogEvidence(
   rows: SessionRecord[], latest: ReadonlyMap<string, DesktopLogEvent>, now = Date.now(),
 ): void {
   for (const row of rows) {
-    if (row.clientKind !== 'desktop' || row.isSubagent) continue;
+    // The recorded originator identifies who CREATED the thread, not who is
+    // running its current turn. Desktop may resume a CLI/VS Code/unknown-origin
+    // thread: a successful GUI-owned turn/start with this exact UUID is direct
+    // evidence regardless of the original clientKind.
+    if (row.isSubagent) continue;
     const event = latest.get(row.id.toLowerCase());
     if (!event || event.type !== 'turn-start-accepted' ||
         now - event.at < -5000 || now - event.at > DESKTOP_ACTIVE_EVIDENCE_MS) continue;
