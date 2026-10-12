@@ -52,6 +52,19 @@ export function jsonlRows(text: string, clippedStart: boolean): JsonObject[] {
   return lines.map(parseLine).filter((row): row is JsonObject => !!row);
 }
 
+/** Parse a timestamp only; never expose a user message's text. */
+export function extractLastUserInputAt(tail: string, clippedStart = false): number | null {
+  let last: number | null = null;
+  for (const row of jsonlRows(tail, clippedStart)) {
+    const payload = object(row.payload);
+    if (row.type !== 'event_msg' || payload?.type !== 'user_message' ||
+        typeof row.timestamp !== 'string') continue;
+    const at = Date.parse(row.timestamp);
+    if (Number.isFinite(at) && at > 0 && (last === null || at > last)) last = at;
+  }
+  return last;
+}
+
 function safeCwd(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length ? value : null;
 }

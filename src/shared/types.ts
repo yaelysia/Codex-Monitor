@@ -1,5 +1,6 @@
 export type SessionStatus = 'working' | 'waiting' | 'finished' | 'interrupted' | 'failed' | 'unknown';
 export type SourceKind = 'local' | 'wsl' | 'ssh';
+export type SessionClientKind = 'desktop' | 'vscode' | 'terminal' | 'unknown';
 
 export interface SessionRecord {
   /** Stable within a source; source + id is the global identity. */
@@ -8,6 +9,10 @@ export interface SessionRecord {
   sourceId: string;
   sourceLabel: string;
   workspace: string | null;
+  /** Client identified by session_meta.originator, not window title or cwd. */
+  clientKind?: SessionClientKind;
+  /** User input age according to source machine clock; may be absent. */
+  lastUserInputAgeAtSourceMs?: number | null;
   /** True only when Codex's own session_meta identifies a subagent. */
   isSubagent?: boolean;
   /** Optional root/parent thread identifier from the persisted metadata. */

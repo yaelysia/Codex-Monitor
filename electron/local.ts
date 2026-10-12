@@ -2,9 +2,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { SessionRecord } from '../src/shared/types';
-import { extractFirstUserTitle, extractSessionId, extractWorkspace, inferStatus } from './rollout';
+import { extractFirstUserTitle, extractSessionId, extractWorkspace, extractLastUserInputAt, inferStatus } from './rollout';
 import { enrichLocalTitles } from './titles';
-import { extractSessionOrigin } from '../src/shared/session-origin';
+import { extractSessionClientKind, extractSessionOrigin } from '../src/shared/session-origin';
 import { LocalScanCache } from '../src/shared/local-scan-cache';
 
 const HEAD_BYTES = 128 * 1024;
@@ -108,13 +108,20 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
       const id = extractSessionId(head, file);
       const workspace = extractWorkspace(head, clipped ? tail.slice(tail.indexOf('\n') + 1) : tail);
       const origin = extractSessionOrigin(head);
+      const clientKind = extractSessionClientKind(head);
+      let inputTail = tail;
+      let inputTailClipped = clipped;
       let state = inferStatus(tail, mtime, now, clipped);
       if (state.status === 'unknown' && clipped && now - mtime <= RECENT_MS) {
         const extended = await readExtendedTail(file, size);
         state = inferStatus(extended.text, mtime, now, extended.clipped);
+        inputTail = extended.text;
+        inputTailClipped = extended.clipped;
       }
+      const lastInputAt = extractLastUserInputAt(inputTail, inputTailClipped);
+      const lastUserInputAgeAtSourceMs = lastInputAt == null ? null : now - lastInputAt;
       const record: SessionRecord = { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
-        ...origin,
+        ...origin, clientKind, lastUserInputAgeAtSourceMs,
         rolloutPath: path.relative(sessionsDir, file).split(path.sep).join('/'),
         title: extractFirstUserTitle(head), ...state, updatedAt: mtime, byteSize: size,
         ageAtSourceMs: now - mtime, startedAt: null };
