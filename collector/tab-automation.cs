@@ -64,6 +64,8 @@ namespace CodexMonitor {
       return new Snapshot(null, Math.Max(uia.Count, legacy == null ? 0 : legacy.Count));
     }
 
+    public static Snapshot InspectUia(IntPtr hwnd) { return ReadUia(hwnd); }
+
     private static Snapshot ReadUia(IntPtr hwnd) {
       try {
         AutomationElementCollection items = Items(hwnd);

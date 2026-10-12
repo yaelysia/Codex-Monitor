@@ -184,9 +184,6 @@ namespace CodexMonitor {
 
     public static void Sample() { Emit(false); }
     public static void InspectTabs() {
-      // Calling from a shell makes the shell foreground. Prefer a unique
-      // visible MobaXterm top-level HWND so inspection remains useful without
-      // changing user focus or sending anything into a terminal.
       var windows = new List<IntPtr>();
       EnumWindows(delegate(IntPtr candidate, IntPtr unused) {
         if (IsWindowVisible(candidate) && MobaTabProbe.IsMobaWindow(candidate))
@@ -199,14 +196,29 @@ namespace CodexMonitor {
           "\"provider\":\"none\",\"reason\":\"" + reason + "\"}");
         return;
       }
-      TabProbe.Snapshot tab = TabProbe.Read(windows[0]);
-      int count = tab == null ? 0 : tab.Count;
-      bool identified = tab != null && tab.Id != null;
-      string provider = identified && tab.Id.StartsWith("msaa:") ? "msaa" :
-        identified && tab.Id.StartsWith("rid:") ? "uia" : "none";
+      IntPtr hwnd = windows[0];
+      TabProbe.Snapshot selected = TabProbe.Read(hwnd);
+      TabProbe.Snapshot uia = TabProbe.InspectUia(hwnd);
+      MobaTabProbe.Diagnostics msaa = MobaTabProbe.Inspect(hwnd);
+      int count = selected == null ? 0 : selected.Count;
+      bool identified = selected != null && selected.Id != null;
+      string provider = identified && selected.Id.StartsWith("msaa:") ? "msaa" :
+        identified && selected.Id.StartsWith("rid:") ? "uia" : "none";
+      string reason = identified ? "unique_tab_selectable" : msaa.Reason;
+      if (!identified && reason == "no_msaa_tab_group" && uia.Count > 0)
+        reason = "uia_tabs_without_unique_selection";
       Console.WriteLine("{\"type\":\"tab-probe\",\"count\":" +
-        count.ToString(CultureInfo.InvariantCulture) + ",\"identified\":" +
-        (identified ? "true" : "false") + ",\"provider\":\"" + provider + "\"}");
+        count.ToString(CultureInfo.InvariantCulture) +
+        ",\"identified\":" + (identified ? "true" : "false") +
+        ",\"provider\":\"" + provider + "\"" +
+        ",\"reason\":\"" + reason + "\"" +
+        ",\"uiaTabItems\":" + (uia == null ? 0 : uia.Count).ToString(CultureInfo.InvariantCulture) +
+        ",\"msaaGroups\":" + msaa.GroupCount.ToString(CultureInfo.InvariantCulture) +
+        ",\"msaaMaxTabs\":" + msaa.MaxTabCount.ToString(CultureInfo.InvariantCulture) +
+        ",\"msaaSelected\":" + msaa.SelectedCount.ToString(CultureInfo.InvariantCulture) +
+        ",\"msaaDuplicateNames\":" + (msaa.DuplicateNames ? "true" : "false") +
+        ",\"nativeTabLikeChildren\":" + msaa.NativeTabLikeChildren.ToString(CultureInfo.InvariantCulture) +
+        "}");
     }
 
     public static void Watch() {

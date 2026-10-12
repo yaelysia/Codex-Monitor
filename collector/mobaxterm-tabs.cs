@@ -26,6 +26,8 @@ namespace CodexMonitor {
     [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent,
       ChildWindowProc callback, IntPtr lParam);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(
+      IntPtr hwnd, StringBuilder result, int maxLength);
     [DllImport("oleacc.dll")] static extern int AccessibleObjectFromWindow(
       IntPtr hwnd, uint idObject, ref Guid iid,
       [MarshalAs(UnmanagedType.Interface)] out IAccessible accessible);
@@ -147,6 +149,50 @@ namespace CodexMonitor {
           distinct.Add(group.Signature, group);
       }
       return new List<TabList>(distinct.Values);
+    }
+
+    public sealed class Diagnostics {
+      public int GroupCount;
+      public int MaxTabCount;
+      public int SelectedCount;
+      public bool DuplicateNames;
+      public int NativeTabLikeChildren;
+      public string Reason;
+    }
+
+    /** Diagnostic metadata only. No tab names, accessible text, or host IDs. */
+    public static Diagnostics Inspect(IntPtr hwnd) {
+      var answer = new Diagnostics();
+      if (!IsMobaWindow(hwnd)) { answer.Reason = "not_mobaxterm"; return answer; }
+      var groups = Groups(hwnd);
+      answer.GroupCount = groups.Count;
+      answer.Reason = groups.Count == 0 ? "no_msaa_tab_group" :
+        groups.Count == 1 ? "selected_tab_unavailable" : "ambiguous_msaa_tab_groups";
+      foreach (TabList group in groups) {
+        answer.MaxTabCount = Math.Max(answer.MaxTabCount, group.Tabs.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        int selected = 0;
+        foreach (TabCandidate candidate in group.Tabs) {
+          if (!seen.Add(candidate.Token)) answer.DuplicateNames = true;
+          if (candidate.Selected) selected++;
+        }
+        answer.SelectedCount = Math.Max(answer.SelectedCount, selected);
+      }
+      if (answer.GroupCount == 1) {
+        if (answer.DuplicateNames) answer.Reason = "duplicate_tab_names";
+        else if (answer.SelectedCount != 1) answer.Reason = "no_unique_selected_tab";
+        else answer.Reason = "unique_msaa_tab_available";
+      }
+      EnumChildWindows(hwnd, delegate(IntPtr child, IntPtr unused) {
+        StringBuilder className = new StringBuilder(128);
+        if (GetClassName(child, className, className.Capacity) > 0) {
+          string kind = className.ToString().ToLowerInvariant();
+          if (kind.Contains("tab") || kind.Contains("page"))
+            answer.NativeTabLikeChildren++;
+        }
+        return true;
+      }, IntPtr.Zero);
+      return answer;
     }
 
     private static TabList SingleGroup(IntPtr hwnd) {
