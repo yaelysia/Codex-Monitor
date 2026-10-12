@@ -9,6 +9,7 @@ import type { FloatingWindowController } from './floating';
 import type { MainWindowController } from './main-window';
 import type { MonitorService } from './monitor-service';
 import type { AutoWindowTracker } from './window-tracking';
+import { focusAndRead } from '../src/shared/focus-and-read';
 
 export function registerIpcHandlers(monitor: MonitorService,
   floating: FloatingWindowController, main: MainWindowController,
@@ -66,7 +67,8 @@ export function registerIpcHandlers(monitor: MonitorService,
   });
   ipcMain.handle('monitor:focus-original-window', (_event, raw: unknown) => {
     const key = existingSessionKey(raw);
-    return key ? originalWindow.focusOriginalWindow(key) :
+    return key ? focusAndRead(key, monitor.state().alerts,
+      () => originalWindow.focusOriginalWindow(key), ids => monitor.acknowledgeMany(ids)) :
       { state: 'unbound', message: '当前会话不存在或已从监控范围移除' };
   });
   ipcMain.handle('monitor:ack-alert', (_event, id: unknown) => {

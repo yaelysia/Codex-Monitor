@@ -62,8 +62,10 @@ export class MonitorService {
     this.onChange(this.state());
     return this.state();
   }
-  acknowledge(id: string): MonitorState {
-    this.tracker.acknowledge(id);
+  acknowledge(id: string): MonitorState { return this.acknowledgeMany([id]); }
+  acknowledgeMany(ids: readonly string[]): MonitorState {
+    if (!ids.length) return this.state();
+    this.tracker.acknowledgeMany(ids);
     this.onChange(this.state());
     return this.state();
   }

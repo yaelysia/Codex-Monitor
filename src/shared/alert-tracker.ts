@@ -39,8 +39,14 @@ export class AlertTracker {
   getMuted(): boolean { return this.muted; }
   getAlerts(): MonitorAlert[] { return this.alerts.map(alert => ({ ...alert })); }
 
-  acknowledge(id: string): void {
-    this.alerts = this.alerts.map(alert => alert.id === id ? { ...alert, read: true } : alert);
+  acknowledge(id: string): void { this.acknowledgeMany([id]); }
+
+  /** Only alerts already present when navigation began may be acknowledged. */
+  acknowledgeMany(ids: readonly string[]): void {
+    if (!ids.length) return;
+    const selected = new Set(ids);
+    this.alerts = this.alerts.map(alert => !alert.read && selected.has(alert.id)
+      ? { ...alert, read: true } : alert);
   }
 
   state(scan: ScanResponse | null): MonitorState {
