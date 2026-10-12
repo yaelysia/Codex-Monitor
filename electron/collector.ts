@@ -106,7 +106,8 @@ function normalizeRemote(rows: unknown, id: string, label: string): SessionRecor
       parentThreadId: typeof entry.parentThreadId === 'string' ? entry.parentThreadId : null,
       rolloutPath: typeof entry.rolloutPath === 'string' ? entry.rolloutPath : null,
       title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.slice(0, 181) : null,
-      status: status === 'working' || status === 'waiting' || status === 'finished' ? status : 'unknown',
+      status: status === 'working' || status === 'waiting' || status === 'finished' ||
+        status === 'interrupted' || status === 'failed' ? status : 'unknown',
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
       finishedToken: typeof entry.finishedToken === 'string' ? entry.finishedToken : null,
       waitingToken: typeof entry.waitingToken === 'string' ? entry.waitingToken : null,
