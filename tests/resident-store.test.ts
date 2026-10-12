@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ResidentStore, normalizeResident } from '../electron/resident-store';
-import { dockWindowBounds, restoreMainBounds, type WorkArea } from '../src/shared/window-geometry';
+import { dockWindowBounds, findSavedDockDisplay, normalizeDockOpacity,
+  restoreMainBounds, type WorkArea } from '../src/shared/window-geometry';
 
 const created: string[] = [];
 afterEach(async () => {
@@ -43,8 +44,38 @@ describe('resident window persistence and multi-display layout', () => {
     expect(saved.preferences).toEqual({ keepRunningOnClose: false, launchAtLogin: true });
     expect(saved.dock.side).toBe('left');
     expect(saved.dock.visible).toBe(false);
+    expect(saved.dock.opacity).toBe(1); // Existing files without opacity remain fully opaque.
     expect(saved.mainBounds?.width).toBe(920);
     expect(normalizeResident({ preferences: { launchAtLogin: 'yes', keepRunningOnClose: null },
       mainBounds: { width: NaN, height: 10, x: 0, y: 0 } }).mainBounds).toBeNull();
   });
+
+  it('clamps malformed opacity and restores a chosen transparency level', async () => {
+    expect(normalizeDockOpacity(undefined)).toBe(1);
+    expect(normalizeDockOpacity(0)).toBe(0.4);
+    expect(normalizeDockOpacity(1.5)).toBe(1);
+    expect(normalizeDockOpacity(Number.NaN)).toBe(1);
+    expect(normalizeDockOpacity(0.725)).toBe(0.73);
+    const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-monitor-opacity-'));
+    created.push(folder);
+    const store = new ResidentStore(folder);
+    store.load();
+    store.updateDock({ ...store.snapshot().dock, side: 'left', displayId: 42,
+      displayX: -2560, displayY: -50, offsetY: 520, opacity: 0.65 });
+    store.flush();
+    const restored = new ResidentStore(folder).load().dock;
+    expect(restored).toMatchObject({
+      side: 'left', displayId: 42, displayX: -2560, displayY: -50,
+      offsetY: 520, opacity: 0.65,
+    });
+  });
+
+  it('recovers a second monitor after its display ID changes, and clamps vertical offset', () => {
+    const dock = normalizeResident({ dock: { side: 'right', opacity: 0.8,
+      displayId: 200, displayX: -1920, displayY: 0, offsetY: 2000 } }).dock;
+    expect(findSavedDockDisplay(dock, [area])?.id).toBe(100);
+    expect(dockWindowBounds(dock, area)).toEqual({ x: -55, y: 804, width: 55, height: 276 });
+    expect(findSavedDockDisplay({ ...dock, displayX: 9000 }, [area])).toBeNull();
+  });
+
 });

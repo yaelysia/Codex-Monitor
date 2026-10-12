@@ -9,7 +9,24 @@ export function validBounds(value: unknown): value is SavedBounds {
   return isNumber(r.x) && isNumber(r.y) && isNumber(r.width) && isNumber(r.height) &&
     r.width >= 320 && r.width <= 10_000 && r.height >= 200 && r.height <= 10_000;
 }
-export interface SavedDock { side: DockSide; displayId: number | null; offsetY: number; expanded: boolean; visible: boolean }
+export const MIN_DOCK_OPACITY = 0.4;
+export const MAX_DOCK_OPACITY = 1;
+/** The opacity of the whole window; missing legacy values default to fully opaque. */
+export function normalizeDockOpacity(input: unknown): number {
+  if (!isNumber(input)) return 1;
+  return Math.round(Math.max(MIN_DOCK_OPACITY, Math.min(MAX_DOCK_OPACITY, input)) * 100) / 100;
+}
+export interface SavedDock {
+  side: DockSide;
+  displayId: number | null;
+  offsetY: number;
+  expanded: boolean;
+  visible: boolean;
+  opacity: number;
+  /** Screen origin also survives Windows changing its display IDs after restart. */
+  displayX?: number | null;
+  displayY?: number | null;
+}
 
 export function normalizeDock(value: unknown): SavedDock {
   const row = value && typeof value === 'object' && !Array.isArray(value)
@@ -20,7 +37,19 @@ export function normalizeDock(value: unknown): SavedDock {
     offsetY: isNumber(row.offsetY) ? Math.min(100_000, Math.max(0, row.offsetY)) : 92,
     expanded: row.expanded === true,
     visible: row.visible !== false,
+    opacity: normalizeDockOpacity(row.opacity),
+    displayX: isNumber(row.displayX) ? row.displayX : null,
+    displayY: isNumber(row.displayY) ? row.displayY : null,
   };
+}
+
+/** Prefer the same monitor; recover by desktop position if Windows changes display IDs. */
+export function findSavedDockDisplay(dock: SavedDock, areas: WorkArea[]): WorkArea | null {
+  const byId = areas.find(area => area.id === dock.displayId);
+  if (byId) return byId;
+  if (!isNumber(dock.displayX) || !isNumber(dock.displayY)) return null;
+  return areas.find(area => Math.abs(area.x - dock.displayX!) < 96 &&
+    Math.abs(area.y - dock.displayY!) < 96) ?? null;
 }
 
 /** Avoid restoring windows offscreen after monitors, resolution, or DPI change. */
