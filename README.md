@@ -88,6 +88,25 @@ This is a UI-only change: the scan interval, metadata-only collection, existing 
 - 只显示**已保存到 JSONL 的助手回复**；正在生成但还没有落盘的文字不会被实时流式展示。预览可能属于此前一轮，而非正在执行的这轮。
 - IPC 只能通过已扫描会话 ID 选择目标，文件地址始终限制在对应机器的 `CODEX_HOME/sessions` 下，读取过程不修改 Codex 数据。
 
+## 事件驱动通知（第一阶段）
+
+Codex Monitor 现在采用 **事件触发的单源扫描 + 每 12 秒全量轮询兜底**，仍使用现有状态机和通知去重逻辑：
+
+- **Windows 本地：** 使用 Node.js 的递归 `fs.watch` 监听 `CODEX_HOME/sessions` 下新增或变化的 JSONL。
+- **WSL / SSH Linux：** 通过现有 Python 3 与 OpenSSH 临时启动 `collector/watch.py`，调用 Linux `inotify` 等待磁盘事件；只发送 `ready` / `change` / `heartbeat` 三种小型 JSONL 信号，不传输会话内容、文件路径、密钥。
+- **按来源刷新：** 一台服务器有变动，只重新采集该服务器的会话元数据。相同来源的事件 400ms 合并、最低 3 秒扫描间隔；不会因为每次文件追加而同时启动多个扫描。
+- **补漏 / 恢复：** 事件通道短暂断开时会指数退避自动重连（最多 60 秒）；日志读取失败、平台不支持 `inotify` 或触发目录监听上限时仍保留 12 秒全量轮询。事件发生在扫描过程中也会排队补做一次扫描。
+- **健康指示：** 主窗口左侧机器名称旁的小点显示文件事件通道状态：绿色为正在监听，暖色为连接中，灰色为仅轮询；将鼠标停留在数据源上可以查看文字说明。这里的“监听中”不代表 Codex 运行状态已由 App Server 实时确认。
+
+远程监听需要保持一条独立的 SSH/WSL 命令连接，**不在远程安装软件、服务或 Hook**，退出 Monitor 时终止进程。如需临时禁用新监听、只保留旧轮询，可在启动前设置：
+
+```powershell
+$env:CODEX_MONITOR_DISABLE_EVENT_WATCHERS = "1"
+npm run dev
+```
+
+**准确性边界：** 本阶段监听的是 *日志文件变化事件*，不是 Codex 尚未持久化的审批/提问、推理或 App Server 原生事件。它通常能比定时扫描更快发现新落盘的完成标记，但无法保证毫秒级通知，也无法检测所有客户端的等待提问事件。下一阶段才考虑对可用 Codex App Server 进行可选的原生事件订阅。
+
 ## 屏幕边缘悬浮窗（方案 C）
 
 启动应用时，主窗口和 **始终置顶的 55×276 px 边缘窄栏**会同时出现。悬浮窗不会接管或控制任何 Codex 会话。
@@ -150,7 +169,7 @@ src/renderer/                React + Vite desktop dashboard
 src/shared/types.ts          IPC contract and source/session DTOs
 ```
 
-Unlike a transcript viewer, this application does **not** read entire sessions, render chat content, or maintain a secondary database. Each refresh scans at most 10,000 file names per source and returns metadata from at most the 200 most recently modified rollouts. The first pass reads a 128 KiB head and 192 KiB tail. Recently modified sessions with missing lifecycle evidence get one more bounded read of at most 8 MiB; no unbounded transcript scan is performed. It polls every 12 seconds, without installing any watcher on the target machine.
+Unlike a transcript viewer, this application does **not** read entire sessions, render chat content, or maintain a secondary database. Each refresh scans at most 10,000 file names per source and returns metadata from at most the 200 most recently modified rollouts. The first pass reads a 128 KiB head and 192 KiB tail. Recently modified sessions with missing lifecycle evidence get one more bounded read of at most 8 MiB; no unbounded transcript scan is performed. It polls every 12 seconds as a fallback and uses temporary, read-only filesystem event watchers while the application runs. No background service is installed on the target machine.
 
 ## Verify
 

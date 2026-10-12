@@ -24,6 +24,8 @@ export class MonitorService {
   private pendingSources = new Set<string>();
   private lastEventScan = new Map<string, number>();
   private needsFullScan = false;
+  /** Emergency switch for hosts that disallow watch connections. */
+  private readonly eventsEnabled = process.env.CODEX_MONITOR_DISABLE_EVENT_WATCHERS !== '1';
   private lastFullScanAt = 0;
   private scanningFull = false;
   private running = false;
@@ -36,7 +38,7 @@ export class MonitorService {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.watchers.start();
+    if (this.eventsEnabled) this.watchers.start();
     this.timer = setInterval(() => {
       void this.refresh().catch(error => console.warn('Codex fallback scan failed:', error));
     }, POLLING_FALLBACK_MS);
@@ -129,7 +131,7 @@ export class MonitorService {
       } else {
         this.lastScan = delta;
         this.lastFullScanAt = delta.scannedAt;
-        this.watchers.reconcile(settings, delta.sources);
+        if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);
       }
       this.onChange(this.state());
       if (!this.tracker.getMuted()) for (const alert of alerts) this.onAlert(alert);
