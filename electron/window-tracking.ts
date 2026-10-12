@@ -207,7 +207,7 @@ export class AutoWindowTracker {
           if (!target.tabId && ((target.tabCount ?? 0) > 1 ||
               target.tabHost === 'multi')) return resolve({
             state: 'partial',
-            message: '已返回原窗口，但无法确认多标签中的目标位置；提醒仍保留未读',
+            message: '已返回原窗口，但无法确认多标签中的目标位置',
           });
           return resolve({
             state: 'focused',
@@ -217,7 +217,7 @@ export class AutoWindowTracker {
         }
         if (result.windowFocused === true && result.reason === 'tab_unavailable') return resolve({
           state: 'partial',
-          message: '已返回原窗口，但原标签已变化或 UI Automation 不可用；提醒仍保留未读',
+          message: '已返回原窗口，但原标签已变化或 UI Automation 不可用',
         });
         if (['stale_window', 'process_changed', 'invalid_or_stale_window'].includes(result.reason || '')) {
           this.resolver.invalidate(sessionKey);
