@@ -1,7 +1,7 @@
 import { AlertTracker } from '../src/shared/alert-tracker';
 import type { MonitorAlert, MonitorState, ScanResponse } from '../src/shared/types';
 import { readSettings } from './config';
-import { refresh as collect } from './collector';
+import { refresh as collect, projectDesktopRuntime } from './collector';
 import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 
@@ -10,11 +10,31 @@ const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
 const MIN_FULL_SCAN_GAP_MS = 9_000;
 const EVENT_DEBOUNCE_MS = 400;
 const MIN_SOURCE_SCAN_GAP_MS = 3_000;
+// Bounded log-only audits are independent from expensive WSL/SSH metadata scans.
+const DESKTOP_NATIVE_AUDIT_MS = 4_000;
+
+function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): boolean {
+  if (!a || a.sources.length !== b.sources.length) return true;
+  for (let i = 0; i < b.sources.length; i++) {
+    const left = a.sources[i]!, right = b.sources[i]!;
+    if (left.id !== right.id || left.sessions.length !== right.sessions.length) return true;
+    for (let j = 0; j < right.sessions.length; j++) {
+      const old = left.sessions[j]!, fresh = right.sessions[j]!;
+      if (old.key !== fresh.key || old.status !== fresh.status ||
+          old.statusReason !== fresh.statusReason ||
+          old.finishedToken !== fresh.finishedToken) return true;
+    }
+  }
+  return false;
+}
 
 /** One state owner and event queue for all renderer windows and external hosts. */
 export class MonitorService {
   private tracker = new AlertTracker();
   private lastScan: ScanResponse | null = null;
+  private rawLastScan: ScanResponse | null = null;
+  private nativeAuditTimer: ReturnType<typeof setInterval> | null = null;
+  private nativeAuditInFlight = false;
   private inFlight: Promise<ScanResponse> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -36,6 +56,7 @@ export class MonitorService {
     private readonly onChange: (state: MonitorState) => void,
     private readonly onAlert: (alert: MonitorAlert) => void,
     private readonly onScanned: (delta: ScanResponse) => void = () => {},
+    private readonly platform = process.platform,
   ) {}
 
   start(): void {
@@ -43,6 +64,13 @@ export class MonitorService {
     this.running = true;
     if (this.eventsEnabled) this.watchers.start();
     this.timer = setInterval(() => this.pollFallback(), POLLING_FALLBACK_MS);
+    if (this.platform === 'win32' &&
+        process.env.CODEX_MONITOR_DISABLE_DESKTOP_LOGS !== '1') {
+      this.nativeAuditTimer = setInterval(() => {
+        void this.auditDesktopRuntime();
+      }, DESKTOP_NATIVE_AUDIT_MS);
+      this.nativeAuditTimer.unref?.();
+    }
     void this.refresh().catch(error => console.warn('Initial Codex scan failed:', error));
   }
 
@@ -50,6 +78,8 @@ export class MonitorService {
     this.running = false;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.nativeAuditTimer) clearInterval(this.nativeAuditTimer);
+    this.nativeAuditTimer = null;
     if (this.wakeTimer) clearTimeout(this.wakeTimer);
     this.wakeTimer = null;
     this.pendingSources.clear();
@@ -70,6 +100,28 @@ export class MonitorService {
     return this.state();
   }
 
+  /** Native status can update a known local/WSL/SSH session without waiting
+   * for a new JSONL write or rescanning a slow remote filesystem.
+   * The raw filesystem snapshot remains immutable; overlay can be removed or
+   * superseded by newer native completion evidence on the next tick.
+   */
+  private async auditDesktopRuntime(): Promise<void> {
+    const baseline = this.rawLastScan;
+    if (!this.running || !baseline || this.inFlight || this.nativeAuditInFlight) return;
+    this.nativeAuditInFlight = true;
+    try {
+      const projected = await projectDesktopRuntime(baseline, Date.now());
+      if (!this.running || this.inFlight || this.rawLastScan !== baseline) return;
+      if (!desktopProjectionChanged(this.lastScan, projected)) return;
+      this.lastScan = projected;
+      this.onChange(this.state());
+    } catch {
+      // A locked/rotating Desktop log is not a reason to stop other monitoring.
+    } finally {
+      this.nativeAuditInFlight = false;
+    }
+  }
+
   /** Watch-connected machines need only a periodic 60-second audit; disconnected
    * machines keep the original 12-second safety net. */
   private pollFallback(): void {
@@ -80,12 +132,7 @@ export class MonitorService {
     }
     const modes = this.watchers.status();
     const due = this.lastScan.sources.filter(source =>
-      (modes[source.id] !== 'active' ||
-        // Desktop's GUI-owned status logs can change independently of
-        // JSONL on Windows, WSL or SSH targets. Audit only sources known to
-        // contain Desktop-owned sessions, regardless of watcher health.
-        (process.platform === 'win32' && source.sessions.some(row =>
-          row.clientKind === 'desktop'))) &&
+      modes[source.id] !== 'active' &&
       Date.now() - (this.lastSourceScan.get(source.id) ?? this.lastFullScanAt) >= POLLING_FALLBACK_MS
     ).map(source => source.id);
     if (due.length) {
@@ -154,14 +201,24 @@ export class MonitorService {
       try { this.onScanned(delta); }
       catch { console.warn('Automatic original-window correlation failed; scan continues'); }
 
-      // Notify from only the genuinely rescanned sources. Marking unchanged,
-      // cached sources as freshly scanned could fabricate transitions.
+      // Retain a raw baseline independent of the GUI log overlay. This is
+      // essential when Desktop's turn/start disappears from log tail or a newer
+      // completion supersedes it without any change to a remote JSONL file.
+      const raw = partial && this.rawLastScan
+        ? mergeSourceSnapshots(this.rawLastScan, delta) : delta;
+      const projected = await projectDesktopRuntime(raw, Date.now());
+      this.rawLastScan = raw;
+      this.lastScan = projected;
+
+      // Notify from genuinely rescanned sources only. The four-second
+      // log-only overlay updates the board but must not fabricate alerts.
+      const rescanned = new Set(delta.sources.map(source => source.id));
+      const projectedDelta: ScanResponse = {
+        ...delta, sources: projected.sources.filter(source => rescanned.has(source.id)),
+      };
       for (const source of delta.sources) this.lastSourceScan.set(source.id, delta.scannedAt);
-      const alerts = this.tracker.observe(delta);
-      if (partial && this.lastScan) {
-        this.lastScan = mergeSourceSnapshots(this.lastScan, delta);
-      } else {
-        this.lastScan = delta;
+      const alerts = this.tracker.observe(projectedDelta);
+      if (!partial) {
         this.lastFullScanAt = delta.scannedAt;
         if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);
       }

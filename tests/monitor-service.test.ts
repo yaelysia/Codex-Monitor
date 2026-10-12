@@ -12,7 +12,10 @@ const fake = vi.hoisted(() => ({
 vi.mock('../electron/config', () => ({
   readSettings: vi.fn(async () => ({ localRoot: '', wslRoots: {}, remotes: [] })),
 }));
-vi.mock('../electron/collector', () => ({ refresh: vi.fn() }));
+vi.mock('../electron/collector', () => ({
+  refresh: vi.fn(),
+  projectDesktopRuntime: vi.fn(async (snapshot: ScanResponse) => snapshot),
+}));
 vi.mock('../electron/watchers', () => ({
   WatchCoordinator: class {
     constructor(listener: (sourceId: string) => void) { fake.wake = listener; }
@@ -25,7 +28,7 @@ vi.mock('../electron/watchers', () => ({
   },
 }));
 
-import { refresh as collect } from '../electron/collector';
+import { refresh as collect, projectDesktopRuntime } from '../electron/collector';
 import { MonitorService } from '../electron/monitor-service';
 
 const NOW = 1_800_000_000_000;
@@ -50,6 +53,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   vi.mocked(collect).mockReset();
+  vi.mocked(projectDesktopRuntime).mockReset();
+  vi.mocked(projectDesktopRuntime).mockImplementation(async snapshot => snapshot);
   fake.wake = null;
   fake.reconciled = [];
   fake.started = 0;
@@ -185,50 +190,65 @@ describe('event-driven scan orchestration', () => {
   });
 });
 
-describe('Desktop local-runtime log audit cadence', () => {
 
-  it('includes Desktop-owned remote sources in its Windows runtime-audit scope', async () => {
+describe('Windows Desktop native lifecycle evidence without rescanning remote sources', () => {
+  const desktopThread: SessionRecord = {
+    key: 'ssh:one:019a21b0-aaaa-7ccc-8ddd-111122223333',
+    id: '019a21b0-aaaa-7ccc-8ddd-111122223333',
+    sourceId: 'ssh:one', sourceLabel: 'Server', workspace: null,
+    title: 'Original CLI session reopened in Desktop',
+    clientKind: 'terminal', status: 'unknown',
+    statusReason: 'rollout not updated',
+    updatedAt: NOW, startedAt: null, isSubagent: false,
+  };
+
+  it('updates a CLI-originated remote session on GUI log-only audit, then retracts after completion', async () => {
     fake.health = { local: 'active', 'ssh:one': 'active' };
-    const remote = { ...session('p', 'unknown', NOW), clientKind: 'desktop' as const };
-    vi.mocked(collect).mockImplementation(async (_settings, selected) =>
-      snapshot(Date.now(), selected ? [source('ssh:one', [remote])] :
-        [source('local', []), source('ssh:one', [remote])]));
-    service = new MonitorService(() => undefined, () => undefined);
+    const pushed: MonitorState[] = [];
+    vi.mocked(collect).mockImplementation(async () =>
+      snapshot(Date.now(), [source('local', []), source('ssh:one', [desktopThread])]));
+    let nativeReads = 0;
+    vi.mocked(projectDesktopRuntime).mockImplementation(async baseline => {
+      const result: ScanResponse = {
+        ...baseline, sources: baseline.sources.map(src => ({
+          ...src, sessions: src.sessions.map(record => ({ ...record })),
+        })),
+      };
+      nativeReads++;
+      const target = result.sources[1]!.sessions[0]!;
+      if (nativeReads === 2) {
+        target.status = 'working';
+        target.statusReason = 'Desktop exact UUID turn/start accepted';
+      }
+      if (nativeReads >= 3) {
+        target.status = 'unknown';
+        target.statusReason = 'GUI native turn completed';
+      }
+      return result;
+    });
+    service = new MonitorService(state => pushed.push(state), () => undefined,
+      () => undefined, 'win32');
     service.start();
     await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(12_000);
-    if (process.platform === 'win32') {
-      expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['ssh:one']));
-    } else {
-      expect(collect).toHaveBeenCalledTimes(1);
-    }
+    expect(service.state().scan?.sources[1]?.sessions[0]?.status).toBe('unknown');
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(service.state().scan?.sources[1]?.sessions[0]?.status).toBe('working');
+    expect(collect).toHaveBeenCalledTimes(1); // No SSH/WSL rescan.
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(service.state().scan?.sources[1]?.sessions[0]?.status).toBe('unknown');
+    expect(collect).toHaveBeenCalledTimes(1);
+    expect(pushed.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('rescans local Desktop sessions every 12s even with a healthy JSONL watcher', async () => {
-    fake.health = { local: 'active', 'ssh:one': 'active' };
-    const localDesktop: SessionRecord = {
-      key: 'local:019a21b0-aaaa-7ccc-8ddd-111122223333',
-      id: '019a21b0-aaaa-7ccc-8ddd-111122223333', sourceId: 'local',
-      sourceLabel: 'Windows', workspace: null, title: 'Desktop',
-      clientKind: 'desktop', isSubagent: false,
-      status: 'unknown', statusReason: 'no durable runtime state',
-      startedAt: null, updatedAt: NOW,
-    };
-    vi.mocked(collect).mockImplementation(async (_settings, selected) =>
-      snapshot(Date.now(), selected ? [source('local', [localDesktop])] :
-        [source('local', [localDesktop]), source('ssh:one', [session('p', 'finished', NOW)])]));
-    service = new MonitorService(() => undefined, () => undefined);
+  it('skips native-only log audits after Monitor stops', async () => {
+    vi.mocked(collect).mockImplementation(async () =>
+      snapshot(Date.now(), [source('ssh:one', [desktopThread])]));
+    service = new MonitorService(() => undefined, () => undefined, () => undefined, 'win32');
     service.start();
     await vi.advanceTimersByTimeAsync(0);
-    expect(collect).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(12_000);
-    if (process.platform === 'win32') {
-      const affected = vi.mocked(collect).mock.calls.at(-1)?.[1];
-      expect(affected).toEqual(new Set(['local']));
-      // Remote sources still use the longer audit when their watchers are healthy.
-      expect(affected?.has('ssh:one')).toBe(false);
-    } else {
-      expect(collect).toHaveBeenCalledTimes(1);
-    }
+    const before = vi.mocked(projectDesktopRuntime).mock.calls.length;
+    service.stop();
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(vi.mocked(projectDesktopRuntime).mock.calls).toHaveLength(before);
   });
 });
