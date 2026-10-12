@@ -297,6 +297,31 @@ describe('persisted association normalization', () => {
   });
 });
 
+
+describe('binding metadata privacy', () => {
+  it('drops any unknown/secret properties when normalizing a restored window', () => {
+    const time = NOW;
+    const entry = {
+      sessionKey: 'local:safe-session',
+      savedAt: time - 1000, inputToken: time - 1000,
+      window: {
+        ...sample(time - 1000, 'vscode'),
+        inputAt: time - 1000,
+        privateKey: 'PRIVATE-SSH-KEY',
+        prompt: 'PRIVATE USER PROMPT',
+        tabId: 'rid:12.10',
+      },
+    };
+    const r = new AutoWindowResolver();
+    r.restoreBindings([entry], time);
+    const snapshot = JSON.stringify(r.savedBindings(time));
+    expect(snapshot).toContain('rid:12.10');
+    expect(snapshot).not.toContain('PRIVATE');
+    expect(snapshot).not.toContain('privateKey');
+    expect(snapshot).not.toContain('prompt');
+  });
+});
+
 describe('opaque MobaXterm MSAA tab tokens and saved metadata safety', () => {
   it('preserves only the validated opaque name fingerprint, never a caption', () => {
     const binding = { ...sample(NOW, 'terminal'), tabId: 'msaa:' + 'a'.repeat(32),
