@@ -45,8 +45,8 @@ button:focus-visible{outline:2px solid #d3b5fa;outline-offset:-2px}
   border-radius:50%;background:#b7a9d0;
 }
 .rail-spacer{flex:1}
-.rail-hide{height:17px;opacity:.58;position:absolute;right:-1px;top:0;transform:translate(18px, -2px);display:none}
-.dock-rail:hover .rail-hide,.rail-hide:focus-visible{display:grid}
+.rail-hide{height:18px;opacity:.63;margin-top:-5px}
+.rail-hide:hover,.rail-hide:focus-visible{opacity:1}
 .rail-collapse svg{transform:rotate(180deg)}
 .float-shell.side-left .rail-collapse svg{transform:rotate(0deg)}
 .float-shell.expanded.side-right .rail-collapse svg{transform:rotate(0deg)}
