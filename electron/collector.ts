@@ -85,7 +85,7 @@ export async function listWslDistros(): Promise<string[]> {
   return distros;
 }
 
-function normalizeRemote(rows: unknown, id: string, label: string): SessionRecord[] {
+export function normalizeRemote(rows: unknown, id: string, label: string): SessionRecord[] {
   if (!Array.isArray(rows)) throw new Error('Scanner output must be an array');
   const seen = new Set<string>();
   const sessions: SessionRecord[] = [];

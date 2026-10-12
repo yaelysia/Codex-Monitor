@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inferObservedActivity, isInternalWslDistro } from '../electron/collector';
+import { inferObservedActivity, isInternalWslDistro, normalizeRemote } from '../electron/collector';
 import type { SessionRecord, SourceResult } from '../src/shared/types';
 
 function source(session: SessionRecord): SourceResult {
@@ -48,5 +48,19 @@ describe('observed file-growth evidence', () => {
     const completed = source({ ...record('growing2', 1_003_000, 120), status: 'finished' });
     inferObservedActivity([completed], 1_003_000);
     expect(completed.sessions[0]?.status).toBe('finished');
+  });
+});
+
+
+describe('remote status normalization', () => {
+  it('preserves abnormal terminal states for WSL/SSH without turning them into unknown', () => {
+    const entries = [
+      { id: 'completed', status: 'finished', updatedAt: 1000, finishedToken: 'done|1' },
+      { id: 'cancelled', status: 'interrupted', updatedAt: 1001 },
+      { id: 'failed', status: 'failed', updatedAt: 1002 },
+      { id: 'invalid', status: 'nonsense', updatedAt: 1003 },
+    ];
+    const rows = normalizeRemote(entries, 'ssh:server', 'Server');
+    expect(rows.map(row => row.status)).toEqual(['finished', 'interrupted', 'failed', 'unknown']);
   });
 });
