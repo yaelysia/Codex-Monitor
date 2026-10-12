@@ -92,7 +92,7 @@ This is a UI-only change: the scan interval, metadata-only collection, existing 
 
 Codex Monitor 已支持 Windows 系统托盘和单实例后台运行：关闭主窗口默认只是关闭该界面以释放 UI 资源，**监控、事件通道、悬浮窗与通知继续运行**。托盘可重新打开主窗口、切换悬浮窗、静音系统弹窗或选择「完全退出」停止监控。主窗口右上角「常驻设置」可取消后台运行，或在**正式打包的 Windows 版本**中选择开机自动启动；开发模式不会修改开机项。开机启动默认关闭。
 
-主窗口的大小与位置、悬浮窗左/右屏幕边缘、显示器、纵向位置、展开和隐藏状态会保存在本机 `resident-state.json`，下次启动恢复。显示器移除或分辨率变化时自动调整到可见范围；若 Windows 重新分配显示器编号，也会尝试根据此前显示器的桌面坐标恢复到原屏幕。该文件不包含对话文本、会话日志或 SSH 密钥。
+主窗口的大小与位置、悬浮窗左/右屏幕边缘、显示器、纵向位置和隐藏状态保存在本机 `resident-state.json`，下次启动恢复。**悬浮窗展开是临时操作：重新显示或重启后默认收起，不恢复旧的展开面板。**显示器移除或分辨率变化时自动调整到可见范围；若 Windows 重新分配显示器编号，也会尝试根据此前显示器的桌面坐标恢复到原屏幕。该文件不包含对话文本、会话日志或 SSH 密钥。
 
 **悬浮窗透明度与位置：** 主窗口右上角「常驻设置」中，可实时拖动「悬浮窗透明度」滑块设置 **40%～100% 不透明度**，数值越低越透明，默认 100%。该设置作用于整个悬浮窗（包括文字、图标），收起和展开共用，隐藏或重启后仍保留。关闭主窗口后，也可从系统托盘的「悬浮窗不透明度」子菜单快速选取预设值。拖动悬浮窗顶部 C 标识即可改变左右停靠侧、所在屏幕和高度。出现屏幕布局变化或无法找到窗口时，可点「重置到主屏幕右侧」，不会重置透明度或任务通知。旧版 `resident-state.json` 不含透明度字段时保持原来的完全不透明外观。
 
@@ -221,7 +221,7 @@ Codex Monitor 现在除既有生命周期事件外，还解析**已持久化的�
 
 - **阻塞式问题：** 日志里的 `response_item.function_call` 请求 `request_user_input` / `request_permissions`，如果找不到同一 `call_id` 的 `function_call_output`，按「可能待处理」展示；匹配到工具回复、轮次结束或中断后清除。
 - **异步问题：** 新版 Codex 写入 `item_completed.AgentMessage`（`delivery: "async"` 且包含 `questions`）时，即使模型仍继续执行或本轮正常结束，也能记录一条**等待回答**提醒。之后出现用户消息会清除待回答标记。
-- 提醒包含当前会话标题与可提取的简短问题，仍然只通知新观察到的变化，不补发历史提醒；子代理的**完成**通知过滤不变。
+- 提醒包含当前会话标题与可提取的简短问题，仍然只通知新观察到的变化，不补发历史提醒；**子代理默认不产生完成或等待提醒**，仅主会话作为通知目标。
 - 这仍是**日志支持范围内的检测**：当 Codex 仅发送没有落盘的 App Server 请求、或者只在普通助手回复里口头提问时，Monitor 仍无法可靠判定它在等待回答。这些情况需要订阅原会话所属 App Server 的实时请求或显式可选 Hooks，不能仅靠文件监听实现。
 
 **直接标记已读：** 原生 Windows 通知增加「✓ 标记已读」按钮，直接调用 Monitor 的提醒确认，不打开收件箱、不回答问题也不触发工具审批。点击通知正文仍会打开对应会话。部分 Windows 开发模式或系统通知策略可能隐藏操作按钮；需在实际 Windows 通知中验证。**不依赖系统按钮的备选方式**：当悬浮窄条铃铛出现未读数字时，铃铛右下角会出现一个小 ✓，直接标记最新一条提醒已读，不必打开收件箱；原收件箱中的逐条 ✓ 继续保留。
@@ -233,14 +233,14 @@ Codex Monitor 现在除既有生命周期事件外，还解析**已持久化的�
 - **绿色运行入口**：显示目前被保守推断为可能执行中的会话及数量。
 - **铃铛入口**：新检测到的待处理/完成提醒，未读数量在窄栏上显示；可在面板中逐条标记已读。
 - **完成入口**：最近 24 小时发生过结束事件的会话。
-- 点击任何任务条目会打开/聚焦主窗口并定位对应会话。展开后的面板显示标题、来源和工作空间信息。
-- 点击 C 标识并拖动，可将窗口吸附到屏幕左侧或右侧；展开面板始终朝屏幕内部展开。点击箭头收起到窄栏。
+- 点击任务条目优先跳转原 Codex 窗口，无法定位时打开 Monitor 的会话详情。展开后的面板显示标题、来源和工作空间信息。
+- 点击 C 标识并拖动，可将窗口吸附到屏幕左侧或右侧；展开面板始终朝屏幕内部展开。**点击悬浮窗外的其他应用/桌面时自动收起面板，保留窄栏、透明度和停靠位置**；也可以点击箭头手动收起。
 - 悬浮窗底部可静音系统通知或隐藏窄栏。隐藏后从主窗口右上角的「显示悬浮窗」重新开启。
 - **Ctrl+K** 仍可在主窗口聚焦搜索；关闭主窗口后悬浮窗仍继续监控，反之亦然。
 
 **提醒行为：** Electron 主进程统一管理事件触发的扫描和自适应轮询，主窗口和悬浮窗共享结果，避免双重扫描。只在新观察到的状态变化发生时（例如可能运行中 → 本轮完成、或新出现等待证据）生成未读提醒；启动时不会对历史会话补发。重复轮次可根据持久化结束事件的时间与 turn id 去重。操作系统支持的情况下还会发出 Windows 系统通知；若系统禁用了通知，悬浮窗未读徽标仍有效。静音只关闭系统弹窗，不会丢弃悬浮窗收件箱的事件；静音与未读信息在本次应用运行期间保留，重启后不保留。
 
-**子代理通知规则：** 根据 Codex 的 `session_meta` 中 `source.subagent`、`thread_source`、`parent_thread_id`（含旧式数据）识别子代理。它们仍出现在主窗口会话列表和分组页，并有「子代理」标签；默认不会产生“本轮完成”系统通知或铃铛未读提醒，悬浮窗的「最近完成」也只列出主任务。主代理自己的 Turn 完成仍正常通知；子代理的等待操作仍保留原有提醒行为。若来源元数据缺失，不能凭标题或路径猜测它是子代理。
+**子代理默认隐藏：** 根据 Codex `session_meta` 中 `source.subagent`、`thread_source`、`parent_thread_id`（含旧式数据）识别子代理。主看板、全部会话、执行位置统计和悬浮窗默认仅展示主代理；主窗口筛选栏提供「显示子代理」复选框，可随时临时查看，选项保存在本机视图偏好中。子代理仍在底层只读扫描数据中，但默认**不产生完成或等待提醒**，悬浮窗铃铛和计数也不显示子代理。若来源元数据缺失，不凭标题或目录猜测它是子代理，以免误隐藏正常会话。
 
 **跨主机完成通知：** 远程服务器的日志 mtime 可能与 Windows 时钟不一致。通知系统优先依据相邻成功扫描观察到的任务结束状态或新结束事件标识；新发现会话、网络恢复后的任务使用源机器自行计算的 `ageAtSourceMs` 检查新鲜程度。SSH/WSL/Windows 共用同一事件去重逻辑；首次扫描不通知历史会话，断线很久后也不会批量弹出旧提醒。已完成的会话继续执行新轮次时，只要持久化了新的结束事件标识，也会再次提醒。
 
@@ -259,7 +259,7 @@ npm run dev
 
 ## Views
 
-- **全部会话:** single list with Codex session title (when available), full workspace path, source machine, status, and last activity.
+- **全部会话:** single list with Codex session title (when available), full workspace path, source machine, status, and last activity. Subagents are hidden by default; use 「显示子代理」 in the filter bar to include them.
 - **按执行位置分组:** source machine (Windows / each WSL distro / each configured SSH host) → absolute `cwd` → sessions in that directory. Active locations expand automatically; others can be expanded individually. Identical directory names on different machines are kept separate.
 - Search matches titles, absolute workspace paths, machine labels, and session IDs in both views. Status filters and the recent-seven-days filter apply to both views.
 
