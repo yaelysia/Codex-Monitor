@@ -173,34 +173,46 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
   }
   const sources = await Promise.all(scans);
   const scannedAt = Date.now();
-  if (process.platform === 'win32' && sources.some(source =>
-      !source.error && source.sessions.some(row =>
-        row.clientKind === 'desktop' && !row.isSubagent))) {
-    // A Windows Desktop GUI may control local, WSL or SSH Codex sessions.
-    // The GUI-owned log uses the same conversation UUID regardless of where
-    // the task executes. Never infer the source from the log's workspace text.
-    const scan = await inspectDesktopLogSignals().catch(() => ({
-      events: new Map(), logFilesRead: 0, signalCount: 0,
-    }));
-    const retainedEvents = desktopLogCache.observe(scan.events, scannedAt);
-    for (const source of sources) {
-      if (source.error) continue;
-      applyDesktopLogEvidence(source.sessions, retainedEvents, scannedAt);
-      for (const row of source.sessions) {
-        if (row.clientKind !== 'desktop' || row.isSubagent ||
-            row.status !== 'unknown') continue;
-        const matched = retainedEvents.has(row.id.toLowerCase());
-        const detail = matched
-          ? '已找到该会话的 Desktop 生命周期日志，但未能据此确认当前运行状态'
-          : scan.logFilesRead === 0
-            ? '未找到可读的 Codex Desktop 应用日志（包括 MSIX 目录）'
-            : scan.signalCount === 0
-              ? 'Desktop 应用日志可读取，但尚未识别到受支持的轮次事件'
-              : 'Desktop 日志含其他会话事件，但未能关联到当前会话 ID';
-        row.statusReason += '；' + detail;
-      }
-    }
-  }
+  // Keep the filesystem snapshot separate from GUI-owned runtime evidence.
+  // A later native event can then replace an earlier start, even when remote
+  // JSONL hasn't changed and we intentionally do NOT rescan every SSH host.
   inferObservedActivity(sources, scannedAt);
   return { sources, scannedAt };
+}
+
+/** Overlay the Windows GUI's native lifecycle evidence over ANY known thread
+ * with a matching UUID, including threads originally created by CLI or VS Code.
+ * The original metadata is not mutated and remains suitable for later audits.
+ */
+export async function projectDesktopRuntime(
+  snapshot: ScanResponse, now = Date.now(),
+): Promise<ScanResponse> {
+  if (process.platform !== 'win32' || !snapshot.sources.some(src =>
+      !src.error && src.sessions.some(s => !s.isSubagent))) return snapshot;
+  const inspected = await inspectDesktopLogSignals(now).catch(() => ({
+    events: new Map(), logFilesRead: 0, signalCount: 0,
+  }));
+  const evidence = desktopLogCache.observe(inspected.events, now);
+  return {
+    ...snapshot,
+    sources: snapshot.sources.map(source => {
+      if (source.error) return source;
+      const sessions = source.sessions.map(session => ({ ...session }));
+      applyDesktopLogEvidence(sessions, evidence, now);
+      for (const row of sessions) {
+        if (row.isSubagent || row.status !== 'unknown' ||
+            (row.clientKind !== 'desktop' && !evidence.has(row.id.toLowerCase()))) continue;
+        const detected = evidence.has(row.id.toLowerCase());
+        const detail = detected
+          ? '已找到该会话的 Desktop 生命周期日志，但当前无法证实仍在运行'
+          : inspected.logFilesRead === 0
+            ? '没有可读的 Codex Desktop 应用日志（含 MSIX 目录）'
+            : inspected.signalCount === 0
+              ? 'Desktop 应用日志可读取，但未识别到支持的生命周期事件'
+              : 'Desktop 应用日志可读取，但没有匹配当前会话 ID 的事件';
+        row.statusReason += '；' + detail;
+      }
+      return { ...source, sessions };
+    }),
+  };
 }
