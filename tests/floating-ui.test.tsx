@@ -11,7 +11,7 @@ describe('edge floating window renderer', () => {
     expect(html).toContain('可能执行中');
     expect(html).toContain('未读提醒');
     expect(html).toContain('最近完成');
-    expect(html).toContain('收起');
+    expect(html).toContain('展开悬浮窗');
   });
 
   it('keeps a stable terminal event fingerprint distinct from last file modification', () => {
