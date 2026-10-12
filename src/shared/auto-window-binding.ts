@@ -148,21 +148,25 @@ export class AutoWindowResolver {
     this.pendingTabs.delete(sessionKey);
   }
 
-  observeFocus(sample: ForegroundWindow): void {
-    if (!validForegroundWindow(sample)) return;
+  observeFocus(sample: ForegroundWindow): string[] {
+    if (!validForegroundWindow(sample)) return [];
     // Ignore reordered events; WinEventHook emits monotonically on its message thread.
-    if (this.history.length && sample.at < this.history[this.history.length - 1]!.at) return;
+    if (this.history.length && sample.at < this.history[this.history.length - 1]!.at) return [];
     this.history.push(sample);
     const minTime = sample.at - WINDOW_HISTORY_MS;
     while (this.history.length > 1 && this.history[0]!.at < minTime) this.history.shift();
     if (this.history.length > MAX_SAMPLES) this.history.splice(0, this.history.length - MAX_SAMPLES);
+    const upgraded: string[] = [];
     for (const [sessionKey, pending] of this.pendingTabs) {
       if (sample.at > pending.inputAt + 3000) {
         this.pendingTabs.delete(sessionKey);
       } else if (sample.tabId) {
+        const previous = this.bindings.get(sessionKey)?.tabId;
         this.confirmPendingTab(sessionKey);
+        if (!previous && this.bindings.get(sessionKey)?.tabId) upgraded.push(sessionKey);
       }
     }
+    return upgraded;
   }
 
   observeScan(scan: ScanResponse, now = Date.now()): string[] {

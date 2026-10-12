@@ -124,7 +124,8 @@ export class AutoWindowTracker {
               this.lastNativeError = null;
               this.clearStartupTimer();
             }
-            this.resolver.observeFocus(foreground);
+            const upgraded = this.resolver.observeFocus(foreground);
+            if (upgraded.length) this.bindingStore?.update(this.resolver.savedBindings());
           } else if ('ok' in raw && raw.ok === false &&
               'reason' in raw && raw.reason === 'native_bridge_unavailable') {
             this.lastNativeError = 'native_bridge_unavailable';
