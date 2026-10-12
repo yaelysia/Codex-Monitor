@@ -203,13 +203,22 @@ export async function projectDesktopRuntime(
         if (row.isSubagent || row.status !== 'unknown' ||
             (row.clientKind !== 'desktop' && !evidence.has(row.id.toLowerCase()))) continue;
         const detected = evidence.has(row.id.toLowerCase());
+        const coverage = inspected.discovery;
         const detail = detected
           ? '已找到该会话的 Desktop 生命周期日志，但当前无法证实仍在运行'
+          : coverage && !coverage.validLocalAppData
+            ? '监控进程缺少 LOCALAPPDATA 环境变量，无法发现 Desktop 日志'
+          : coverage && coverage.existingRootCount === 0
+            ? '未找到已知的 Desktop 日志目录（普通安装/MSIX/Roaming）'
+          : coverage && coverage.matchingLogNames === 0
+            ? '已发现 Desktop 日志目录，但没有符合已知格式的日志文件'
+          : coverage && coverage.recentCandidateCount === 0
+            ? '找到 Desktop 日志文件，但文件时间或大小不在有限扫描范围内'
           : inspected.logFilesRead === 0
-            ? '没有可读的 Codex Desktop 应用日志（含 MSIX 目录）'
-            : inspected.signalCount === 0
-              ? 'Desktop 应用日志可读取，但未识别到支持的生命周期事件'
-              : 'Desktop 应用日志可读取，但没有匹配当前会话 ID 的事件';
+            ? '找到候选 Desktop 日志文件，但无法成功读取'
+          : inspected.signalCount === 0
+            ? 'Desktop 应用日志可读取，但未识别到支持的生命周期事件'
+          : 'Desktop 应用日志可读取，但没有匹配当前会话 ID 的事件';
         row.statusReason += '；' + detail;
       }
       return { ...source, sessions };
