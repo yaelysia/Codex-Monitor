@@ -45,6 +45,8 @@ export interface SourceResult {
   id: string;
   label: string;
   kind: SourceKind;
+  /** Host timestamps bounding this source's scan; the remote scan moment lies between them. */
+  captureStartedAt?: number;
   /** Local wall-clock time when THIS source scan completed, not the merged scan time. */
   capturedAt?: number;
   sessions: SessionRecord[];

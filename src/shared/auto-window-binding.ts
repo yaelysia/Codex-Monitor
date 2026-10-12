@@ -62,20 +62,32 @@ export class AutoWindowResolver {
         const age = session.lastUserInputAgeAtSourceMs;
         if (client === 'unknown' || typeof age !== 'number' || !Number.isFinite(age) ||
           age < 0 || age > MAX_INPUT_AGE_MS) continue;
-        const inputAt = (source.capturedAt ?? scan.scannedAt) - age;
-        if (inputAt < this.history[0]!.at || inputAt > now + 1000 ||
-            now - inputAt > MAX_INPUT_AGE_MS) continue;
+        const captureEnd = source.capturedAt ?? scan.scannedAt;
+        const captureStart = source.captureStartedAt ?? captureEnd;
+        const earliestInputAt = captureStart - age;
+        const inputAt = captureEnd - age;
+        if (earliestInputAt < this.history[0]!.at || inputAt > now + 1000 ||
+            captureStart > captureEnd || now - inputAt > MAX_INPUT_AGE_MS) continue;
         const token = session.lastUserInputAtSourceMs ?? inputAt;
         const previous = this.lastInput.get(session.key);
         if (previous != null && (previous === token ||
             (session.lastUserInputAtSourceMs == null && Math.abs(inputAt - previous) < 1500))) continue;
 
-        let selected: ForegroundWindow | undefined;
-        for (let j = this.history.length - 1; j >= 0; j--) {
-          const item = this.history[j]!;
-          if (item.at <= inputAt) { selected = item; break; }
-        }
-        if (!selected || selected.app === 'other' || !isClientMatch(client, selected.app)) {
+        const foregroundAt = (time: number): ForegroundWindow | undefined => {
+          for (let j = this.history.length - 1; j >= 0; j--) {
+            const item = this.history[j]!;
+            if (item.at <= time) return item;
+          }
+          return undefined;
+        };
+        const earliest = foregroundAt(earliestInputAt);
+        const selected = foregroundAt(inputAt);
+        // The remote scanner's moment within SSH/WSL execution is uncertain.
+        // Bind only if the same native window was foreground throughout that
+        // bounded interval. Otherwise don't guess where the input came from.
+        if (!earliest || !selected || selected.hwnd !== earliest.hwnd ||
+            selected.pid !== earliest.pid || selected.startedAt !== earliest.startedAt ||
+            selected.app === 'other' || !isClientMatch(client, selected.app)) {
           // Do not replace an existing link with a guessed candidate.
           continue;
         }

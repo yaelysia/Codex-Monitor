@@ -100,3 +100,26 @@ describe('stable user event deduplication', () => {
     expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1111');
   });
 });
+
+describe('uncertain remote timing', () => {
+  it('avoids binding either of two terminals when focus switched during SSH scanning', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW - 5000, 'terminal', '0x1111', 111));
+    resolver.observeFocus(sample(NOW + 1000, 'terminal', '0x2222', 222));
+    const scan = makeScan(NOW + 4000, 2000);
+    scan.sources[0]!.captureStartedAt = NOW;
+    scan.sources[0]!.capturedAt = NOW + 4000;
+    resolver.observeScan(scan, NOW + 4000);
+    expect(resolver.get('ssh:server:thread')).toBeNull();
+  });
+
+  it('matches when the same window remained foreground for the entire remote scan window', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW - 5000, 'terminal', '0x1111', 111));
+    const scan = makeScan(NOW + 4000, 2000);
+    scan.sources[0]!.captureStartedAt = NOW;
+    scan.sources[0]!.capturedAt = NOW + 4000;
+    resolver.observeScan(scan, NOW + 4000);
+    expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1111');
+  });
+});

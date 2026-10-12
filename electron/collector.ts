@@ -131,8 +131,10 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
 }
 
 async function sourceResult(id: string, label: string, kind: SourceKind, scan: () => Promise<SessionRecord[]>): Promise<SourceResult> {
-  try { return { id, label, kind, sessions: await scan(), capturedAt: Date.now(), error: null }; }
-  catch (error) { return { id, label, kind, sessions: [], capturedAt: Date.now(), error: error instanceof Error ? error.message : String(error) }; }
+  const captureStartedAt = Date.now();
+  try { return { id, label, kind, sessions: await scan(), captureStartedAt, capturedAt: Date.now(), error: null }; }
+  catch (error) { return { id, label, kind, sessions: [], captureStartedAt, capturedAt: Date.now(),
+    error: error instanceof Error ? error.message : String(error) }; }
 }
 
 /** Passing sourceIds scans only the changed host; empty/omitted means all hosts. */
