@@ -95,8 +95,19 @@ export class AutoWindowResolver {
         const captureEnd = source.capturedAt ?? scan.scannedAt;
         const captureStart = source.captureStartedAt ?? captureEnd;
         const earliestInputAt = captureStart - age;
-        const inputAt = captureEnd - age;
-        if (earliestInputAt < this.history[0]!.at || inputAt > now + 1000 ||
+        const latestInputAt = captureEnd - age;
+        // Windows and WSL share the host clock. When the actual persisted user
+        // event timestamp fits the bounded scan observation (with tiny skew),
+        // it is more precise than the collector's completion time. Otherwise
+        // retain the conservative interval to avoid remote-clock misbindings.
+        const exact = session.lastUserInputAtSourceMs;
+        const canUseExact = (source.kind === 'local' || source.kind === 'wsl') &&
+          typeof exact === 'number' && Number.isFinite(exact) &&
+          exact >= earliestInputAt - 2000 && exact <= latestInputAt + 2000 &&
+          exact <= now + 1000 && now - exact <= MAX_INPUT_AGE_MS;
+        const matchStart = canUseExact ? exact : earliestInputAt;
+        const inputAt = canUseExact ? exact : latestInputAt;
+        if (matchStart < this.history[0]!.at || inputAt > now + 1000 ||
             captureStart > captureEnd || now - inputAt > MAX_INPUT_AGE_MS) continue;
         const token = session.lastUserInputAtSourceMs ?? inputAt;
         const previous = this.lastInput.get(session.key);
@@ -110,7 +121,7 @@ export class AutoWindowResolver {
           }
           return undefined;
         };
-        const earliest = foregroundAt(earliestInputAt);
+        const earliest = foregroundAt(matchStart);
         const selected = foregroundAt(inputAt);
         if (!earliest || !selected || selected.app === 'other' ||
             !isClientMatch(client, selected.app)) continue;
@@ -120,7 +131,7 @@ export class AutoWindowResolver {
         // Checking endpoints alone is insufficient: a user could leave a window,
         // type in another tab, then return before the remote scan completes.
         const during = this.history.filter(item =>
-          item.at >= earliestInputAt && item.at <= inputAt);
+          item.at >= matchStart && item.at <= inputAt);
         if (!sameWindow(earliest) || during.some(item => !sameWindow(item))) continue;
         // A tab identity requires continuity across every observed sample,
         // including a post-input sample. A partial/ambiguous provider is a

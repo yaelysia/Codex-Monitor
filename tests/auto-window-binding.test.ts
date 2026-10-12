@@ -244,3 +244,33 @@ describe('native watch interruption preserves verified original windows', () => 
     expect(resolver.get('ssh:server:new-thread')).toBeNull();
   });
 });
+
+describe('prompt submission followed by immediate app switch', () => {
+  it('uses a verified local message timestamp instead of wrongly rejecting a slow scan', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW - 1000, 'vscode', '0x1111', 111));
+    resolver.observeFocus(sample(NOW + 300, 'other', '0x2222', 222));
+    const snap = makeScan(NOW + 3000, 1000, 'vscode', 'local:thread');
+    snap.sources[0]!.kind = 'local';
+    snap.sources[0]!.captureStartedAt = NOW - 500;
+    snap.sources[0]!.capturedAt = NOW + 3000;
+    snap.sources[0]!.sessions[0]!.lastUserInputAtSourceMs = NOW - 200;
+    resolver.observeScan(snap, NOW + 3000);
+    expect(resolver.get('local:thread')).toMatchObject({
+      hwnd: '0x1111', pid: 111,
+    });
+  });
+
+  it('does not trust an implausible local event timestamp or guess across a window switch', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW - 1000, 'vscode', '0x1111', 111));
+    resolver.observeFocus(sample(NOW + 300, 'other', '0x2222', 222));
+    const snap = makeScan(NOW + 3000, 1000, 'vscode', 'local:thread');
+    snap.sources[0]!.kind = 'local';
+    snap.sources[0]!.captureStartedAt = NOW - 500;
+    snap.sources[0]!.capturedAt = NOW + 3000;
+    snap.sources[0]!.sessions[0]!.lastUserInputAtSourceMs = NOW - 20_000;
+    resolver.observeScan(snap, NOW + 3000);
+    expect(resolver.get('local:thread')).toBeNull();
+  });
+});
