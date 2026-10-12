@@ -34,7 +34,8 @@
     "files": ["out/**/*", "package.json"],
     "extraResources": [
       { "from": "collector/scan.py", "to": "scan.py" },
-      { "from": "collector/preview.py", "to": "preview.py" }
+      { "from": "collector/preview.py", "to": "preview.py" },
+      { "from": "collector/watch.py", "to": "watch.py" }
     ],
     "directories": { "output": "release" },
     "win": { "target": "nsis" },
