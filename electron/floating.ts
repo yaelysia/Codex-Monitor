@@ -1,40 +1,41 @@
 import path from 'node:path';
 import { BrowserWindow, screen } from 'electron';
-import type { FloatingSide, FloatingWindowState } from '../src/shared/types';
+import { dockWindowBounds, type SavedDock, type WorkArea } from '../src/shared/window-geometry';
+import type { FloatingWindowState } from '../src/shared/types';
 
-const RAIL_WIDTH = 55;
-const OPEN_WIDTH = 350;
 const HEIGHT = 276;
-const TOP_OFFSET = 92;
-
-/** Frameless rail pinned to the nearest edge, expanding inward on demand. */
 export class FloatingWindowController {
   private win: BrowserWindow | null = null;
-  private side: FloatingSide = 'right';
-  private expanded = false;
-  private dockY: number | null = null;
+  private dock: SavedDock;
   private snapping = false;
   private quitting = false;
 
   constructor(private readonly onState: (state: FloatingWindowState) => void,
-    private readonly onHidden: () => void) {}
+    private readonly onHidden: () => void,
+    initial: SavedDock,
+    private readonly onPersist: (dock: SavedDock) => void) {
+    this.dock = { ...initial };
+  }
 
   state(): FloatingWindowState {
-    return { visible: this.win?.isVisible() ?? false, expanded: this.expanded, side: this.side };
+    return { visible: this.win?.isVisible() ?? false, expanded: this.dock.expanded,
+      side: this.dock.side };
   }
 
   get browserWindow(): BrowserWindow | null { return this.win; }
 
   show(): FloatingWindowState {
     if (!this.win || this.win.isDestroyed()) this.create();
+    this.dock.visible = true;
     this.win!.showInactive();
-    this.notify();
+    this.persist();
     return this.state();
   }
 
   hide(): FloatingWindowState {
     this.win?.hide();
-    this.notify();
+    this.dock.visible = false;
+    this.persist();
     this.onHidden();
     return this.state();
   }
@@ -45,36 +46,40 @@ export class FloatingWindowController {
 
   setExpanded(expanded: boolean): FloatingWindowState {
     if (!this.win || this.win.isDestroyed()) this.create();
-    this.expanded = expanded;
-    const bounds = this.win!.getBounds();
-    const area = screen.getDisplayMatching(bounds).workArea;
-    this.place(this.bounds(area));
+    this.dock.expanded = expanded;
+    this.place(this.bounds(this.display()));
+    this.persist();
     return this.state();
+  }
+
+  /** Re-clamp after a monitor is disconnected or its workArea changes. */
+  reposition(): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    this.place(this.bounds(this.display()));
   }
 
   allowQuit(): void { this.quitting = true; }
 
+  private display(): Electron.Display {
+    return screen.getAllDisplays().find(display => display.id === this.dock.displayId)
+      ?? screen.getPrimaryDisplay();
+  }
+
+  private bounds(display: Electron.Display): Electron.Rectangle {
+    const area: WorkArea = { ...display.workArea, id: display.id };
+    return dockWindowBounds(this.dock, area);
+  }
+
   private create(): void {
-    const area = screen.getPrimaryDisplay().workArea;
     const win = new BrowserWindow({
-      ...this.bounds(area),
-      frame: false,
-      transparent: true,
-      backgroundColor: '#00000000',
-      hasShadow: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      autoHideMenuBar: true,
-      show: false,
+      ...this.bounds(this.display()), frame: false, transparent: true,
+      backgroundColor: '#00000000', hasShadow: false,
+      alwaysOnTop: true, skipTaskbar: true, resizable: false,
+      minimizable: false, maximizable: false, fullscreenable: false,
+      autoHideMenuBar: true, show: false,
       webPreferences: {
         preload: path.join(__dirname, '../preload/index.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: false,
+        contextIsolation: true, nodeIntegration: false, sandbox: false,
       },
     });
     this.win = win;
@@ -87,18 +92,10 @@ export class FloatingWindowController {
       event.preventDefault();
       this.hide();
     });
-    win.on('closed', () => { this.win = null; this.notify(); });
+    win.on('closed', () => { this.win = null; this.onState(this.state()); });
     const rendererURL = process.env.ELECTRON_RENDERER_URL;
     if (rendererURL) void win.loadURL(rendererURL.replace(/\/$/, '') + '/floating.html');
     else void win.loadFile(path.join(__dirname, '../renderer/floating.html'));
-  }
-
-  private bounds(area: Electron.Rectangle): Electron.Rectangle {
-    const width = this.expanded ? Math.min(OPEN_WIDTH, area.width) : RAIL_WIDTH;
-    const x = this.side === 'right' ? area.x + area.width - width : area.x;
-    const y = Math.min(Math.max(this.dockY ?? area.y + TOP_OFFSET, area.y),
-      area.y + area.height - HEIGHT);
-    return { x, y, width, height: HEIGHT };
   }
 
   private place(bounds: Electron.Rectangle): void {
@@ -106,20 +103,25 @@ export class FloatingWindowController {
     this.snapping = true;
     this.win.setBounds(bounds);
     setTimeout(() => { this.snapping = false; }, 150);
-    this.notify();
   }
 
   private snapToDisplayEdge(): void {
     if (!this.win || this.win.isDestroyed()) return;
     const before = this.win.getBounds();
-    const area = screen.getDisplayMatching(before).workArea;
-    this.side = before.x + before.width / 2 < area.x + area.width / 2 ? 'left' : 'right';
-    this.dockY = before.y;
-    const after = this.bounds(area);
-    if (before.x !== after.x || before.y !== after.y || before.width !== after.width) {
-      this.place(after);
-    } else this.notify();
+    const display = screen.getDisplayMatching(before);
+    const area = display.workArea;
+    this.dock.side = before.x + before.width / 2 < area.x + area.width / 2 ? 'left' : 'right';
+    this.dock.displayId = display.id;
+    this.dock.offsetY = Math.min(Math.max(0, before.y - area.y), Math.max(0, area.height - HEIGHT));
+    const target = this.bounds(display);
+    if (before.x !== target.x || before.y !== target.y || before.width !== target.width) {
+      this.place(target);
+    }
+    this.persist();
   }
 
-  private notify(): void { this.onState(this.state()); }
+  private persist(): void {
+    this.onPersist({ ...this.dock });
+    this.onState(this.state());
+  }
 }
