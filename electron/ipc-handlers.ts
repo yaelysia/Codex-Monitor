@@ -2,6 +2,7 @@ import { clipboard, ipcMain } from 'electron';
 import type { Settings } from '../src/shared/types';
 import { readSettings, writeSettings } from './config';
 import { listWslDistros } from './collector';
+import { readRecentReply } from './reply-preview';
 import type { FloatingWindowController } from './floating';
 import type { MainWindowController } from './main-window';
 import type { MonitorService } from './monitor-service';
@@ -17,6 +18,10 @@ export function registerIpcHandlers(monitor: MonitorService,
     return { settings: saved, distros: await listWslDistros() };
   });
   ipcMain.handle('monitor:refresh', () => monitor.refresh(true));
+  ipcMain.handle('monitor:recent-reply', async (_event, key: unknown) => {
+    if (typeof key !== 'string' || key.length > 300) throw new Error('Invalid session key');
+    return readRecentReply(key, monitor.state().scan, await readSettings());
+  });
   ipcMain.handle('monitor:get-state', () => monitor.state());
   ipcMain.handle('monitor:ack-alert', (_event, id: unknown) => {
     if (typeof id !== 'string' || id.length > 1024) throw new Error('Invalid alert id');

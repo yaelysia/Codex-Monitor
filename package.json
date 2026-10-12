@@ -33,7 +33,8 @@
     "productName": "Codex Monitor",
     "files": ["out/**/*", "package.json"],
     "extraResources": [
-      { "from": "collector/scan.py", "to": "scan.py" }
+      { "from": "collector/scan.py", "to": "scan.py" },
+      { "from": "collector/preview.py", "to": "preview.py" }
     ],
     "directories": { "output": "release" },
     "win": { "target": "nsis" },

@@ -5,6 +5,7 @@ const api: MonitorApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: settings => ipcRenderer.invoke('config:set', settings),
   refresh: () => ipcRenderer.invoke('monitor:refresh'),
+  getRecentReply: key => ipcRenderer.invoke('monitor:recent-reply', key),
   copyWorkspace: text => ipcRenderer.invoke('workspace:copy', text),
   getMonitorState: () => ipcRenderer.invoke('monitor:get-state'),
   onMonitorState: (listener: (state: MonitorState) => void) => {

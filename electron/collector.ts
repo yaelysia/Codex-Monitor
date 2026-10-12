@@ -36,7 +36,7 @@ function script(): Promise<string> {
 }
 
 /** Process args are fixed; only a trusted base64 JSON literal is prepended to Python stdin. */
-export function runCollector(command: string, args: string[], python: string, root = ''): Promise<unknown> {
+export function runCollector(command: string, args: string[], python: string, root = '', options: Record<string, string> = {}): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let output = '';
     let errorText = '';
@@ -64,7 +64,7 @@ export function runCollector(command: string, args: string[], python: string, ro
       if (code !== 0) { finish(new Error(timedOut ? 'Collector timed out' : errorText.trim() || `Collector exited with code ${code}`)); return; }
       finish();
     });
-    const config = Buffer.from(JSON.stringify({ root, limit: 200 }), 'utf8').toString('base64');
+    const config = Buffer.from(JSON.stringify({ root, limit: 200, ...options }), 'utf8').toString('base64');
     child.stdin.on('error', () => { /* process exited early; close event reports the failure */ });
     child.stdin.end(`CONFIG_B64 = '${config}'\n${python}`);
   });
@@ -102,6 +102,7 @@ function normalizeRemote(rows: unknown, id: string, label: string): SessionRecor
       sourceId: id,
       sourceLabel: label,
       workspace: typeof entry.workspace === 'string' ? entry.workspace : null,
+      rolloutPath: typeof entry.rolloutPath === 'string' ? entry.rolloutPath : null,
       title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.slice(0, 181) : null,
       status: status === 'working' || status === 'waiting' || status === 'finished' ? status : 'unknown',
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
