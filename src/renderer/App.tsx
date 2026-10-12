@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt } from '../shared/types';
+import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions } from '../shared/types';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
 
@@ -242,6 +242,10 @@ export default function App() {
     error: string | null;
   } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showResident, setShowResident] = useState(false);
+  const [residentOptions, setResidentOptions] = useState<ResidentOptions | null>(null);
+  const [residentError, setResidentError] = useState('');
+  const [residentSaving, setResidentSaving] = useState(false);
   const [floatingVisible, setFloatingVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [laneLimit, setLaneLimit] = useState<Record<string, number>>({
@@ -271,6 +275,9 @@ export default function App() {
     window.monitorApi.getConfig().then(value => {
       if (mounted.current) setConfig(value);
     }).catch(err => { if (mounted.current) setError(describeError(err)); });
+    void window.monitorApi.getResidentOptions().then(value => {
+      if (mounted.current) setResidentOptions(value);
+    }).catch(err => { if (mounted.current) setResidentError(describeError(err)); });
     const unsubscribe = window.monitorApi.onMonitorState(state => {
       if (!mounted.current) return;
       setEventChannels(state.eventChannels || {});
@@ -393,6 +400,19 @@ export default function App() {
   function toggleSource(id: string) {
     setExpandedSources(ids => ids.includes(id) ? ids.filter(entry => entry !== id) : [...ids, id]);
   }
+  async function updateResidentOptions(next: ResidentOptions): Promise<void> {
+    if (residentSaving) return;
+    setResidentSaving(true);
+    setResidentError('');
+    try {
+      const result = await window.monitorApi.setResidentOptions(next);
+      setResidentOptions(result);
+    } catch (error) {
+      setResidentError(describeError(error));
+    } finally {
+      setResidentSaving(false);
+    }
+  }
 
   return <div className="monitor-layout">
     <aside className="sidebar" aria-label="主导航和执行位置">
@@ -476,6 +496,9 @@ export default function App() {
             <span title={currentWorkspace.workspace || ''}>{workspaceName(currentWorkspace.workspace)}</span></>}
         </div>
         <div className="header-actions">
+          <button type="button" className="header-button" onClick={() => setShowResident(true)}>
+            <Icon name="settings" size={15}/>常驻设置
+          </button>
           <span className="read-only-mark"><span className="live-dot"/>只读模式</span>
           <button type="button" className="header-button float-entry"
             aria-pressed={floatingVisible}
@@ -636,5 +659,47 @@ export default function App() {
     </aside>
 
     {showSettings && config && <SettingsPanel config={config} onClose={() => setShowSettings(false)} onSave={saveSettings}/>}
+    {showResident && <div className="modal-backdrop" role="presentation" onMouseDown={event => {
+      if (event.target === event.currentTarget) setShowResident(false);
+    }}>
+      <section className="modal resident-modal" role="dialog" aria-modal="true" aria-label="常驻设置">
+        <header className="modal-top">
+          <div><h2>常驻与启动</h2>
+            <p>设置 Windows 托盘行为和可选开机启动，不影响 Codex 会话。</p>
+          </div>
+          <button type="button" className="icon-button" aria-label="关闭常驻设置" onClick={() => setShowResident(false)}>×</button>
+        </header>
+        <div className="resident-fields">
+          <label className="resident-toggle">
+            <input type="checkbox" disabled={!residentOptions || residentSaving}
+              checked={residentOptions?.keepRunningOnClose ?? true}
+              onChange={event => { if (residentOptions) void updateResidentOptions({
+                ...residentOptions, keepRunningOnClose: event.target.checked,
+              }); }}/>
+            <span><strong>关闭主窗口后继续后台监控</strong>
+              <small>默认开启。关闭主窗口释放界面资源，托盘仍接收完成提醒；托盘可完全退出。</small>
+            </span>
+          </label>
+          <label className="resident-toggle">
+            <input type="checkbox" disabled={!residentOptions?.startupSupported || residentSaving}
+              checked={residentOptions?.launchAtLogin ?? false}
+              onChange={event => { if (residentOptions) void updateResidentOptions({
+                ...residentOptions, launchAtLogin: event.target.checked,
+              }); }}/>
+            <span><strong>开机自动启动（可选）</strong>
+              <small>{residentOptions?.startupSupported
+                ? '仅在 Windows 登录后以后台模式启动，不自动打开主窗口。'
+                : '仅在正式打包的 Windows 版本中可设置；开发模式不会修改系统开机项。'}</small>
+            </span>
+          </label>
+          <p className="resident-help">悬浮窗的停靠边缘、位置、展开状态和显示状态会自动保存。
+            Windows 本地文件读取使用缓存；事件监听正常时，远程机器会降低兜底轮询频率。</p>
+          {residentError && <p className="error-note" role="alert">{residentError}</p>}
+        </div>
+        <footer className="modal-actions">
+          <button type="button" className="primary-button" onClick={() => setShowResident(false)}>完成</button>
+        </footer>
+      </section>
+    </div>}
   </div>;
 }
