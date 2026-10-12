@@ -362,8 +362,9 @@ class TestLinuxCollector(unittest.TestCase):
         ]
         raw = '\n'.join(map(json.dumps, lines))
         pending = scanner.details('', raw, 'rollout-abc.jsonl', False, now - 1000, now)
-        self.assertEqual(pending['status'], 'finished')
+        self.assertEqual(pending['status'], 'unknown')
         self.assertEqual(pending['pendingQuestionToken'], 'async:ask-async')
+        self.assertIsNone(pending['finishedToken'])
         self.assertEqual(pending['questionText'], '选择要发布的分支')
         lines.append({'type': 'event_msg', 'payload': {
             'type': 'user_message', 'message': 'main'}})
