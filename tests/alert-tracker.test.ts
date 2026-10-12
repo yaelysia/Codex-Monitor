@@ -204,14 +204,23 @@ describe('subagent completion notification policy', () => {
     expect(tracker.observe(snapshot(NOW + 12000, [completed]), NOW + 12000)).toEqual([]);
   });
 
-  it('keeps child waiting alerts available because only child completion was opted out', () => {
+  it('suppresses child waiting alerts as well as child completion alerts', () => {
     const tracker = new AlertTracker();
     tracker.observe(snapshot(NOW, [row('working', NOW, { isSubagent: true })]), NOW);
     const waiting = row('waiting', NOW + 9000, {
       isSubagent: true, waitingToken: 'child|needs-input', ageAtSourceMs: 1000,
     });
-    expect(tracker.observe(snapshot(NOW + 12000, [waiting]), NOW + 12000)
-      .map(item => item.kind)).toEqual(['waiting']);
+    expect(tracker.observe(snapshot(NOW + 12000, [waiting]), NOW + 12000)).toEqual([]);
+    expect(tracker.getAlerts()).toHaveLength(0);
+  });
+
+  it('keeps hiding subagent wait alerts if a later scan omits the child flag', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, { isSubagent: true })]), NOW);
+    const waiting = row('waiting', NOW + 9000, {
+      isSubagent: undefined, waitingToken: 'child|needs-input', ageAtSourceMs: 1000,
+    });
+    expect(tracker.observe(snapshot(NOW + 12000, [waiting]), NOW + 12000)).toEqual([]);
   });
 
   it('does not infer child role from a title, cwd, or source machine name', () => {

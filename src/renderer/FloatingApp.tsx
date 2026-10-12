@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { FloatingTab, FloatingWindowState, MonitorState, SessionRecord } from '../shared/types';
 import { recentParentCompletions } from '../shared/monitor-view';
 import { windowWasActivated } from '../shared/window-navigation';
+import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
 const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right', opacity: 1 };
@@ -32,7 +33,7 @@ function ageText(then: number, now: number) {
   return Math.floor(seconds / 86400) + ' 天前';
 }
 function recentSessions(state: MonitorState): SessionRecord[] {
-  return (state.scan?.sources.flatMap(source => source.sessions) || [])
+  return visibleSessions(state.scan?.sources.flatMap(source => source.sessions) || [])
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
@@ -56,8 +57,10 @@ export default function FloatingApp() {
   const running = sessions.filter(s => s.status === 'working');
   const waiting = sessions.filter(s => s.status === 'waiting' || !!s.pendingQuestionToken);
   const completed = recentParentCompletions(sessions, now, monitor.scan?.scannedAt);
-  const unread = monitor.alerts.filter(a => !a.read);
-  const alerts = [...monitor.alerts].sort((a, b) => b.at - a.at);
+  const alerts = visibleAlerts(monitor.alerts,
+    monitor.scan?.sources.flatMap(source => source.sessions) || [])
+    .sort((a, b) => b.at - a.at);
+  const unread = alerts.filter(a => !a.read);
   const dataSources = monitor.scan?.sources.filter(s => !s.error).length || 0;
 
   function showTab(target: FloatingTab) {
@@ -97,7 +100,7 @@ export default function FloatingApp() {
             onClick={() => openOriginal(session.key)}>
             <span className="small-dot green"/>
             <span className="task-info"><strong title={session.title || ''}>{session.title || '未命名会话'}</strong>
-              <small title={session.workspace || ''}>{session.sourceLabel}{session.isSubagent ? ' · 子代理' : ''} · {session.workspace || '未知目录'}</small></span>
+              <small title={session.workspace || ''}>{session.sourceLabel} · {session.workspace || '未知目录'}</small></span>
             <Icon name="open" size={13}/>
           </button>) : <p className="dock-empty">暂无可确认的活动会话</p>)}
         {tab === 'alerts' && <>

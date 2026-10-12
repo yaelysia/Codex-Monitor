@@ -92,12 +92,11 @@ export class AlertTracker {
             ? continuouslyObserved || recentAtSource(session, now)
             : recentAtSource(session, now);
 
-          // A child thread's successful turn is internal progress, not a completed
-          // user-facing parent task. Keep the child in scans and update its state,
-          // but do not add a completion alert or native toast for it.
-          const childCompletion = kind === 'finished' &&
-            (session.isSubagent === true || prior?.isSubagent === true);
-          if (changed && newTerminal && recentlyObserved && !childCompletion) {
+          // Hide child-agent notifications (including wait events) by default.
+          // A child remains in read-only scan results for optional inspection,
+          // but is not a separate user-facing notification target.
+          const childNotification = session.isSubagent === true || prior?.isSubagent === true;
+          if (changed && newTerminal && recentlyObserved && !childNotification) {
             const identity = token || [session.updatedAt, session.byteSize ?? '?'].join(':');
             const id = JSON.stringify([session.key, kind, identity]);
             if (!this.seenAlertIds.has(id)) {

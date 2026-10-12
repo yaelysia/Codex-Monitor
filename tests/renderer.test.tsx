@@ -14,5 +14,6 @@ describe('desktop UI rendering smoke', () => {
     expect(html).toContain('最近完成');
     expect(html).toContain('数据源设置');
     expect(html).toContain('常驻设置');
+    expect(html).toContain('显示子代理');
   });
 });

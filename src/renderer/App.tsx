@@ -3,13 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus } from '../shared/types';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
+import { visibleSessions } from '../shared/session-visibility';
 
 type View = 'board' | 'sessions' | 'locations';
 
-type StoredViewPreferences = { view: View; recentOnly: boolean; filter: SessionStatus | 'all' };
+type StoredViewPreferences = { view: View; recentOnly: boolean; filter: SessionStatus | 'all'; showSubagents: boolean };
 const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
 function readViewPreferences(): StoredViewPreferences {
-  const fallback: StoredViewPreferences = { view: 'board', recentOnly: true, filter: 'all' };
+  const fallback: StoredViewPreferences = { view: 'board', recentOnly: true, filter: 'all', showSubagents: false };
   try {
     if (typeof localStorage === 'undefined') return fallback;
     const row = JSON.parse(localStorage.getItem(VIEW_PREFERENCES_KEY) || 'null');
@@ -18,7 +19,8 @@ function readViewPreferences(): StoredViewPreferences {
     const validFilter = ['all', 'working', 'waiting', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
     return { view: validView ? row.view : 'board',
       recentOnly: typeof row.recentOnly === 'boolean' ? row.recentOnly : true,
-      filter: validFilter ? row.filter : 'all' };
+      filter: validFilter ? row.filter : 'all',
+      showSubagents: row.showSubagents === true };
   } catch { return fallback; }
 }
 
@@ -251,6 +253,7 @@ export default function App() {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<SessionStatus | 'all'>(() => readViewPreferences().filter);
   const [recentOnly, setRecentOnly] = useState(() => readViewPreferences().recentOnly);
+  const [showSubagents, setShowSubagents] = useState(() => readViewPreferences().showSubagents);
   const [view, setView] = useState<View>(() => readViewPreferences().view);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -355,9 +358,10 @@ export default function App() {
     };
   }, [refresh]);
   useEffect(() => {
-    try { localStorage.setItem(VIEW_PREFERENCES_KEY, JSON.stringify({ view, filter, recentOnly })); }
+    try { localStorage.setItem(VIEW_PREFERENCES_KEY,
+      JSON.stringify({ view, filter, recentOnly, showSubagents })); }
     catch { /* storage permission or quota: viewing and monitoring still work */ }
-  }, [view, filter, recentOnly]);
+  }, [view, filter, recentOnly, showSubagents]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -371,8 +375,9 @@ export default function App() {
     return () => window.removeEventListener('keydown', listener);
   }, []);
 
-  const allSessions = useMemo(() => (scan?.sources.flatMap(source => source.sessions) ?? [])
-    .sort((a, b) => b.updatedAt - a.updatedAt), [scan]);
+  const allSessions = useMemo(() => visibleSessions(
+    scan?.sources.flatMap(source => source.sessions) ?? [], showSubagents)
+    .sort((a, b) => b.updatedAt - a.updatedAt), [scan, showSubagents]);
   const sourceGroups = useMemo(() => groupByExecutionLocation(allSessions), [allSessions]);
   const shown = useMemo(() => filterSessions(allSessions, {
     query, status: filter, recentOnly, sourceId, workspaceId,
@@ -523,7 +528,7 @@ export default function App() {
               <span className="tree-label">{source.label}</span>
               <span className={'watch-indicator ' + watchMode} aria-label={watchText} title={watchText}/>
               <span className={'source-light ' + (source.error ? 'error' : 'ok')}/>
-              <span className="tree-count">{source.sessions.length}</span>
+              <span className="tree-count">{group?.count ?? 0}</span>
             </button>
             {visible.map(folder => <button type="button" key={folder.key}
               title={folder.workspace || '未记录工作目录'}
@@ -602,6 +607,9 @@ export default function App() {
           <div className="filter-tools">
             <label className="recent-checkbox"><input type="checkbox" checked={recentOnly}
               onChange={event => setRecentOnly(event.target.checked)}/>近 7 天</label>
+            <label className="recent-checkbox"><input type="checkbox"
+              checked={showSubagents} onChange={event => setShowSubagents(event.target.checked)}
+              aria-label="显示子代理"/>显示子代理</label>
             <label className="search-box"><Icon name="search" size={15}/><input ref={searchInput}
               aria-label="搜索会话" placeholder="搜索标题 / 工作目录 / ID" value={query}
               onChange={event => setQuery(event.target.value)}/><kbd>Ctrl K</kbd></label>
