@@ -8,7 +8,7 @@ import { registerIpcHandlers } from './ipc-handlers';
 import { ResidentStore } from './resident-store';
 import { TrayController } from './tray';
 import { AutoWindowTracker } from './window-tracking';
-import { focusAndRead } from '../src/shared/focus-and-read';
+import { windowWasActivated } from '../src/shared/window-navigation';
 
 if (process.platform === 'win32' && process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX === '1') {
   app.commandLine.appendSwitch('disable-gpu-sandbox');
@@ -54,10 +54,11 @@ if (firstInstance) {
       state => broadcast('monitor:state', state),
       alert => showDesktopAlert(alert, key => {
         if (!monitor || !windowTracker) { mainWindow?.show(key); return; }
-        void focusAndRead(key, monitor.state().alerts,
-          () => windowTracker!.focusOriginalWindow(key),
-          ids => monitor?.acknowledgeMany(ids)).then(result => {
-          if (result.state !== 'focused') mainWindow?.show(key);
+        // The notification itself acknowledged only its own alert on click.
+        // A partial result means the original window IS foreground; do not
+        // immediately cover it with Monitor merely because the tab is unknown.
+        void windowTracker.focusOriginalWindow(key).then(result => {
+          if (!windowWasActivated(result)) mainWindow?.show(key);
         }).catch(() => mainWindow?.show(key));
       }, id => { monitor?.acknowledge(id); }),
       snapshot => windowTracker?.observeScan(snapshot),

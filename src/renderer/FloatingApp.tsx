@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FloatingTab, FloatingWindowState, MonitorState, SessionRecord } from '../shared/types';
 import { recentParentCompletions } from '../shared/monitor-view';
+import { windowWasActivated } from '../shared/window-navigation';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
 const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right', opacity: 1 };
@@ -71,7 +72,7 @@ export default function FloatingApp() {
   }
   function openOriginal(key: string) {
     void window.monitorApi.focusOriginalWindow(key).then(result => {
-      if (result.state !== 'focused') openMain(key);
+      if (!windowWasActivated(result)) openMain(key);
     }).catch(() => openMain(key));
   }
   function acknowledge(id: string) {
