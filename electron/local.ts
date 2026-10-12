@@ -5,6 +5,7 @@ import type { SessionRecord } from '../src/shared/types';
 import { extractFirstUserTitle, extractSessionId, extractWorkspace, inferStatus } from './rollout';
 import { enrichLocalTitles } from './titles';
 import { extractSessionOrigin } from '../src/shared/session-origin';
+import { LocalScanCache } from '../src/shared/local-scan-cache';
 
 const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 192 * 1024;
@@ -14,6 +15,8 @@ const EXTENDED_TAIL_BYTES = 8 * 1024 * 1024;
 const RECENT_MS = 5 * 60_000;
 const MAX_DISCOVERED = 10_000;
 const MAX_RETURNED = 200;
+const cache = new LocalScanCache();
+export function localScanCacheStats(): ReturnType<LocalScanCache['stats']> { return cache.stats(); }
 
 export function resolveLocalRoot(customRoot: string): string {
   const chosen = customRoot || process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
@@ -99,6 +102,8 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
     .sort((a, b) => b.mtime - a.mtime).slice(0, MAX_RETURNED);
   const sessions = await mapLimited(newest, 12, async ({ file, mtime, size }): Promise<SessionRecord | null> => {
     try {
+      const stored = cache.get(file, mtime, size, now);
+      if (stored) return stored;
       const { head, tail, clipped } = await readEdges(file, size);
       const id = extractSessionId(head, file);
       const workspace = extractWorkspace(head, clipped ? tail.slice(tail.indexOf('\n') + 1) : tail);
@@ -108,11 +113,13 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
         const extended = await readExtendedTail(file, size);
         state = inferStatus(extended.text, mtime, now, extended.clipped);
       }
-      return { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
+      const record: SessionRecord = { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
         ...origin,
         rolloutPath: path.relative(sessionsDir, file).split(path.sep).join('/'),
         title: extractFirstUserTitle(head), ...state, updatedAt: mtime, byteSize: size,
         ageAtSourceMs: now - mtime, startedAt: null };
+      cache.put(file, mtime, size, record);
+      return record;
     } catch { return null; } // rollover, deletion, permissions, partial writes
   });
   const seen = new Set<string>();
@@ -121,6 +128,7 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
     seen.add(s.id);
     return true;
   });
+  cache.retain(new Set(newest.map(item => item.file)));
   await enrichLocalTitles(root, unique);
   return unique;
 }
