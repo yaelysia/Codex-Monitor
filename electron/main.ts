@@ -47,7 +47,8 @@ if (firstInstance) {
     );
     monitor = new MonitorService(
       state => broadcast('monitor:state', state),
-      alert => showDesktopAlert(alert, key => mainWindow?.show(key)),
+      alert => showDesktopAlert(alert, key => mainWindow?.show(key),
+        id => { monitor?.acknowledge(id); }),
     );
     tray = new TrayController(mainWindow, floating, monitor, resident, () => app.quit());
     tray.start();
