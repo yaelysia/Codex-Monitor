@@ -112,6 +112,41 @@ export class AutoWindowResolver {
   private history: ForegroundWindow[] = [];
   private bindings = new Map<string, OriginalWindow>();
   private lastInput = new Map<string, number>();
+  // A scan can finish before the asynchronous UIA/MSAA selection sample
+  // arrives. Keep a bounded chance to upgrade the SAME HWND association.
+  private pendingTabs = new Map<string, { matchStart: number; inputAt: number }>();
+
+  private confirmPendingTab(sessionKey: string): void {
+    const pending = this.pendingTabs.get(sessionKey);
+    const binding = this.bindings.get(sessionKey);
+    if (!pending || !binding) { this.pendingTabs.delete(sessionKey); return; }
+    if (binding.tabId) { this.pendingTabs.delete(sessionKey); return; }
+    const sameWindow = (event: ForegroundWindow) =>
+      event.hwnd === binding.hwnd && event.pid === binding.pid &&
+      event.startedAt === binding.startedAt && event.app === binding.app;
+    const knownTabs = this.history.filter(event =>
+      sameWindow(event) && !!event.tabId &&
+      event.at >= pending.inputAt - 4000 &&
+      event.at <= pending.inputAt + 3000);
+    const before = [...knownTabs].reverse().find(event => event.at <= pending.inputAt);
+    const after = knownTabs.find(event => event.at > pending.inputAt);
+    const beforeScan = [...this.history].reverse().find(event =>
+      sameWindow(event) && !!event.tabId && event.at <= pending.matchStart &&
+      event.at >= pending.matchStart - 4000);
+    if (!before || !after || !beforeScan) return;
+    const conflicting = this.history.some(event =>
+      event.at >= beforeScan.at && event.at <= after.at &&
+      (!sameWindow(event) || (!!event.tabId && event.tabId !== before.tabId)));
+    if (beforeScan.tabId !== before.tabId ||
+        before.tabId !== after.tabId || conflicting) {
+      this.pendingTabs.delete(sessionKey);
+      return;
+    }
+    binding.tabId = before.tabId;
+    binding.tabCount = Math.max(binding.tabCount ?? 0,
+      before.tabCount ?? 0, after.tabCount ?? 0);
+    this.pendingTabs.delete(sessionKey);
+  }
 
   observeFocus(sample: ForegroundWindow): void {
     if (!validForegroundWindow(sample)) return;
@@ -121,6 +156,13 @@ export class AutoWindowResolver {
     const minTime = sample.at - WINDOW_HISTORY_MS;
     while (this.history.length > 1 && this.history[0]!.at < minTime) this.history.shift();
     if (this.history.length > MAX_SAMPLES) this.history.splice(0, this.history.length - MAX_SAMPLES);
+    for (const [sessionKey, pending] of this.pendingTabs) {
+      if (sample.at > pending.inputAt + 3000) {
+        this.pendingTabs.delete(sessionKey);
+      } else if (sample.tabId) {
+        this.confirmPendingTab(sessionKey);
+      }
+    }
   }
 
   observeScan(scan: ScanResponse, now = Date.now()): string[] {
@@ -175,36 +217,16 @@ export class AutoWindowResolver {
         const during = this.history.filter(item =>
           item.at >= matchStart && item.at <= inputAt);
         if (!sameWindow(earliest) || during.some(item => !sameWindow(item))) continue;
-        // HWND samples are emitted immediately, while accessibility tab IDs
-        // are supplied asynchronously. Missing optional tab data is NOT a tab
-        // switch. Require valid selected-tab evidence shortly before AND after
-        // the user input, and reject any genuinely conflicting tab evidence.
-        const knownTabs = this.history.filter(item =>
-          sameWindow(item) && item.tabId &&
-          item.at >= inputAt - 4000 && item.at <= inputAt + 3000);
-        const tabBefore = [...knownTabs].reverse().find(item => item.at <= inputAt);
-        const tabAfter = knownTabs.find(item => item.at > inputAt);
-        const priorToScan = [...this.history].reverse().find(item =>
-          sameWindow(item) && item.tabId &&
-          item.at <= matchStart && item.at >= matchStart - 4000);
-        const conflicting = !!tabBefore && !!tabAfter && knownTabs.some(item =>
-          item.at >= tabBefore.at && item.at <= tabAfter.at &&
-          item.tabId !== tabBefore.tabId);
-        // Remote scan time is an interval, not an exact event time. Its
-        // original tab must have been selected BEFORE that interval too;
-        // otherwise a mid-scan tab switch could misbind the session.
-        const scanWindowStable = !!priorToScan && !!tabBefore &&
-          priorToScan.tabId === tabBefore.tabId;
-        const tabConfirmed = !!tabBefore && !!tabAfter && scanWindowStable &&
-          tabBefore.tabId === tabAfter.tabId && !conflicting &&
-          during.every(item => !item.tabId || item.tabId === tabBefore.tabId);
         this.bindings.set(session.key, {
-          ...selected, inputAt,
-          tabId: tabConfirmed ? tabBefore!.tabId : null,
-          tabCount: Math.max(earliest.tabCount ?? 0, selected.tabCount ?? 0,
-            tabBefore?.tabCount ?? 0, tabAfter?.tabCount ?? 0),
+          ...selected, inputAt, tabId: null,
+          tabCount: Math.max(earliest.tabCount ?? 0, selected.tabCount ?? 0),
         });
         this.lastInput.set(session.key, token);
+        if (selected.app === 'terminal' && (selected.tabHost === 'multi' ||
+            (selected.tabCount ?? 0) > 1 || (earliest.tabCount ?? 0) > 1)) {
+          this.pendingTabs.set(session.key, { matchStart, inputAt });
+          this.confirmPendingTab(session.key);
+        } else this.pendingTabs.delete(session.key);
         changed.push(session.key);
       }
     }
@@ -248,10 +270,16 @@ export class AutoWindowResolver {
     return this.bindings.get(sessionKey) ?? null;
   }
 
-  invalidate(sessionKey: string): void { this.bindings.delete(sessionKey); }
+  invalidate(sessionKey: string): void {
+    this.bindings.delete(sessionKey);
+    this.pendingTabs.delete(sessionKey);
+  }
   /** A broken native watcher cannot justify any correlation across its blind gap.
    * Existing session→HWND mappings remain safe for read-only native revalidation.
    */
-  resetObservationHistory(): void { this.history = []; }
-  clear(): void { this.history = []; this.bindings.clear(); this.lastInput.clear(); }
+  resetObservationHistory(): void { this.history = []; this.pendingTabs.clear(); }
+  clear(): void {
+    this.history = []; this.bindings.clear(); this.lastInput.clear();
+    this.pendingTabs.clear();
+  }
 }

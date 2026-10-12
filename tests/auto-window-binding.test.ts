@@ -398,3 +398,55 @@ describe('native HWND samples with delayed accessible-tab signals', () => {
     expect(resolver.get('ssh:server:thread')).toMatchObject({ tabId: null });
   });
 });
+
+describe('asynchronous MobaXterm tab selection after the scan', () => {
+  const idA = 'msaa:' + 'a'.repeat(32);
+  const idB = 'msaa:' + 'b'.repeat(32);
+  const tab = (at: number, id?: string) => ({
+    ...sample(at, 'terminal'), tabHost: 'multi' as const,
+    tabCount: id ? 3 : 0, ...(id ? { tabId: id } : {}),
+  });
+  it('upgrades a window-only binding when the same native tab is identified moments later', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(tab(NOW - 2500, idA));
+    resolver.observeFocus(tab(NOW - 300));
+    resolver.observeFocus(tab(NOW + 100));
+    const scan = makeScan(NOW + 500, 500);
+    resolver.observeScan(scan, NOW + 600);
+    expect(resolver.get('ssh:server:thread')).toMatchObject({
+      hwnd: '0x1234', tabId: null,
+    });
+    // The async UIA/MSAA worker reports after the scan and input deduplication.
+    resolver.observeFocus(tab(NOW + 650, idA));
+    expect(resolver.get('ssh:server:thread')?.tabId).toBe(idA);
+    // Duplicate scan should not erase the upgraded tab.
+    resolver.observeScan(scan, NOW + 700);
+    expect(resolver.get('ssh:server:thread')?.tabId).toBe(idA);
+  });
+  it('never upgrades to a different selected tab or across another foreground app', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(tab(NOW - 2500, idA));
+    resolver.observeFocus(tab(NOW - 300));
+    resolver.observeFocus(tab(NOW + 100));
+    resolver.observeScan(makeScan(NOW + 500, 500), NOW + 600);
+    resolver.observeFocus(tab(NOW + 650, idB));
+    expect(resolver.get('ssh:server:thread')?.tabId).toBeNull();
+    const switched = new AutoWindowResolver();
+    switched.observeFocus(tab(NOW - 2500, idA));
+    switched.observeFocus(tab(NOW - 300));
+    switched.observeFocus(tab(NOW + 100));
+    switched.observeScan(makeScan(NOW + 500, 500), NOW + 600);
+    switched.observeFocus(sample(NOW + 300, 'other', '0x555', 555));
+    switched.observeFocus(tab(NOW + 650, idA));
+    expect(switched.get('ssh:server:thread')?.tabId).toBeNull();
+  });
+  it('expires the pending upgrade after the short identification window', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(tab(NOW - 2500, idA));
+    resolver.observeFocus(tab(NOW - 300));
+    resolver.observeFocus(tab(NOW + 100));
+    resolver.observeScan(makeScan(NOW + 500, 500), NOW + 600);
+    resolver.observeFocus(tab(NOW + 4100, idA));
+    expect(resolver.get('ssh:server:thread')?.tabId).toBeNull();
+  });
+});
