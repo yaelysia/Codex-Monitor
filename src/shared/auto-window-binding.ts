@@ -174,10 +174,18 @@ export class AutoWindowResolver {
           item.at >= inputAt - 4000 && item.at <= inputAt + 3000);
         const tabBefore = [...knownTabs].reverse().find(item => item.at <= inputAt);
         const tabAfter = knownTabs.find(item => item.at > inputAt);
+        const priorToScan = [...this.history].reverse().find(item =>
+          sameWindow(item) && item.tabId &&
+          item.at <= matchStart && item.at >= matchStart - 4000);
         const conflicting = !!tabBefore && !!tabAfter && knownTabs.some(item =>
           item.at >= tabBefore.at && item.at <= tabAfter.at &&
           item.tabId !== tabBefore.tabId);
-        const tabConfirmed = !!tabBefore && !!tabAfter &&
+        // Remote scan time is an interval, not an exact event time. Its
+        // original tab must have been selected BEFORE that interval too;
+        // otherwise a mid-scan tab switch could misbind the session.
+        const scanWindowStable = !!priorToScan && !!tabBefore &&
+          priorToScan.tabId === tabBefore.tabId;
+        const tabConfirmed = !!tabBefore && !!tabAfter && scanWindowStable &&
           tabBefore.tabId === tabAfter.tabId && !conflicting &&
           during.every(item => !item.tabId || item.tabId === tabBefore.tabId);
         this.bindings.set(session.key, {
