@@ -4,15 +4,14 @@
  * log lines are printed. Not a real-time App Server subscription.
  */
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { discoverDesktopLogFiles } from './desktop-log-discovery.mjs';
 
 const execAsync = promisify(execFile);
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-const LOG_NAME = /^codex-desktop-[a-z0-9._-]{1,175}\.log$/i;
 const MAX_TAIL = 320 * 1024;
 const MAX_TOTAL = 3 * 1024 * 1024;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -37,33 +36,6 @@ export function options(args) {
   return result;
 }
 
-function dateDirectories(root, now) {
-  const dates = [];
-  for (const offset of [-2, -1, 0, 1]) {
-    const d = new Date(now + offset * 86400_000);
-    dates.push(path.join(root, String(d.getFullYear()),
-      String(d.getMonth() + 1).padStart(2, '0'),
-      String(d.getDate()).padStart(2, '0')));
-  }
-  return dates;
-}
-
-async function logDirectories(localAppData, now) {
-  if (!localAppData || !path.isAbsolute(localAppData)) return [];
-  const roots = [path.join(localAppData, 'Codex', 'Logs')];
-  try {
-    const packages = await fs.readdir(path.join(localAppData, 'Packages'), { withFileTypes: true });
-    for (const packageEntry of packages.slice(0, 150)) {
-      if (packageEntry.isDirectory() && /^OpenAI\.Codex_[a-z0-9._-]+$/i.test(packageEntry.name)) {
-        roots.push(path.join(localAppData, 'Packages', packageEntry.name,
-          'LocalCache', 'Local', 'Codex', 'Logs'));
-        if (roots.length >= 5) break;
-      }
-    }
-  } catch {}
-  return [...new Set(roots.flatMap(root => dateDirectories(root, now)))];
-}
-
 function candidate(line, now, target) {
   if (line.length > 10_000) return null;
   const timeMatch = /^(\S+)\s+(info|warning|error)\s+/.exec(line);
@@ -84,21 +56,8 @@ function candidate(line, now, target) {
 }
 
 async function inspectLogs(root, now, target) {
-  const dates = await logDirectories(root, now);
-  const files = [];
-  for (const date of dates.slice(0, 24)) {
-    try {
-      const rows = (await fs.readdir(date, { withFileTypes: true }))
-        .filter(e => e.isFile() && LOG_NAME.test(e.name)).slice(0, 64);
-      for (const entry of rows) {
-        const file = path.join(date, entry.name);
-        const stat = await fs.stat(file);
-        if (stat.size > 0 && stat.size < 500 * 1024 * 1024 &&
-            stat.mtimeMs > now - 86400_000) files.push({ file, size: stat.size, mtime: stat.mtimeMs });
-      }
-    } catch {}
-  }
-  files.sort((a,b)=>b.mtime-a.mtime);
+  const discovered = await discoverDesktopLogFiles(root, now);
+  const files = discovered.files;
   const counts = { acceptedStart: 0, failedStart: 0, turnCompleteNotice: 0, unknownConversation: 0 };
   const latest = { acceptedStart: null, turnCompleteNotice: null };
   const keys = new Set();
@@ -109,7 +68,7 @@ async function inspectLogs(root, now, target) {
     const size = Math.min(file.size, MAX_TAIL, byteBudget);
     let handle;
     try {
-      handle = await fs.open(file.file, 'r');
+      handle = await fs.open(file.path, 'r');
       const buffer = Buffer.alloc(size);
       const {bytesRead} = await handle.read(buffer, 0, size, file.size-size);
       byteBudget -= bytesRead;
@@ -130,8 +89,18 @@ async function inspectLogs(root, now, target) {
       }
     } catch {} finally { await handle?.close().catch(()=>{}); }
   }
+  const exists = discovered.roots.filter(root => root.exists).length;
+  const logNames = discovered.roots.reduce((count, root) => count + root.matchedNames, 0);
+  const anyLogs = discovered.roots.reduce((count, root) => count + root.anyLogFiles, 0);
+  const reason = !discovered.validLocalAppData ? 'local_app_data_missing' :
+    exists === 0 ? 'no_known_log_root' :
+    anyLogs === 0 ? 'no_log_files_in_scanned_dates' :
+    logNames === 0 ? 'log_filename_not_matched' :
+    files.length === 0 ? 'no_recent_log_candidates' :
+    scannedFiles === 0 ? 'log_files_unreadable' : 'readable_log_files';
   return {
     filesExamined: scannedFiles, candidatesFound: files.length,
+    discovery: { reason, roots: discovered.roots },
     events: counts,
     latestStartAgeSeconds: latest.acceptedStart == null
       ? null : Math.max(0, Math.round((now-latest.acceptedStart)/1000)),
