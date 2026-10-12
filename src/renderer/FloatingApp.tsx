@@ -69,13 +69,18 @@ export default function FloatingApp() {
   function openMain(key?: string) {
     void window.monitorApi.showMainWindow(key).catch(console.error);
   }
+  function openOriginal(key: string) {
+    void window.monitorApi.focusOriginalWindow(key).then(result => {
+      if (result.state !== 'focused') openMain(key);
+    }).catch(() => openMain(key));
+  }
   function acknowledge(id: string) {
     void window.monitorApi.acknowledgeAlert(id).then(setMonitor).catch(console.error);
   }
 
   const heading = tab === 'running' ? '可能执行中' : tab === 'alerts' ? '提醒收件箱' : '最近完成';
   const count = tab === 'running' ? running.length : tab === 'alerts' ? unread.length : completed.length;
-  const description = tab === 'running' ? '近期有活动证据，状态仍为推断' :
+  const description = tab === 'running' ? '点击任务优先返回原窗口；无法定位则打开会话详情' :
     tab === 'alerts' ? '仅显示新检测到的变化' : '最近 24 小时完成的轮次';
 
   return <div className={'float-shell side-' + dock.side + (dock.expanded ? ' expanded' : ' collapsed')}>
@@ -88,7 +93,7 @@ export default function FloatingApp() {
       <div className="dock-rows">
         {tab === 'running' && (running.length ? running.slice(0, 10).map(session =>
           <button key={session.key} type="button" className="dock-task"
-            onClick={() => openMain(session.key)}>
+            onClick={() => openOriginal(session.key)}>
             <span className="small-dot green"/>
             <span className="task-info"><strong title={session.title || ''}>{session.title || '未命名会话'}</strong>
               <small title={session.workspace || ''}>{session.sourceLabel}{session.isSubagent ? ' · 子代理' : ''} · {session.workspace || '未知目录'}</small></span>
@@ -97,7 +102,7 @@ export default function FloatingApp() {
         {tab === 'alerts' && <>
           {alerts.slice(0, 12).map(alert =>
             <div key={alert.id} className={'alert-item' + (alert.read ? ' is-read' : '')}>
-              <button type="button" className="alert-body" onClick={() => openMain(alert.sessionKey)}>
+              <button type="button" className="alert-body" onClick={() => openOriginal(alert.sessionKey)}>
                 <span className={'small-dot ' + (alert.kind === 'waiting' ? 'amber' : 'green')}/>
                 <span className="task-info"><strong>{alert.title}</strong>
                   <small title={alert.questionText || undefined}>{alert.kind === 'waiting'
@@ -109,7 +114,7 @@ export default function FloatingApp() {
             </div>)}
           {waiting.filter(s => !alerts.some(a => a.sessionKey === s.key && a.kind === 'waiting'))
             .slice(0, 3).map(session => <button className="dock-task" key={session.key}
-              type="button" onClick={() => openMain(session.key)}>
+              type="button" onClick={() => openOriginal(session.key)}>
               <span className="small-dot amber"/>
               <span className="task-info"><strong>{session.title || '未命名会话'}</strong>
                 <small title={session.questionText || undefined}>{session.questionText ||
@@ -119,7 +124,7 @@ export default function FloatingApp() {
         </>}
         {tab === 'completed' && (completed.length ? completed.slice(0, 10).map(session =>
           <button key={session.key} type="button" className="dock-task"
-            onClick={() => openMain(session.key)}>
+            onClick={() => openOriginal(session.key)}>
             <span className="small-dot gray"/>
             <span className="task-info"><strong>{session.title || '未命名会话'}</strong>
               <small>{session.sourceLabel} · {ageText(session.ageAtSourceMs != null && monitor.scan

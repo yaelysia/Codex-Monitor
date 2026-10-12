@@ -57,6 +57,7 @@ export class AutoWindowResolver {
     for (const source of scan.sources) {
       if (source.error) continue;
       for (const session of source.sessions) {
+        if (session.isSubagent) continue;
         const client = session.clientKind ?? 'unknown';
         const age = session.lastUserInputAgeAtSourceMs;
         if (client === 'unknown' || typeof age !== 'number' || !Number.isFinite(age) ||

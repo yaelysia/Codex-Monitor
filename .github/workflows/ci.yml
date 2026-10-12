@@ -22,6 +22,9 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm test
       - run: npm run test:probe
+      - name: Compile Windows window observer without desktop interaction
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode verify
       - run: npm run typecheck
       - run: npm run build
       - run: python -m unittest discover -s tests -p 'test_*.py'

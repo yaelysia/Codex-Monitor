@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions } from '../shared/types';
+import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus } from '../shared/types';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
 
@@ -258,6 +258,8 @@ export default function App() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [replyVersion, setReplyVersion] = useState(0);
+  const [originalWindow, setOriginalWindow] = useState<OriginalWindowStatus | null>(null);
+  const [originalWindowMessage, setOriginalWindowMessage] = useState<string | null>(null);
   const [recentReply, setRecentReply] = useState<{
     key: string;
     loading: boolean;
@@ -400,6 +402,21 @@ export default function App() {
   }, [detailOpen, selected?.key, selected?.updatedAt, replyVersion]);
 
   useEffect(() => {
+    setOriginalWindow(null);
+    setOriginalWindowMessage(null);
+    if (!detailOpen || !selected?.key) return;
+    let cancelled = false;
+    void window.monitorApi.getOriginalWindowStatus(selected.key).then(status => {
+      if (!cancelled) setOriginalWindow(status);
+    }).catch(() => {
+      if (!cancelled) setOriginalWindow({
+        ready: false, message: '原窗口定位组件暂不可用',
+      });
+    });
+    return () => { cancelled = true; };
+  }, [detailOpen, selected?.key, scan?.scannedAt]);
+
+  useEffect(() => {
     if (!shown.length) { setSelectedKey(null); setDetailOpen(false); return; }
     if (selectedKey && shown.some(session => session.key === selectedKey)) return;
     setSelectedKey((shown.find(session => session.status === 'working') ?? shown[0])?.key ?? null);
@@ -432,6 +449,15 @@ export default function App() {
   function openSession(session: SessionRecord) {
     setSelectedKey(session.key);
     setDetailOpen(true);
+  }
+  async function focusOriginalWindow(key: string): Promise<void> {
+    setOriginalWindowMessage('正在定位原窗口…');
+    try {
+      const result = await window.monitorApi.focusOriginalWindow(key);
+      if (mounted.current) setOriginalWindowMessage(result.message);
+    } catch (error) {
+      if (mounted.current) setOriginalWindowMessage('原窗口定位失败：' + describeError(error));
+    }
   }
   function toggleSource(id: string) {
     setExpandedSources(ids => ids.includes(id) ? ids.filter(entry => entry !== id) : [...ids, id]);
@@ -648,6 +674,13 @@ export default function App() {
             <span className="source-tag">{selected.sourceLabel}</span>
             {selected.isSubagent && <span className="source-tag child-detail" title={selected.parentThreadId || '子代理会话'}>子代理</span>}
             {selected.pendingQuestionToken && <span className="source-tag pending-question">待回答</span>}</div>
+          <div className="detail-original-window" aria-label="返回原窗口">
+            <button type="button" className="primary-button" onClick={() => void focusOriginalWindow(selected.key)}>
+              <Icon name="monitor" size={15}/> 返回原窗口
+            </button>
+            <span>{originalWindowMessage ?? originalWindow?.message ??
+              '根据用户输入时的前台窗口自动识别；不会新开 Codex 会话'}</span>
+          </div>
           {selected.pendingQuestionToken && <div className="detail-pending-question">
             <strong>Codex 正在请求用户输入</strong>
             <span>{selected.questionText || '打开原 Codex 会话查看请求详情。'}</span>
