@@ -102,6 +102,8 @@ function normalizeRemote(rows: unknown, id: string, label: string): SessionRecor
       sourceId: id,
       sourceLabel: label,
       workspace: typeof entry.workspace === 'string' ? entry.workspace : null,
+      isSubagent: entry.isSubagent === true,
+      parentThreadId: typeof entry.parentThreadId === 'string' ? entry.parentThreadId : null,
       rolloutPath: typeof entry.rolloutPath === 'string' ? entry.rolloutPath : null,
       title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.slice(0, 181) : null,
       status: status === 'working' || status === 'waiting' || status === 'finished' ? status : 'unknown',

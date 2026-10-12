@@ -91,7 +91,7 @@ export default function FloatingApp() {
             onClick={() => openMain(session.key)}>
             <span className="small-dot green"/>
             <span className="task-info"><strong title={session.title || ''}>{session.title || '未命名会话'}</strong>
-              <small title={session.workspace || ''}>{session.sourceLabel} · {session.workspace || '未知目录'}</small></span>
+              <small title={session.workspace || ''}>{session.sourceLabel}{session.isSubagent ? ' · 子代理' : ''} · {session.workspace || '未知目录'}</small></span>
             <Icon name="open" size={13}/>
           </button>) : <p className="dock-empty">暂无可确认的活动会话</p>)}
         {tab === 'alerts' && <>

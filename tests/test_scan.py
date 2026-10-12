@@ -178,5 +178,47 @@ class TestLinuxCollector(unittest.TestCase):
 
 
 
+    def test_subagent_source_is_preserved_in_ssh_wsl_metadata(self):
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root) / 'sessions' / '2026' / '10' / '12'
+            base.mkdir(parents=True)
+            parent = '00000000-0000-4000-8000-000000000001'
+            child = '00000000-0000-4000-8000-000000000002'
+            for uid, source, extras in [
+                (parent, 'cli', {'session_id': parent}),
+                (child, {'subagent': {'thread_spawn': {
+                    'parent_thread_id': parent, 'depth': 1}}}, {
+                    'parent_thread_id': parent, 'thread_source': 'subagent', 'session_id': parent}),
+                ('review', {'subagent': 'review'}, {}),
+                ('fork', 'vscode', {'forked_from_id': parent}),
+            ]:
+                file = base / f'rollout-{uid}.jsonl'
+                file.write_text('\n'.join(json.dumps(row) for row in [
+                    {'type': 'session_meta', 'payload': {'id': uid, 'cwd': '/project',
+                        'source': source, **extras}},
+                    {'type': 'event_msg', 'payload': {'type': 'task_complete'}},
+                ]))
+            found = {row['id']: row for row in scanner.scan(root)}
+            self.assertFalse(found[parent]['isSubagent'])
+            self.assertTrue(found[child]['isSubagent'])
+            self.assertEqual(found[child]['parentThreadId'], parent)
+            self.assertTrue(found['review']['isSubagent'])
+            self.assertFalse(found['fork']['isSubagent'])
+
+    def test_truncated_large_metadata_still_identifies_subagent(self):
+        meta = {'type': 'session_meta', 'payload': {
+            'id': '00000000-0000-4000-8000-000000000002',
+            'source': {'subagent': 'review'},
+            'base_instructions': 'x' * (scanner.HEAD_BYTES + 9000),
+        }}
+        head = json.dumps(meta)[:scanner.HEAD_BYTES]
+        self.assertTrue(scanner.session_origin_from_header(head)['isSubagent'])
+        self.assertFalse(scanner.session_origin_from_header(
+            json.dumps({'type': 'session_meta', 'payload': {
+                'id': '00000000-0000-4000-8000-000000000003',
+                'source': 'cli', 'base_instructions': 'mentions subagent source'}}))['isSubagent'])
+
+
+
 if __name__ == '__main__':
     unittest.main()

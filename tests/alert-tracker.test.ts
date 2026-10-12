@@ -163,3 +163,67 @@ describe('remote SSH and WSL completion alerts', () => {
     expect(tracker.observe(snapshot(NOW + 36_000, [after]), NOW + 36_000)).toEqual([]);
   });
 });
+
+
+describe('subagent completion notification policy', () => {
+  const parent = '00000000-0000-4000-8000-000000000001';
+  const child = '00000000-0000-4000-8000-000000000002';
+
+  it.each([
+    ['SSH', 'ssh:box'],
+    ['WSL', 'wsl:Ubuntu'],
+    ['Windows', 'local'],
+  ])('retains %s subagent sessions but suppresses completion alerts', (_platform, sourceId) => {
+    const tracker = new AlertTracker();
+    const root = { ...row('working', NOW, { sourceId, sourceLabel: _platform, ageAtSourceMs: 1000 }),
+      key: sourceId + ':' + parent, id: parent, isSubagent: false };
+    const spawn = { ...row('working', NOW, { sourceId, sourceLabel: _platform, ageAtSourceMs: 1000 }),
+      key: sourceId + ':' + child, id: child, isSubagent: true, parentThreadId: parent };
+    const snap = (at: number, sessions: SessionRecord[]): ScanResponse => ({
+      scannedAt: at, sources: [{ id: sourceId, kind: sourceId === 'local' ? 'local' :
+        sourceId.startsWith('wsl:') ? 'wsl' : 'ssh', label: _platform, sessions, error: null }],
+    });
+    tracker.observe(snap(NOW, [root, spawn]), NOW);
+    const childDone = { ...spawn, status: 'finished' as const,
+      updatedAt: NOW + 10000, ageAtSourceMs: 1000, finishedToken: 'child|done' };
+    expect(tracker.observe(snap(NOW + 12000, [root, childDone]), NOW + 12000)).toEqual([]);
+    const parentDone = { ...root, status: 'finished' as const,
+      updatedAt: NOW + 22000, ageAtSourceMs: 1000, finishedToken: 'parent|done' };
+    const notifications = tracker.observe(snap(NOW + 24000, [parentDone, childDone]), NOW + 24000);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.sessionKey).toBe(root.key);
+    expect(tracker.getAlerts().map(item => item.sessionKey)).toEqual([root.key]);
+  });
+
+  it('continues suppressing a child after a transient metadata omission', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, { isSubagent: true })]), NOW);
+    const completed = row('finished', NOW + 10000, {
+      isSubagent: undefined, finishedToken: 'turn|done', ageAtSourceMs: 1200,
+    });
+    expect(tracker.observe(snapshot(NOW + 12000, [completed]), NOW + 12000)).toEqual([]);
+  });
+
+  it('keeps child waiting alerts available because only child completion was opted out', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, { isSubagent: true })]), NOW);
+    const waiting = row('waiting', NOW + 9000, {
+      isSubagent: true, waitingToken: 'child|needs-input', ageAtSourceMs: 1000,
+    });
+    expect(tracker.observe(snapshot(NOW + 12000, [waiting]), NOW + 12000)
+      .map(item => item.kind)).toEqual(['waiting']);
+  });
+
+  it('does not infer child role from a title, cwd, or source machine name', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, {
+      title: 'subagent code review', sourceLabel: 'subagent SSH',
+    })]), NOW);
+    const completed = row('finished', NOW + 10000, {
+      title: 'subagent code review', sourceLabel: 'subagent SSH',
+      finishedToken: 'done|title', ageAtSourceMs: 1000,
+    });
+    expect(tracker.observe(snapshot(NOW + 12000, [completed]), NOW + 12000)
+      .map(item => item.kind)).toEqual(['finished']);
+  });
+});

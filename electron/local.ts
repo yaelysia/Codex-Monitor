@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { SessionRecord } from '../src/shared/types';
 import { extractFirstUserTitle, extractSessionId, extractWorkspace, inferStatus } from './rollout';
 import { enrichLocalTitles } from './titles';
+import { extractSessionOrigin } from '../src/shared/session-origin';
 
 const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 192 * 1024;
@@ -101,12 +102,14 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
       const { head, tail, clipped } = await readEdges(file, size);
       const id = extractSessionId(head, file);
       const workspace = extractWorkspace(head, clipped ? tail.slice(tail.indexOf('\n') + 1) : tail);
+      const origin = extractSessionOrigin(head);
       let state = inferStatus(tail, mtime, now, clipped);
       if (state.status === 'unknown' && clipped && now - mtime <= RECENT_MS) {
         const extended = await readExtendedTail(file, size);
         state = inferStatus(extended.text, mtime, now, extended.clipped);
       }
       return { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
+        ...origin,
         rolloutPath: path.relative(sessionsDir, file).split(path.sep).join('/'),
         title: extractFirstUserTitle(head), ...state, updatedAt: mtime, byteSize: size,
         ageAtSourceMs: now - mtime, startedAt: null };

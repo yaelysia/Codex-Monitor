@@ -160,9 +160,60 @@ def enrich_titles(root, sessions):
             or session['title']
         )
 
+
+def classify_session_origin(meta):
+    """Codex serializes child source as {"subagent":...}; forks are not children."""
+    if not isinstance(meta, dict):
+        return {'isSubagent': False, 'parentThreadId': None}
+    source = meta.get('source')
+    source_value = source if isinstance(source, dict) else {}
+    sub_source = source_value.get('subagent', source_value.get('subAgent'))
+    sub_data = sub_source if isinstance(sub_source, dict) else {}
+    spawn = sub_data.get('thread_spawn', sub_data.get('threadSpawn'))
+    spawn = spawn if isinstance(spawn, dict) else {}
+    parent = (meta.get('parent_thread_id') or meta.get('parentThreadId')
+              or spawn.get('parent_thread_id') or spawn.get('parentThreadId'))
+    parent = parent if isinstance(parent, str) and parent.strip() else None
+    session_id, tid = meta.get('session_id'), meta.get('id')
+    different_root = (isinstance(session_id, str) and session_id and
+                      isinstance(tid, str) and tid and session_id != tid)
+    is_child = (bool(parent) or bool(different_root) or
+                meta.get('thread_source', meta.get('threadSource')) == 'subagent' or
+                source in ('subagent', 'subAgent') if isinstance(source, str) else False)
+    # Subagent source can also be an object; keep it separate from the string check.
+    if isinstance(source, dict) and ('subagent' in source or 'subAgent' in source):
+        is_child = True
+    if parent or different_root or meta.get('thread_source', meta.get('threadSource')) == 'subagent':
+        is_child = True
+    return {'isSubagent': bool(is_child), 'parentThreadId': parent}
+
+
+def session_origin_from_header(head):
+    first = head.split('\n', 1)[0].lstrip('\ufeff')
+    if not re.search(r'"type"\s*:\s*"session_meta"', first):
+        return {'isSubagent': False, 'parentThreadId': None}
+    try:
+        return classify_session_origin(json.loads(first).get('payload'))
+    except (ValueError, AttributeError, TypeError):
+        pass
+    # A long first metadata line may be truncated in HEAD_BYTES. Source/parent
+    # fields appear before large base_instructions in Codex's serialized SessionMeta.
+    prefix = re.split(r'"base_instructions"\s*:', first, maxsplit=1)[0]
+    match = re.search(r'"(?:parent_thread_id|parentThreadId)"\s*:\s*"([^"]+)"', prefix)
+    parent = match.group(1) if match else None
+    source_subagent = (re.search(r'"source"\s*:\s*\{\s*"(?:subagent|subAgent)"\s*:', prefix)
+                       or re.search(r'"source"\s*:\s*"(?:subagent|subAgent)"', prefix))
+    thread_subagent = re.search(r'"(?:thread_source|threadSource)"\s*:\s*"subagent"', prefix)
+    tid = re.search(r'"id"\s*:\s*"([0-9a-fA-F-]{32,36})"', prefix)
+    session_id = re.search(r'"session_id"\s*:\s*"([0-9a-fA-F-]{32,36})"', prefix)
+    other_root = tid and session_id and tid.group(1) != session_id.group(1)
+    return {'isSubagent': bool(parent or source_subagent or thread_subagent or other_root),
+            'parentThreadId': parent}
+
 def details(head, tail, filename, clipped, modified, now):
     session_id = None
     cwd = None
+    origin = session_origin_from_header(head)
     for row in rows(head):
         if row.get('type') == 'session_meta':
             meta = row.get('payload') or {}
@@ -237,6 +288,8 @@ def details(head, tail, filename, clipped, modified, now):
     return {
         'id': session_id,
         'workspace': cwd,
+        'isSubagent': origin['isSubagent'],
+        'parentThreadId': origin['parentThreadId'],
         'title': title_from_head(head),
         'status': status,
         'statusReason': reason,

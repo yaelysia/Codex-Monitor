@@ -8,6 +8,10 @@ export interface SessionRecord {
   sourceId: string;
   sourceLabel: string;
   workspace: string | null;
+  /** True only when Codex's own session_meta identifies a subagent. */
+  isSubagent?: boolean;
+  /** Optional root/parent thread identifier from the persisted metadata. */
+  parentThreadId?: string | null;
   /** Read-only relative locator under CODEX_HOME/sessions, not an absolute disk path. */
   rolloutPath?: string | null;
   /** Codex's user-facing thread name or title, with a first-user-message fallback. */

@@ -71,7 +71,7 @@ function SessionCard({ session, now, selected, onSelect }: {
   return <button type="button" className={'task-card status-' + session.status + (selected ? ' is-selected' : '')}
     aria-pressed={selected} onClick={() => onSelect(session)}>
     <div className="task-topline">
-      <span className="task-source">{session.sourceLabel}</span>
+      <span className="task-source">{session.sourceLabel}{session.isSubagent && <span className="child-badge"> · 子代理</span>}</span>
       <span className="task-age">{ageText(session.updatedAt, now)}</span>
     </div>
     <div className="task-title">{session.title || '未命名会话'}</div>
@@ -91,7 +91,7 @@ function SessionTable({ sessions, now, selectedKey, onSelect }: {
       <thead><tr><th>会话标题 / 工作目录</th><th>执行位置</th><th>状态</th><th>最后活动</th></tr></thead>
       <tbody>{sessions.map(item => <tr key={item.key} className={selectedKey === item.key ? 'is-selected' : ''}>
         <td><button type="button" className="table-title" onClick={() => onSelect(item)}>
-          {item.title || '未命名会话'}</button>
+          {item.title || '未命名会话'}</button>{item.isSubagent && <span className="child-badge">子代理</span>}
           <div className="table-path-line">
             <span className="mono table-path" title={item.workspace || '未记录工作目录'}>{item.workspace || '未记录工作目录'}</span>
             {item.workspace && <button type="button" className="table-copy" title="复制工作目录"
@@ -574,7 +574,8 @@ export default function App() {
         <div className="detail-content">
           <h2>{selected.title || '未命名会话'}</h2>
           <div className="detail-status"><StatusPill status={selected.status}/>
-            <span className="source-tag">{selected.sourceLabel}</span></div>
+            <span className="source-tag">{selected.sourceLabel}</span>
+            {selected.isSubagent && <span className="source-tag child-detail" title={selected.parentThreadId || '子代理会话'}>子代理</span>}</div>
           <section className="reply-preview" aria-label="最近回复">
             <div className="reply-preview-top">
               <strong>最近回复</strong>

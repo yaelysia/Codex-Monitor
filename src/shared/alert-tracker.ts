@@ -5,7 +5,7 @@ const CONTIGUOUS_SCAN_GAP_MS = 90_000;
 const MAX_ALERTS = 60;
 
 type KnownSession = Pick<SessionRecord,
-  'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'waitingToken'>;
+  'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'waitingToken' | 'isSubagent'>;
 
 /** Compare file mtime with the clock of the machine that owns it, not with Windows. */
 function recentAtSource(session: SessionRecord, now: number): boolean {
@@ -78,7 +78,12 @@ export class AlertTracker {
             ? continuouslyObserved || recentAtSource(session, now)
             : recentAtSource(session, now);
 
-          if (changed && newTerminal && recentlyObserved) {
+          // A child thread's successful turn is internal progress, not a completed
+          // user-facing parent task. Keep the child in scans and update its state,
+          // but do not add a completion alert or native toast for it.
+          const childCompletion = kind === 'finished' &&
+            (session.isSubagent === true || prior?.isSubagent === true);
+          if (changed && newTerminal && recentlyObserved && !childCompletion) {
             const identity = token || [session.updatedAt, session.byteSize ?? '?'].join(':');
             const id = JSON.stringify([session.key, kind, identity]);
             if (!this.seenAlertIds.has(id)) {
@@ -95,7 +100,7 @@ export class AlertTracker {
 
         current.set(session.key, {
           status: session.status, updatedAt: session.updatedAt,
-          byteSize: session.byteSize,
+          byteSize: session.byteSize, isSubagent: session.isSubagent,
           finishedToken: session.finishedToken, waitingToken: session.waitingToken,
         });
       }
