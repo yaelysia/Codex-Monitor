@@ -11,6 +11,8 @@ export interface ForegroundWindow {
   tabId?: string | null;
   /** Number of UIA tab items observed; zero means unknown/unsupported. */
   tabCount?: number;
+  /** Multi-tab terminal may be opaque to UI Automation. */
+  tabHost?: 'single' | 'multi' | 'unknown';
 }
 export type OriginalWindow = ForegroundWindow & { inputAt: number };
 
@@ -23,6 +25,8 @@ const TAB_TOKEN = /^rid:-?\d+(?:\.-?\d+){0,19}$/;
 export function validForegroundWindow(value: unknown): value is ForegroundWindow {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
+  if (item.tabHost !== undefined &&
+      !['single', 'multi', 'unknown'].includes(String(item.tabHost))) return false;
   if (item.tabCount !== undefined &&
       (typeof item.tabCount !== 'number' || !Number.isInteger(item.tabCount) ||
        item.tabCount < 0 || item.tabCount > 1000)) return false;

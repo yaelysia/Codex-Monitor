@@ -196,3 +196,14 @@ describe('transient focus or tab changes in the scanning interval', () => {
     expect(r.get('ssh:server:thread')).toMatchObject({ hwnd: '0x1234', tabId: null, tabCount: 4 });
   });
 });
+
+describe('multi-tab hosts with inaccessible tab controls', () => {
+  it('keeps host classification and refuses to pretend an opaque tab is identified', () => {
+    const r = new AutoWindowResolver();
+    r.observeFocus({ ...sample(NOW - 500, 'terminal'), tabHost: 'multi', tabCount: 0 });
+    r.observeFocus({ ...sample(NOW + 250, 'terminal'), tabHost: 'multi', tabCount: 0 });
+    r.observeScan(makeScan(NOW + 100, 100), NOW + 300);
+    expect(r.get('ssh:server:thread')).toMatchObject({ tabHost: 'multi', tabId: null, tabCount: 0 });
+    expect(validForegroundWindow({ ...sample(NOW, 'terminal'), tabHost: 'invalid' })).toBe(false);
+  });
+});

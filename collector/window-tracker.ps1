@@ -51,6 +51,13 @@ namespace CodexMonitor {
     static long Start(Process process) {
       return new DateTimeOffset(process.StartTime).ToUnixTimeMilliseconds();
     }
+    static bool MultiTabHost(string name) {
+      string lower = name.ToLowerInvariant();
+      return lower.StartsWith("mobaxterm") || lower == "windowsterminal" ||
+        lower == "windowsterminalpreview" || lower == "wezterm-gui" ||
+        lower == "conemu" || lower == "tabby";
+    }
+
     static string App(string name) {
       string lower = name.ToLowerInvariant();
       // Portable MobaXterm executables commonly add edition/version suffixes.
@@ -77,7 +84,7 @@ namespace CodexMonitor {
     }
 
     static void Emit(bool periodic) {
-      string app = "other", handle = "0x0";
+      string app = "other", handle = "0x0", tabHost = "unknown";
       uint pid = 0; long startedAt = 0;
       IntPtr window = GetForegroundWindow();
       if (window != IntPtr.Zero) {
@@ -92,6 +99,8 @@ namespace CodexMonitor {
               pid = owner;
               handle = "0x" + window.ToInt64().ToString("x", CultureInfo.InvariantCulture);
               app = identified;
+              if (app == "terminal") tabHost = MultiTabHost(process.ProcessName)
+                ? "multi" : "single";
             }
           }
         } catch { /* Still emit an unknown transition, never reuse old focus. */ }
@@ -105,7 +114,7 @@ namespace CodexMonitor {
           tab.Count.ToString(CultureInfo.InvariantCulture);
       }
       long at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-      string signature = handle + "|" + pid + "|" + tabJson;
+      string signature = handle + "|" + pid + "|" + tabHost + "|" + tabJson;
       if (!periodic && signature == lastSignature && at - lastEmittedAt < 250) return;
       lastSignature = signature;
       lastEmittedAt = at;
@@ -113,7 +122,8 @@ namespace CodexMonitor {
         at.ToString(CultureInfo.InvariantCulture) + ",\"app\":\"" + app +
         "\",\"hwnd\":\"" + handle + "\",\"pid\":" +
         pid.ToString(CultureInfo.InvariantCulture) + ",\"startedAt\":" +
-        startedAt.ToString(CultureInfo.InvariantCulture) + tabJson + "}");
+        startedAt.ToString(CultureInfo.InvariantCulture) +
+        ",\"tabHost\":\"" + tabHost + "\"" + tabJson + "}");
     }
     public static void Watch() {
       IntPtr foregroundHook = SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0);

@@ -85,7 +85,8 @@ export class AutoWindowTracker {
     return found ? {
       ready: true, host: found.app === 'other' ? undefined : found.app,
       message: found.tabId ? '已自动关联原窗口及原标签（待实机验证）' :
-        found.tabCount != null && found.tabCount > 1
+        (found.tabCount != null && found.tabCount > 1) ||
+          (found.tabHost === 'multi' && !found.tabId)
           ? '已关联原窗口，但多标签位置尚无可靠证据'
           : '已关联原窗口（无法确认内部标签或 VS Code 对话）',
     } : {
@@ -119,7 +120,8 @@ export class AutoWindowTracker {
         try { result = JSON.parse(stdout.trim().split(/\r?\n/).at(-1) || '{}'); }
         catch { /* Failed native result. */ }
         if (result.ok === true) {
-          if (!target.tabId && (target.tabCount ?? 0) > 1) return resolve({
+          if (!target.tabId && ((target.tabCount ?? 0) > 1 ||
+              target.tabHost === 'multi')) return resolve({
             state: 'partial',
             message: '已返回原窗口，但无法确认多标签中的目标位置；提醒仍保留未读',
           });
