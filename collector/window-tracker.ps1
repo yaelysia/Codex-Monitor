@@ -56,6 +56,10 @@ namespace CodexMonitor {
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumTopWindow callback,
       IntPtr lParam);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
@@ -183,20 +187,17 @@ namespace CodexMonitor {
     }
 
     public static void Sample() { Emit(false); }
-    public static void InspectTabs() {
-      var windows = new List<IntPtr>();
-      EnumWindows(delegate(IntPtr candidate, IntPtr unused) {
-        if (IsWindowVisible(candidate) && MobaTabProbe.IsMobaWindow(candidate))
-          windows.Add(candidate);
-        return true;
-      }, IntPtr.Zero);
-      if (windows.Count != 1) {
-        string missingReason = windows.Count == 0 ? "no_visible_mobaxterm" : "multiple_mobaxterm_windows";
-        Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false," +
-          "\"provider\":\"none\",\"reason\":\"" + missingReason + "\"}");
-        return;
-      }
-      IntPtr hwnd = windows[0];
+    static bool MainCandidatePolicy(bool unowned, int exStyle, int width, int height) {
+      // Ignore owned tooltips, launcher panes and tiny native utility windows.
+      return unowned && (exStyle & 0x80) == 0 && width >= 300 && height >= 200;
+    }
+    public static bool VerifyMainCandidatePolicy() {
+      return MainCandidatePolicy(true, 0, 1300, 800) &&
+        !MainCandidatePolicy(false, 0, 1300, 800) &&
+        !MainCandidatePolicy(true, 0x80, 1300, 800) &&
+        !MainCandidatePolicy(true, 0, 40, 60);
+    }
+    private static string DescribeMobaTabs(IntPtr hwnd, int index) {
       TabProbe.Snapshot selected = TabProbe.Read(hwnd);
       TabProbe.Snapshot uia = TabProbe.InspectUia(hwnd);
       MobaTabProbe.Diagnostics msaa = MobaTabProbe.Inspect(hwnd);
@@ -207,8 +208,8 @@ namespace CodexMonitor {
       string reason = identified ? "unique_tab_selectable" : msaa.Reason;
       if (!identified && reason == "no_msaa_tab_group" && uia.Count > 0)
         reason = "uia_tabs_without_unique_selection";
-      Console.WriteLine("{\"type\":\"tab-probe\",\"count\":" +
-        count.ToString(CultureInfo.InvariantCulture) +
+      return "{\"index\":" + index.ToString(CultureInfo.InvariantCulture) +
+        ",\"count\":" + count.ToString(CultureInfo.InvariantCulture) +
         ",\"identified\":" + (identified ? "true" : "false") +
         ",\"provider\":\"" + provider + "\"" +
         ",\"reason\":\"" + reason + "\"" +
@@ -218,7 +219,57 @@ namespace CodexMonitor {
         ",\"msaaSelected\":" + msaa.SelectedCount.ToString(CultureInfo.InvariantCulture) +
         ",\"msaaDuplicateNames\":" + (msaa.DuplicateNames ? "true" : "false") +
         ",\"nativeTabLikeChildren\":" + msaa.NativeTabLikeChildren.ToString(CultureInfo.InvariantCulture) +
-        "}");
+        "}";
+    }
+    public static void InspectTabs() {
+      var candidates = new List<IntPtr>();
+      var allVisible = new List<IntPtr>();
+      EnumWindows(delegate(IntPtr hwnd, IntPtr unused) {
+        if (!IsWindowVisible(hwnd) || !MobaTabProbe.IsMobaWindow(hwnd)) return true;
+        allVisible.Add(hwnd);
+        Rect bounds;
+        if (!GetWindowRect(hwnd, out bounds)) return true;
+        bool unowned = GetWindow(hwnd, 4) == IntPtr.Zero;
+        int exStyle = GetWindowLong(hwnd, -20);
+        if (MainCandidatePolicy(unowned, exStyle, bounds.right - bounds.left,
+          bounds.bottom - bounds.top)) candidates.Add(hwnd);
+        return true;
+      }, IntPtr.Zero);
+      if (candidates.Count == 0) {
+        string reason = allVisible.Count == 0 ? "no_visible_mobaxterm" :
+          "no_visible_main_mobaxterm_window";
+        Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false," +
+          "\"provider\":\"none\",\"reason\":\"" + reason +
+          "\",\"visibleProcessWindows\":" + allVisible.Count.ToString(CultureInfo.InvariantCulture) +
+          ",\"mainCandidates\":0,\"candidates\":[]}");
+        return;
+      }
+      // With several genuine main windows, inspect each safely rather than
+      // reporting empty tab metrics. Never select a window just by its index.
+      const int MAX_DIAGNOSTIC_WINDOWS = 6;
+      var details = new List<string>();
+      int identifiedCount = 0;
+      for (int i = 0; i < candidates.Count && i < MAX_DIAGNOSTIC_WINDOWS; i++) {
+        string item = DescribeMobaTabs(candidates[i], i + 1);
+        details.Add(item);
+        if (item.Contains("\"identified\":true")) identifiedCount++;
+      }
+      bool unique = candidates.Count == 1;
+      string summary = details.Count == 1 ? details[0] : null;
+      if (unique && summary != null) {
+        // Preserve flat fields used by previous diagnostics, add candidate
+        // counts and a structured per-window read-only evidence summary.
+        Console.WriteLine("{\"type\":\"tab-probe\"," + summary.Substring(1, summary.Length - 2) +
+          ",\"visibleProcessWindows\":" + allVisible.Count.ToString(CultureInfo.InvariantCulture) +
+          ",\"mainCandidates\":1,\"candidates\":[" + summary + "]}");
+      } else {
+        Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false," +
+          "\"provider\":\"none\",\"reason\":\"multiple_main_mobaxterm_windows\"," +
+          "\"visibleProcessWindows\":" + allVisible.Count.ToString(CultureInfo.InvariantCulture) +
+          ",\"mainCandidates\":" + candidates.Count.ToString(CultureInfo.InvariantCulture) +
+          ",\"selectableCandidates\":" + identifiedCount.ToString(CultureInfo.InvariantCulture) +
+          ",\"candidates\":[" + String.Join(",", details.ToArray()) + "]}");
+      }
     }
 
     public static void Watch() {
@@ -354,6 +405,10 @@ if ($Mode -eq 'sample') {
     }
     if (-not [CodexMonitor.MobaTabProbe]::VerifyIdentityEncoding()) {
         Write-Output '{"ok":false,"reason":"moba_accessible_id_encoding_failed"}'
+        exit 3
+    }
+    if (-not [CodexMonitor.WindowProbe]::VerifyMainCandidatePolicy()) {
+        Write-Output '{"ok":false,"reason":"main_window_candidate_policy_failed"}'
         exit 3
     }
     Write-Output '{"ok":true}'
