@@ -194,7 +194,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
       if ((!activeTurnId && turnId && turnId === lastTerminalTurnId) ||
           (phase === 'submitted' && !activeTurnId && !turnId)) continue;
       phase = ABORT_EVENTS.has(event) ? 'interrupted' :
-        payload.error == null ? 'finished' : 'failed';
+        payload?.error == null ? 'finished' : 'failed';
       awaiting = false;
       finishedToken = phase === 'finished' ? token : null;
       waitingToken = null;
