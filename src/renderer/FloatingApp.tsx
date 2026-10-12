@@ -53,7 +53,7 @@ export default function FloatingApp() {
 
   const sessions = useMemo(() => recentSessions(monitor), [monitor.scan]);
   const running = sessions.filter(s => s.status === 'working');
-  const waiting = sessions.filter(s => s.status === 'waiting');
+  const waiting = sessions.filter(s => s.status === 'waiting' || !!s.pendingQuestionToken);
   const completed = recentParentCompletions(sessions, now, monitor.scan?.scannedAt);
   const unread = monitor.alerts.filter(a => !a.read);
   const alerts = [...monitor.alerts].sort((a, b) => b.at - a.at);
@@ -100,7 +100,8 @@ export default function FloatingApp() {
               <button type="button" className="alert-body" onClick={() => openMain(alert.sessionKey)}>
                 <span className={'small-dot ' + (alert.kind === 'waiting' ? 'amber' : 'green')}/>
                 <span className="task-info"><strong>{alert.title}</strong>
-                  <small>{alert.kind === 'waiting' ? '可能需要处理' : '本轮完成'} · {alert.sourceLabel}</small></span>
+                  <small title={alert.questionText || undefined}>{alert.kind === 'waiting'
+                    ? (alert.questionText || '可能需要回答/确认') : '本轮完成'} · {alert.sourceLabel}</small></span>
               </button>
               {!alert.read && <button className="ack-button" type="button" title="标记已读"
                 aria-label={'标记已读：' + alert.title} onClick={() => acknowledge(alert.id)}>
@@ -111,7 +112,8 @@ export default function FloatingApp() {
               type="button" onClick={() => openMain(session.key)}>
               <span className="small-dot amber"/>
               <span className="task-info"><strong>{session.title || '未命名会话'}</strong>
-                <small>待处理状态 · {session.sourceLabel} · 推断</small></span>
+                <small title={session.questionText || undefined}>{session.questionText ||
+                  '有待处理请求'} · {session.sourceLabel}</small></span>
             </button>)}
           {!alerts.length && !waiting.length && <p className="dock-empty">目前没有新的提醒</p>}
         </>}

@@ -5,7 +5,8 @@ const CONTIGUOUS_SCAN_GAP_MS = 90_000;
 const MAX_ALERTS = 60;
 
 type KnownSession = Pick<SessionRecord,
-  'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'waitingToken' | 'isSubagent'>;
+  'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'waitingToken' |
+  'pendingQuestionToken' | 'isSubagent'>;
 
 /** Compare file mtime with the clock of the machine that owns it, not with Windows. */
 function recentAtSource(session: SessionRecord, now: number): boolean {
@@ -59,17 +60,24 @@ export class AlertTracker {
 
       for (const session of source.sessions) {
         const prior = previous?.get(session.key);
+        const questionToken = session.pendingQuestionToken;
+        // An asynchronous question may be unanswered while Codex continues
+        // working or after its current turn finished. Such a request deserves
+        // a waiting notification, not a fabricated process-waiting state.
         const kind: 'finished' | 'waiting' | null =
+          questionToken ? 'waiting' :
           session.status === 'finished' ? 'finished' :
           session.status === 'waiting' ? 'waiting' : null;
 
         if (kind && knownBefore) {
-          const token = kind === 'finished' ? session.finishedToken : session.waitingToken;
-          const priorToken = prior &&
-            (kind === 'finished' ? prior.finishedToken : prior.waitingToken);
+          const token = kind === 'finished' ? session.finishedToken :
+            (questionToken || session.waitingToken);
+          const priorToken = prior && (kind === 'finished' ? prior.finishedToken :
+            (prior.pendingQuestionToken || prior.waitingToken));
           const changed = prior ? fileOrEventChanged(prior, session, token, priorToken) : true;
-          const newTerminal = !prior || prior.status !== session.status ||
-            (!!token && token !== priorToken);
+          const newTerminal = !prior || (questionToken
+            ? questionToken !== prior.pendingQuestionToken
+            : prior.status !== session.status || (!!token && token !== priorToken));
           // Two adjacent successful scans bound the completion to that observation
           // interval, regardless of SSH/WSL clock skew or metadata timestamps.
           // On reconnect or for a newly discovered session, require a locally
@@ -93,6 +101,7 @@ export class AlertTracker {
                 title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
                 workspace: session.workspace, at: now, read: false,
                 statusReason: session.statusReason,
+                questionText: kind === 'waiting' ? session.questionText : null,
               });
             }
           }
@@ -102,6 +111,7 @@ export class AlertTracker {
           status: session.status, updatedAt: session.updatedAt,
           byteSize: session.byteSize, isSubagent: session.isSubagent,
           finishedToken: session.finishedToken, waitingToken: session.waitingToken,
+          pendingQuestionToken: session.pendingQuestionToken,
         });
       }
       this.known.set(source.id, current);

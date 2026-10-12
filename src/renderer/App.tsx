@@ -95,6 +95,9 @@ function SessionCard({ session, now, selected, onSelect }: {
       <span className="task-age">{ageText(session.updatedAt, now)}</span>
     </div>
     <div className="task-title">{session.title || '未命名会话'}</div>
+    {session.pendingQuestionToken && <div className="task-question" title={session.questionText || ''}>
+      <Icon name="alert" size={13}/>待回答：{session.questionText || '请查看 Codex 的问题'}
+    </div>}
     <div className="task-path" title={session.workspace || '未记录工作目录'}>{session.workspace || '未记录工作目录'}</div>
     <div className="task-footer"><span className="task-state"><span className="status-dot" />{STATUS[session.status].short}</span>
       <Icon name="chevron-right" size={15}/>
@@ -112,6 +115,8 @@ function SessionTable({ sessions, now, selectedKey, onSelect }: {
       <tbody>{sessions.map(item => <tr key={item.key} className={selectedKey === item.key ? 'is-selected' : ''}>
         <td><button type="button" className="table-title" onClick={() => onSelect(item)}>
           {item.title || '未命名会话'}</button>{item.isSubagent && <span className="child-badge">子代理</span>}
+          {item.pendingQuestionToken && <span className="table-question" title={item.questionText || ''}>
+            待回答：{item.questionText || '查看 Codex 的问题'}</span>}
           <div className="table-path-line">
             <span className="mono table-path" title={item.workspace || '未记录工作目录'}>{item.workspace || '未记录工作目录'}</span>
             {item.workspace && <button type="button" className="table-copy" title="复制工作目录"
@@ -641,7 +646,13 @@ export default function App() {
           <h2>{selected.title || '未命名会话'}</h2>
           <div className="detail-status"><StatusPill status={selected.status}/>
             <span className="source-tag">{selected.sourceLabel}</span>
-            {selected.isSubagent && <span className="source-tag child-detail" title={selected.parentThreadId || '子代理会话'}>子代理</span>}</div>
+            {selected.isSubagent && <span className="source-tag child-detail" title={selected.parentThreadId || '子代理会话'}>子代理</span>}
+            {selected.pendingQuestionToken && <span className="source-tag pending-question">待回答</span>}</div>
+          {selected.pendingQuestionToken && <div className="detail-pending-question">
+            <strong>Codex 正在请求用户输入</strong>
+            <span>{selected.questionText || '打开原 Codex 会话查看请求详情。'}</span>
+            <small>Monitor 只提醒，不代替用户执行确认。</small>
+          </div>}
           <section className="reply-preview" aria-label="最近回复">
             <div className="reply-preview-top">
               <strong>最近回复</strong>
