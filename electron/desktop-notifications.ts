@@ -1,6 +1,8 @@
 import { Notification } from 'electron';
 import type { MonitorAlert } from '../src/shared/types';
 
+const activeNotices = new Set<Notification>();
+
 /** Best-effort operating-system toast; the dock's unread indicator works even without it. */
 export function showDesktopAlert(alert: MonitorAlert, focus: (sessionKey: string) => void): void {
   if (!Notification.isSupported()) return;
@@ -10,6 +12,8 @@ export function showDesktopAlert(alert: MonitorAlert, focus: (sessionKey: string
       body: [alert.title, alert.sourceLabel].join(' · ').slice(0, 240),
     });
     notice.on('click', () => focus(alert.sessionKey));
+    notice.on('close', () => activeNotices.delete(notice));
+    activeNotices.add(notice);
     notice.show();
   } catch (error) {
     console.warn('[Codex Monitor] Desktop notification unavailable', error);
