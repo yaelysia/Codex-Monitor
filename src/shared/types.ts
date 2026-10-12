@@ -21,6 +21,8 @@ export interface SessionRecord {
   updatedAt: number;
   /** File metadata used only for observing activity across scans. */
   byteSize?: number;
+  /** Age of the rollout as measured by its source machine; unaffected by host clock skew. */
+  ageAtSourceMs?: number;
   startedAt: number | null;
 }
 

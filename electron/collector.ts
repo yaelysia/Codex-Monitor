@@ -110,6 +110,8 @@ function normalizeRemote(rows: unknown, id: string, label: string): SessionRecor
       waitingToken: typeof entry.waitingToken === 'string' ? entry.waitingToken : null,
       updatedAt: entry.updatedAt,
       byteSize: typeof entry.byteSize === 'number' && Number.isFinite(entry.byteSize) ? entry.byteSize : undefined,
+      ageAtSourceMs: typeof entry.ageAtSourceMs === 'number' && Number.isFinite(entry.ageAtSourceMs)
+        ? entry.ageAtSourceMs : undefined,
       startedAt: typeof entry.startedAt === 'number' ? entry.startedAt : null,
     });
   }

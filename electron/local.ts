@@ -108,7 +108,8 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
       }
       return { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
         rolloutPath: path.relative(sessionsDir, file).split(path.sep).join('/'),
-        title: extractFirstUserTitle(head), ...state, updatedAt: mtime, byteSize: size, startedAt: null };
+        title: extractFirstUserTitle(head), ...state, updatedAt: mtime, byteSize: size,
+        ageAtSourceMs: now - mtime, startedAt: null };
     } catch { return null; } // rollover, deletion, permissions, partial writes
   });
   const seen = new Set<string>();

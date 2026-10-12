@@ -159,5 +159,24 @@ class TestLinuxCollector(unittest.TestCase):
         self.assertIsNone(status['finishedToken'])
 
 
+    def test_rollout_source_age_uses_remote_clock_not_windows_clock(self):
+        with tempfile.TemporaryDirectory() as root:
+            base = Path(root) / 'sessions' / '2026' / '10' / '12'
+            base.mkdir(parents=True)
+            file = base / 'rollout-remote.jsonl'
+            file.write_text('\n'.join(json.dumps(row) for row in [
+                {'type': 'session_meta', 'payload': {'id': 'remote', 'cwd': '/srv/project'}},
+                {'type': 'event_msg', 'timestamp': '2026-10-12T09:00:00Z',
+                 'payload': {'type': 'task_complete', 'turn_id': 'turn1'}},
+            ]))
+            remote_now = 1_800_000_360_000
+            os.utime(file, ((remote_now - 1200) / 1000, (remote_now - 1200) / 1000))
+            session = scanner.scan(root, now=remote_now)[0]
+            self.assertEqual(session['status'], 'finished')
+            self.assertEqual(session['finishedToken'], '2026-10-12T09:00:00Z|turn1')
+            self.assertLess(abs(session['ageAtSourceMs'] - 1200), 15)
+
+
+
 if __name__ == '__main__':
     unittest.main()
