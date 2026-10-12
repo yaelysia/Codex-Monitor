@@ -131,7 +131,7 @@ export interface OriginalWindowStatus {
 }
 
 export type OriginalWindowFocusResult = {
-  state: 'focused' | 'unbound' | 'unavailable' | 'stale' | 'blocked';
+  state: 'focused' | 'partial' | 'unbound' | 'unavailable' | 'stale' | 'blocked';
   message: string;
 };
 

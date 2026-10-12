@@ -123,3 +123,46 @@ describe('uncertain remote timing', () => {
     expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1111');
   });
 });
+
+describe('safe multi-tab identity binding', () => {
+  const withTab = (at: number, id: string, hwnd = '0x1234') => ({
+    ...sample(at, 'terminal', hwnd), tabId: id, tabCount: 3,
+  });
+
+  it('associates a tab when observations before and after input agree', () => {
+    const r = new AutoWindowResolver();
+    r.observeFocus(withTab(NOW - 5000, '1.10'));
+    r.observeFocus(withTab(NOW - 1000, '1.10'));
+    r.observeFocus(withTab(NOW + 200, '1.10'));
+    r.observeScan(makeScan(NOW + 100, 100), NOW + 300);
+    expect(r.get('ssh:server:thread')?.tabId).toBe('1.10');
+    expect(r.get('ssh:server:thread')?.tabCount).toBe(3);
+  });
+
+  it('preserves the window but never assigns a tab that changed during a scan', () => {
+    const r = new AutoWindowResolver();
+    r.observeFocus(withTab(NOW - 5000, '1.10'));
+    r.observeFocus(withTab(NOW - 100, '1.11'));
+    r.observeFocus(withTab(NOW + 200, '1.11'));
+    const scan = makeScan(NOW + 100, 100);
+    scan.sources[0]!.captureStartedAt = NOW - 2000;
+    scan.sources[0]!.capturedAt = NOW + 100;
+    r.observeScan(scan, NOW + 300);
+    expect(r.get('ssh:server:thread')?.hwnd).toBe('0x1234');
+    expect(r.get('ssh:server:thread')?.tabId).toBeNull();
+  });
+
+  it('does not assign a selected tab without post-input validation', () => {
+    const r = new AutoWindowResolver();
+    r.observeFocus(withTab(NOW - 100, '1.10'));
+    r.observeScan(makeScan(NOW + 100, 100), NOW + 300);
+    expect(r.get('ssh:server:thread')?.tabCount).toBe(3);
+    expect(r.get('ssh:server:thread')?.tabId).toBeNull();
+  });
+
+  it('rejects arbitrary or potentially unsafe tab identifiers from native output', () => {
+    expect(validForegroundWindow({ ...withTab(NOW, '1.10'), tabId: '../private' })).toBe(false);
+    expect(validForegroundWindow({ ...withTab(NOW, '1.10'), tabId: '1.-2.30' })).toBe(true);
+    expect(validForegroundWindow({ ...withTab(NOW, '1.10'), tabCount: -1 })).toBe(false);
+  });
+});

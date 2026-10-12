@@ -7,6 +7,10 @@ export interface ForegroundWindow {
   pid: number;
   startedAt: number;
   app: WindowApp;
+  /** Ephemeral UI Automation runtime identity; neither title nor tab index. */
+  tabId?: string | null;
+  /** Number of UIA tab items observed; zero means unknown/unsupported. */
+  tabCount?: number;
 }
 export type OriginalWindow = ForegroundWindow & { inputAt: number };
 
@@ -14,10 +18,16 @@ const WINDOW_HISTORY_MS = 5 * 60_000;
 const MAX_INPUT_AGE_MS = 45_000;
 const MAX_SAMPLES = 4096;
 const HEX_HANDLE = /^0x[0-9a-f]{1,16}$/i;
+const TAB_TOKEN = /^-?\d+(?:\.-?\d+){0,19}$/;
 
 export function validForegroundWindow(value: unknown): value is ForegroundWindow {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
+  if (item.tabCount !== undefined &&
+      (typeof item.tabCount !== 'number' || !Number.isInteger(item.tabCount) ||
+       item.tabCount < 0 || item.tabCount > 1000)) return false;
+  if (item.tabId != null && (typeof item.tabId !== 'string' ||
+      item.tabId.length > 192 || !TAB_TOKEN.test(item.tabId))) return false;
   if (item.app === 'other' && item.hwnd === '0x0' &&
     item.pid === 0 && item.startedAt === 0) {
     return typeof item.at === 'number' && Number.isFinite(item.at) && item.at > 0;
@@ -91,7 +101,20 @@ export class AutoWindowResolver {
           // Do not replace an existing link with a guessed candidate.
           continue;
         }
-        this.bindings.set(session.key, { ...selected, inputAt });
+        // Require a later confirmed observation of the same selected tab.
+        // An unobserved tab switch may occur without changing the top-level HWND.
+        const confirmedAfter = this.history.find(item =>
+          item.at >= inputAt && item.at <= inputAt + 3000);
+        const tabConfirmed = !!selected.tabId && earliest.tabId === selected.tabId &&
+          confirmedAfter?.tabId === selected.tabId &&
+          confirmedAfter.hwnd === selected.hwnd && confirmedAfter.pid === selected.pid &&
+          confirmedAfter.startedAt === selected.startedAt;
+        this.bindings.set(session.key, {
+          ...selected, inputAt,
+          tabId: tabConfirmed ? selected.tabId : null,
+          tabCount: Math.max(earliest.tabCount ?? 0, selected.tabCount ?? 0,
+            confirmedAfter?.tabCount ?? 0),
+        });
         this.lastInput.set(session.key, token);
       }
     }

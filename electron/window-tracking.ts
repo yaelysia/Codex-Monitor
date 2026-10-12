@@ -84,7 +84,10 @@ export class AutoWindowTracker {
     const found = this.resolver.get(sessionKey);
     return found ? {
       ready: true, host: found.app === 'other' ? undefined : found.app,
-      message: '已根据最近一次用户输入自动关联原窗口（不保证切换到正确标签）',
+      message: found.tabId ? '已自动关联原窗口及原标签（待实机验证）' :
+        found.tabCount != null && found.tabCount > 1
+          ? '已关联原窗口，但多标签位置尚无可靠证据'
+          : '已关联原窗口（无法确认内部标签或 VS Code 对话）',
     } : {
       ready: false,
       message: '尚无可靠的原窗口关联；从原 Codex 窗口再次发送消息后会尝试自动识别',
@@ -103,6 +106,7 @@ export class AutoWindowTracker {
       '-File', this.scriptPath(), '-Mode', 'focus',
       '-WindowHandle', target.hwnd, '-TargetPid', String(target.pid),
       '-ProcessStart', String(target.startedAt),
+      ...(target.tabId ? ['-TabId', target.tabId] : []),
     ];
     return new Promise<OriginalWindowFocusResult>(resolve => {
       execFile('powershell.exe', command, {
@@ -111,11 +115,23 @@ export class AutoWindowTracker {
         if (error) return resolve({
           state: 'unavailable', message: 'Windows 原窗口激活组件不可用',
         });
-        let result: { ok?: boolean; reason?: string } = {};
+        let result: { ok?: boolean; reason?: string; windowFocused?: boolean; tabFocused?: boolean } = {};
         try { result = JSON.parse(stdout.trim().split(/\r?\n/).at(-1) || '{}'); }
         catch { /* Failed native result. */ }
-        if (result.ok === true) return resolve({
-          state: 'focused', message: '已切换至自动识别的原窗口（未切换内部标签）',
+        if (result.ok === true) {
+          if (!target.tabId && (target.tabCount ?? 0) > 1) return resolve({
+            state: 'partial',
+            message: '已返回原窗口，但无法确认多标签中的目标位置；提醒仍保留未读',
+          });
+          return resolve({
+            state: 'focused',
+            message: target.tabId ? '已返回原窗口并验证原标签' :
+              '已返回原窗口（未定位内部标签）',
+          });
+        }
+        if (result.windowFocused === true && result.reason === 'tab_unavailable') return resolve({
+          state: 'partial',
+          message: '已返回原窗口，但原标签已变化或 UI Automation 不可用；提醒仍保留未读',
         });
         if (['stale_window', 'process_changed', 'invalid_or_stale_window'].includes(result.reason || '')) {
           this.resolver.invalidate(sessionKey);

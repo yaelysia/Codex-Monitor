@@ -54,6 +54,10 @@
       {
         "from": "collector/window-tracker.ps1",
         "to": "window-tracker.ps1"
+      },
+      {
+        "from": "collector/tab-automation.cs",
+        "to": "tab-automation.cs"
       }
     ],
     "directories": {
