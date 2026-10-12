@@ -5,6 +5,8 @@ import { app } from 'electron';
 import type { ScanResponse, SessionRecord, Settings, SourceKind, SourceResult } from '../src/shared/types';
 import { resolveLocalRoot, scanLocal } from './local';
 import { SessionActivityTracker } from '../src/shared/activity-tracker';
+import { readDesktopLogSignals } from './desktop-runtime-logs';
+import { applyDesktopLogEvidence } from '../src/shared/desktop-log-status';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
 const MAX_STDOUT = 5 * 1024 * 1024;
@@ -143,8 +145,16 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
   const distros = await listWslDistros();
   const remoteScript = await script().catch(() => '');
   const scans: Promise<SourceResult>[] = [];
-  if (wanted('local')) scans.push(sourceResult('local', 'Windows', 'local',
-    () => scanLocal(resolveLocalRoot(settings.localRoot))));
+  if (wanted('local')) scans.push(sourceResult('local', 'Windows', 'local', async () => {
+    const rows = await scanLocal(resolveLocalRoot(settings.localRoot));
+    if (process.platform === 'win32') {
+      // Passive Desktop's *own* app log (including MSIX virtualized paths).
+      // No new App Server and no access to private stdio streams.
+      const events = await readDesktopLogSignals().catch(() => new Map());
+      applyDesktopLogEvidence(rows, events);
+    }
+    return rows;
+  }));
   for (const distro of distros) {
     const id = `wsl:${distro}`;
     if (!wanted(id)) continue;

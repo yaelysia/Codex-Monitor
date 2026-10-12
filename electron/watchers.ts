@@ -5,6 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { app } from 'electron';
 import type { Settings, SourceResult } from '../src/shared/types';
 import { resolveLocalRoot } from './local';
+import { findDesktopLogRoots } from './desktop-runtime-logs';
 
 export type EventChannelMode = 'active' | 'connecting' | 'fallback';
 type SourceWatch = { fingerprint: string; dispose(): void };
@@ -110,6 +111,32 @@ export class WatchCoordinator {
     let alive = true;
     let watch: fs.FSWatcher | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
+    const desktopWatches: fs.FSWatcher[] = [];
+    // On Windows, Desktop's private App Server activity is written to its own
+    // log tree, including the MSIX virtualized LocalCache location.
+    if (process.platform === 'win32') {
+      void findDesktopLogRoots(process.env.LOCALAPPDATA ?? '').then(roots => {
+        if (!alive || this.stopped) return;
+        for (const root of roots) {
+          try {
+            const subscription = fs.watch(root, { recursive: true, persistent: false },
+              (_event, file) => {
+                if (!alive || this.stopped) return;
+                const name = file?.toString() || '';
+                if (!name || /(?:^|[\\/])codex-desktop-[^\\/]+\.log$/i.test(name))
+                  this.onChange(spec.id);
+              });
+            desktopWatches.push(subscription);
+            subscription.on('error', () => {
+              subscription.close();
+              const index = desktopWatches.indexOf(subscription);
+              if (index >= 0) desktopWatches.splice(index, 1);
+              // The regular audit still covers this runtime evidence source.
+            });
+          } catch { /* Missing log tree: 12s Desktop audit remains available. */ }
+        }
+      }).catch(() => {});
+    }
 
     const launch = () => {
       if (!alive || this.stopped) return;
@@ -150,6 +177,8 @@ export class WatchCoordinator {
         alive = false;
         if (retry) clearTimeout(retry);
         watch?.close();
+        for (const subscription of desktopWatches) subscription.close();
+        desktopWatches.length = 0;
       },
     };
   }
