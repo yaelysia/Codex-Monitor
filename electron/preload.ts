@@ -8,6 +8,8 @@ const api: MonitorApi = {
   setConfig: settings => ipcRenderer.invoke('config:set', settings),
   refresh: () => ipcRenderer.invoke('monitor:refresh'),
   getRecentReply: key => ipcRenderer.invoke('monitor:recent-reply', key),
+  getOriginalWindowStatus: key => ipcRenderer.invoke('monitor:original-window-status', key),
+  focusOriginalWindow: key => ipcRenderer.invoke('monitor:focus-original-window', key),
   copyWorkspace: text => ipcRenderer.invoke('workspace:copy', text),
   getMonitorState: () => ipcRenderer.invoke('monitor:get-state'),
   onMonitorState: (listener: (state: MonitorState) => void) => {

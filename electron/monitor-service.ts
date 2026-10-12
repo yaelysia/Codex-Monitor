@@ -35,6 +35,7 @@ export class MonitorService {
   constructor(
     private readonly onChange: (state: MonitorState) => void,
     private readonly onAlert: (alert: MonitorAlert) => void,
+    private readonly onScanned: (delta: ScanResponse) => void = () => {},
   ) {}
 
   start(): void {
@@ -141,6 +142,10 @@ export class MonitorService {
       const settings = await readSettings();
       const delta = await collect(settings, partial ? sourceIds : undefined);
       if (delta.sources.length === 0 && partial && this.lastScan) return this.lastScan;
+      // Use only freshly scanned sources for auto-window correlation: merging cached
+      // sources would shift remote-clock ages and could create false associations.
+      try { this.onScanned(delta); }
+      catch { console.warn('Automatic original-window correlation failed; scan continues'); }
 
       // Notify from only the genuinely rescanned sources. Marking unchanged,
       // cached sources as freshly scanned could fabricate transitions.

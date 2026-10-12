@@ -118,6 +118,17 @@ export interface ResidentOptions {
   startupSupported: boolean;
 }
 
+export interface OriginalWindowStatus {
+  ready: boolean;
+  message: string;
+  host?: 'desktop' | 'vscode' | 'terminal';
+}
+
+export type OriginalWindowFocusResult = {
+  state: 'focused' | 'unbound' | 'unavailable' | 'stale' | 'blocked';
+  message: string;
+};
+
 export interface MonitorApi {
   getConfig(): Promise<ConfigResponse>;
   getResidentOptions(): Promise<ResidentOptions>;
@@ -126,6 +137,8 @@ export interface MonitorApi {
   refresh(): Promise<ScanResponse>;
   copyWorkspace(text: string): Promise<void>;
   getRecentReply(sessionKey: string): Promise<RecentReplyExcerpt>;
+  getOriginalWindowStatus(sessionKey: string): Promise<OriginalWindowStatus>;
+  focusOriginalWindow(sessionKey: string): Promise<OriginalWindowFocusResult>;
   getMonitorState(): Promise<MonitorState>;
   onMonitorState(listener: (state: MonitorState) => void): () => void;
   acknowledgeAlert(id: string): Promise<MonitorState>;

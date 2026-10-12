@@ -8,10 +8,12 @@ import { readRecentReply } from './reply-preview';
 import type { FloatingWindowController } from './floating';
 import type { MainWindowController } from './main-window';
 import type { MonitorService } from './monitor-service';
+import type { AutoWindowTracker } from './window-tracking';
 
 export function registerIpcHandlers(monitor: MonitorService,
   floating: FloatingWindowController, main: MainWindowController,
-  resident: ResidentStore, onPreferencesChanged: () => void): void {
+  resident: ResidentStore, onPreferencesChanged: () => void,
+  originalWindow: AutoWindowTracker): void {
   const supported = process.platform === 'win32' && app.isPackaged;
   const options = (): ResidentOptions => ({
     ...resident.snapshot().preferences,
@@ -53,6 +55,20 @@ export function registerIpcHandlers(monitor: MonitorService,
     return readRecentReply(key, monitor.state().scan, await readSettings());
   });
   ipcMain.handle('monitor:get-state', () => monitor.state());
+  const existingSessionKey = (value: unknown): string | null =>
+    typeof value === 'string' && value.length <= 300 &&
+    monitor.state().scan?.sources.some(source =>
+      source.sessions.some(session => session.key === value)) ? value : null;
+  ipcMain.handle('monitor:original-window-status', (_event, raw: unknown) => {
+    const key = existingSessionKey(raw);
+    return key ? originalWindow.status(key) :
+      { ready: false, message: '当前会话不存在或已从监控范围移除' };
+  });
+  ipcMain.handle('monitor:focus-original-window', (_event, raw: unknown) => {
+    const key = existingSessionKey(raw);
+    return key ? originalWindow.focusOriginalWindow(key) :
+      { state: 'unbound', message: '当前会话不存在或已从监控范围移除' };
+  });
   ipcMain.handle('monitor:ack-alert', (_event, id: unknown) => {
     if (typeof id !== 'string' || id.length > 1024) throw new Error('Invalid alert id');
     return monitor.acknowledge(id);
