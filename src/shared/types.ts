@@ -43,6 +43,8 @@ export interface SourceResult {
   id: string;
   label: string;
   kind: SourceKind;
+  /** Local wall-clock time when THIS source scan completed, not the merged scan time. */
+  capturedAt?: number;
   sessions: SessionRecord[];
   error: string | null;
 }

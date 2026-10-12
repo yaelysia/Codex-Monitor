@@ -73,3 +73,15 @@ describe('automatic original-window matching', () => {
     expect(resolver.get('ssh:server:thread')).toBeNull();
   });
 });
+
+describe('independent source scan time prevents cross-host misassociation', () => {
+  it('does not shift SSH user input timestamps to the last of multiple source scans', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW - 500, 'terminal', '0x1111', 111));
+    resolver.observeFocus(sample(NOW + 5000, 'terminal', '0x2222', 222));
+    const scan = makeScan(NOW + 10_000, 500);
+    scan.sources[0]!.capturedAt = NOW + 200;
+    resolver.observeScan(scan, NOW + 10_000);
+    expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1111');
+  });
+});

@@ -62,7 +62,7 @@ export class AutoWindowResolver {
         const age = session.lastUserInputAgeAtSourceMs;
         if (client === 'unknown' || typeof age !== 'number' || !Number.isFinite(age) ||
           age < 0 || age > MAX_INPUT_AGE_MS) continue;
-        const inputAt = scan.scannedAt - age;
+        const inputAt = (source.capturedAt ?? scan.scannedAt) - age;
         if (inputAt < this.history[0]!.at || inputAt > now + 1000 ||
             now - inputAt > MAX_INPUT_AGE_MS) continue;
         const previous = this.lastInput.get(session.key);
