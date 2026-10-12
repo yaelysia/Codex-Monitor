@@ -60,6 +60,10 @@ async function inspectLogs(root, now, target) {
   const files = discovered.files;
   const counts = { acceptedStart: 0, failedStart: 0, turnCompleteNotice: 0, unknownConversation: 0 };
   const latest = { acceptedStart: null, turnCompleteNotice: null };
+  // Syntax hints only: not proof that any event belongs to a live thread.
+  // Useful when the GUI changes its log line format between versions.
+  const markerHints = { appServerConnection: 0, responseRouted: 0,
+    turnStart: 0, turnComplete: 0, conversationId: 0 };
   const keys = new Set();
   let scannedFiles = 0;
   let byteBudget = MAX_TOTAL;
@@ -78,6 +82,14 @@ async function inspectLogs(root, now, target) {
       if (size < file.size) lines.shift();
       if (!chunk.endsWith('\n')) lines.pop();
       for (const line of lines) {
+        if (line.length <= 10_000) {
+          if (line.includes('[AppServerConnection]')) markerHints.appServerConnection++;
+          if (line.includes('response_routed')) markerHints.responseRouted++;
+          if (line.includes('turn/start')) markerHints.turnStart++;
+          if (line.includes('turn/completed') || line.includes('show turn-complete'))
+            markerHints.turnComplete++;
+          if (line.includes('conversationId=')) markerHints.conversationId++;
+        }
         const event = candidate(line, now, target);
         if (!event) continue;
         const unique = event.at + '|' + event.type + '|' + event.id;
@@ -101,6 +113,7 @@ async function inspectLogs(root, now, target) {
   return {
     filesExamined: scannedFiles, candidatesFound: files.length,
     discovery: { reason, roots: discovered.roots },
+    markerHints,
     events: counts,
     latestStartAgeSeconds: latest.acceptedStart == null
       ? null : Math.max(0, Math.round((now-latest.acceptedStart)/1000)),
