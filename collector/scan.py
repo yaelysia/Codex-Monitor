@@ -208,6 +208,100 @@ def session_origin_from_header(head):
     return {'isSubagent': bool(parent or source_subagent or thread_subagent or other_root),
             'parentThreadId': parent}
 
+QUESTION_AGE_LIMIT_MS = 6 * 60 * 60 * 1000
+
+
+def limited_question_text(value):
+    if not isinstance(value, str):
+        return None
+    text = ' '.join(value.split()).strip()
+    return text[:160] if text else None
+
+
+def question_from_arguments(value):
+    if isinstance(value, str):
+        if len(value) > 16384:
+            return None
+        try:
+            value = json.loads(value)
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(value, dict):
+        return None
+    questions = value.get('questions')
+    if not isinstance(questions, list) or not questions or not isinstance(questions[0], dict):
+        return None
+    first = questions[0]
+    return (limited_question_text(first.get('title')) or
+            limited_question_text(first.get('question')) or
+            limited_question_text(first.get('header')))
+
+
+def safe_question_id(value):
+    return value if isinstance(value, str) and 0 < len(value) <= 256 else None
+
+
+def detect_pending_question_records(records):
+    """Find unmatched persisted blocking tool calls or delivered async questions.
+
+    No inference from quiet output or tool timeouts. The first reply/user message
+    after an async question dismisses its pending state; blocking calls must have
+    a matching function_call_output, or a later turn boundary.
+    """
+    pending = {}
+    for row in records:
+        payload = row.get('payload')
+        if not isinstance(payload, dict):
+            continue
+        if row.get('type') == 'response_item':
+            kind = payload.get('type')
+            if kind in ('function_call', 'custom_tool_call'):
+                name = payload.get('name')
+                name = name.split('.')[-1] if isinstance(name, str) else None
+                call_id = safe_question_id(payload.get('call_id'))
+                if call_id and name in ('request_user_input', 'request_permissions'):
+                    pending['blocking:' + call_id] = {
+                        'text': question_from_arguments(payload.get('arguments')) or
+                                ('Codex 请求权限确认' if name == 'request_permissions' else None),
+                        'blocking': True,
+                    }
+            elif kind in ('function_call_output', 'custom_tool_call_output'):
+                call_id = safe_question_id(payload.get('call_id'))
+                if call_id:
+                    pending.pop('blocking:' + call_id, None)
+            elif kind == 'message' and payload.get('role') == 'user':
+                pending = {k: v for k, v in pending.items() if v['blocking']}
+            continue
+        if row.get('type') != 'event_msg':
+            continue
+        kind = payload.get('type')
+        if kind == 'user_message':
+            pending = {k: v for k, v in pending.items() if v['blocking']}
+        elif kind == 'item_completed':
+            item = payload.get('item')
+            if not isinstance(item, dict):
+                continue
+            questions = item.get('questions')
+            if (item.get('type') in ('AgentMessage', 'agentMessage') and
+                    item.get('delivery') == 'async' and
+                    isinstance(questions, list) and questions):
+                call_id = safe_question_id(item.get('id'))
+                if call_id:
+                    pending['async:' + call_id] = {
+                        'text': question_from_arguments({'questions': questions}),
+                        'blocking': False,
+                    }
+        elif kind in ('turn_complete', 'task_complete', 'turn_aborted',
+                      'turn_started', 'task_started'):
+            pending = {k: v for k, v in pending.items() if not v['blocking']}
+        if len(pending) > 128:
+            pending.pop(next(iter(pending)))
+    if not pending:
+        return {'token': None, 'text': None, 'blocking': False}
+    token = next(reversed(pending))
+    return {'token': token, **pending[token]}
+
+
 def details(head, tail, filename, clipped, modified, now):
     session_id = None
     cwd = None
@@ -239,7 +333,9 @@ def details(head, tail, filename, clipped, modified, now):
     finished_token = None
     waiting_token = None
     checkpoint_after_boundary = False
-    for row in rows(tail, clipped):
+    parsed_rows = list(rows(tail, clipped))
+    question = detect_pending_question_records(parsed_rows)
+    for row in parsed_rows:
         payload = row.get('payload') or {}
         if not isinstance(payload, dict):
             continue
@@ -273,7 +369,11 @@ def details(head, tail, filename, clipped, modified, now):
 
     age = max(0, now - modified)
     terminal = phase == 'finished' and not checkpoint_after_boundary
-    if terminal:
+    pending_token = question['token'] if age <= QUESTION_AGE_LIMIT_MS else None
+    if question['blocking'] and pending_token:
+        status, reason = 'waiting', (
+            '检测到未匹配回答的 Codex 请求用户输入/确认工具调用；可能正在等待用户处理')
+    elif terminal:
         status, reason = 'finished', '检测到本轮正常结束事件；不代表客户端已退出'
     elif phase == 'interrupted' and not checkpoint_after_boundary:
         status, reason = 'interrupted', '检测到 Codex 本轮中断事件，不能视为任务完成'
@@ -300,8 +400,11 @@ def details(head, tail, filename, clipped, modified, now):
         'title': title_from_head(head),
         'status': status,
         'statusReason': reason,
-        'finishedToken': finished_token if terminal else None,
-        'waitingToken': waiting_token if awaiting else None,
+        'finishedToken': finished_token if terminal and not (question['blocking'] and pending_token) else None,
+        'waitingToken': pending_token if question['blocking'] and pending_token
+                        else waiting_token if awaiting else None,
+        'pendingQuestionToken': pending_token,
+        'questionText': question['text'] if pending_token else None,
         'updatedAt': modified,
         'startedAt': None,
     }
