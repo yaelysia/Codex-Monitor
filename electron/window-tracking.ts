@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
-import { AutoWindowResolver } from '../src/shared/auto-window-binding';
+import { AutoWindowResolver, validForegroundWindow } from '../src/shared/auto-window-binding';
 import type { OriginalWindowFocusResult, OriginalWindowStatus, ScanResponse } from '../src/shared/types';
 
 const MAX_LINE_BYTES = 4096;
@@ -44,8 +44,8 @@ export class AutoWindowTracker {
         try {
           const raw: unknown = JSON.parse(line);
           if (raw && typeof raw === 'object' && 'type' in raw &&
-              raw.type === 'foreground') {
-            this.resolver.observeFocus(raw as Parameters<AutoWindowResolver['observeFocus']>[0]);
+              raw.type === 'foreground' && validForegroundWindow(raw)) {
+            this.resolver.observeFocus(raw);
           }
         } catch { /* Never log raw OS output or window content. */ }
       }
