@@ -245,3 +245,22 @@ describe('Codex Desktop paginated turn lifecycle', () => {
     });
   });
 });
+
+describe('strong turn identity safety', () => {
+  const evt = (event: string, turnId?: string) => JSON.stringify({
+    type: 'event_msg', payload: { type: event, ...(turnId ? { turn_id: turnId } : {}) },
+  });
+
+  it('rejects an uncorrelated old finish marker while a named turn is running', () => {
+    const rows = [evt('turn_started', 'old'), evt('turn_complete', 'old'),
+      evt('turn_started', 'current'), evt('task_complete')].join('\n');
+    expect(inferStatus(rows, NOW - 5000, NOW)).toMatchObject({
+      status: 'working', finishedToken: null,
+    });
+  });
+
+  it('retains the legacy completion fallback when neither event has turn ID', () => {
+    expect(inferStatus([evt('task_started'), evt('task_complete')].join('\n'),
+      NOW - 1000, NOW)).toMatchObject({ status: 'finished' });
+  });
+});

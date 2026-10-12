@@ -103,6 +103,23 @@ class TestLinuxCollector(unittest.TestCase):
             scanner.enrich_titles(Path(tmp), sessions)
             self.assertEqual(sessions[0]['clientKind'], 'desktop')
 
+
+    def test_named_running_turn_ignores_completion_without_matching_identity(self):
+        now = 1_800_000_000_000
+        def ev(kind, turn=None):
+            payload = {'type': kind}
+            if turn:
+                payload['turn_id'] = turn
+            return {'type': 'event_msg', 'payload': payload}
+        events = [ev('turn_started', 'old'), ev('turn_complete', 'old'),
+                  ev('turn_started', 'current'), ev('task_complete')]
+        result = scanner.details('', '\n'.join(map(json.dumps, events)),
+                                 'x.jsonl', False, now - 1000, now)
+        self.assertEqual(result['status'], 'working')
+        legacy = scanner.details('', '\n'.join(map(json.dumps, [ev('task_started'), ev('task_complete')])),
+                                 'x.jsonl', False, now - 1000, now)
+        self.assertEqual(legacy['status'], 'finished')
+
     def test_sessions_and_cwd_are_read_without_full_transcript(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / 'sessions' / '2026' / '10' / '10'

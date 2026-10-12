@@ -428,7 +428,7 @@ def details(head, tail, filename, clipped, modified, now):
                 finished_token, checkpoint_after_boundary = None, False
             elif event in END or event in ABORT:
                 # Late turn-a completion cannot terminate a newer running turn-b.
-                if active_turn_id and turn_id and active_turn_id != turn_id:
+                if active_turn_id and turn_id != active_turn_id:
                     continue
                 if ((not active_turn_id and turn_id and turn_id == last_terminal_turn_id)
                         or (phase == 'submitted' and not active_turn_id and not turn_id)):

@@ -167,6 +167,20 @@ npm run probe:app-server -- --duration 20 --thread-id "真实会话UUID" --show-
 
 运行 `npm run test:probe` 可以在不连接真实账号/会话的前提下，用模拟 App Server 验证 WebSocket/JSON-RPC、状态 flags、批准请求绝不代答等行为。**下一阶段**在独立测试服务上验证 `thread/resume` 的第二客户端订阅、审批请求分发与断线回退后，才考虑可选地接入正式 Monitor。不可用独立进程假装共享所有已有会话。
 
+## Codex Desktop 状态追踪边界与修复
+
+Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Monitor 默认读取的是只读 JSONL 与少量 SQLite 元数据，并没有订阅该 Desktop 进程的实时 JSON-RPC 事件。因此仅凭任务日志，不能承诺 100% 捕获运行中、等待审批或等待用户输入；单独连接新的 App Server 并不能观察 Desktop 私有服务里的活动线程。
+
+已改善的落盘解析：
+
+- 从 `session_meta.originator` 和只读 `state_5.sqlite.threads.originator` 识别 `codex_desktop`（也兼容 `Codex Desktop`），不靠窗口标题或工作目录猜测客户端。
+- 兼容分页型 `item_completed.UserMessage`、旧 `event_msg.user_message` 和 `response_item.message(role=user)`；一条新提交的用户消息可以撤销上轮的“已结束”状态，即便新的 turn/start 尚未落盘。
+- 根据 `turn_id` 检查新旧轮次归属：**上一轮迟到的结束事件不得终止下一轮**。旧版无 ID 的事件仅在不存在待核对的活动轮次时回退旧策略。
+- 对尚未回应的**结构化异步提问**继续发等待提醒，但不再把状态标为“本轮已完成”；无法确认是否仍在执行时显示“未知”。普通助手文本里随口提出的问题不是可靠的机器可判定审批事件，不自动从标点猜测。
+- 系统通知使用“**本轮回复已结束**”而非“任务完成”，因为 `task_complete` / `turn_complete` 只说明该 **turn** 结束，不代表长期任务、整段 Desktop 会话已完成。
+
+进一步提升覆盖率必须在真实 Windows Desktop 上确认它的 App Server 传输是否可**只读旁路观测**、或是否存在可安全读取的独立实时事件来源。未验证前**不调用** `thread/resume`、`turn/start`、审批回答，也不会自动启动新进程伪装为 Desktop 的状态源。无法观察到状态时应标记未知，而不是通过日志静默时间宣布“任务完成”。
+
 ## 自动返回原窗口与多标签（Windows 实验版）
 
 主窗口详情里的「返回原窗口」、悬浮窗任务点击和 Windows 原生通知点击，优先返回**原来运行 Codex 的窗口**；无法确认时回到 Monitor 会话详情，不创建新终端、新 Codex 会话，也不调用 resume、审批或用户输入。

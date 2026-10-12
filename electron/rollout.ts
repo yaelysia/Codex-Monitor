@@ -188,7 +188,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
       finishedToken = null; checkpointAfterBoundary = false;
     } else if (END_EVENTS.has(event) || ABORT_EVENTS.has(event)) {
       // A late turn-a completion must never close currently running turn-b.
-      if (activeTurnId && turnId && activeTurnId !== turnId) continue;
+      if (activeTurnId && turnId !== activeTurnId) continue;
       // Ignore duplicate terminal events from a prior turn when a fresh user
       // input is already pending; old histories may lack turn IDs.
       if ((!activeTurnId && turnId && turnId === lastTerminalTurnId) ||
