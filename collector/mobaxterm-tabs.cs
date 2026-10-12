@@ -99,7 +99,12 @@ namespace CodexMonitor {
       for (int i = 1; i <= children; i++) {
         if (visits++ >= MAX_VISITED) break;
         try {
-          object childObject = root.get_accChild(i);
+          // Some MSAA providers reject accChild(i) while still implementing
+          // accRole/accName/accState for that simple CHILDID. Falling back to
+          // the integer child ID avoids silently losing native tab controls.
+          object childObject = null;
+          try { childObject = root.get_accChild(i); }
+          catch { /* Try the numeric accessible child ID below. */ }
           IAccessible child = childObject as IAccessible;
           IAccessible provider = child ?? root;
           object id = child == null ? (object)i : (object)0;
@@ -231,8 +236,24 @@ namespace CodexMonitor {
       }
       if (target == null) return false;
       try {
-        if (!target.Selected) target.Parent.accSelect(2, target.ChildId);
+        if (!target.Selected) {
+          try {
+            // TAKEFOCUS | TAKESELECTION: selecting a tab often needs both for
+            // a visible page switch in older Win32 accessibility providers.
+            target.Parent.accSelect(3, target.ChildId);
+          } catch {
+            // Older providers may implement TAKESELECTION only.
+            target.Parent.accSelect(2, target.ChildId);
+          }
+        }
         System.Threading.Thread.Sleep(120);
+        if (String.Equals(Read(hwnd).Id, token, StringComparison.Ordinal)) return true;
+        // A provider might silently accept TAKEFOCUS without changing the
+        // selected page; attempt the narrower flag once and verify again.
+        if (!target.Selected) {
+          target.Parent.accSelect(2, target.ChildId);
+          System.Threading.Thread.Sleep(120);
+        }
         return String.Equals(Read(hwnd).Id, token, StringComparison.Ordinal);
       } catch { return false; }
     }
