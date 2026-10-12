@@ -122,6 +122,7 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
       const lastUserInputAgeAtSourceMs = lastInputAt == null ? null : now - lastInputAt;
       const record: SessionRecord = { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
         ...origin, clientKind, lastUserInputAgeAtSourceMs,
+        lastUserInputAtSourceMs: lastInputAt,
         rolloutPath: path.relative(sessionsDir, file).split(path.sep).join('/'),
         title: extractFirstUserTitle(head), ...state, updatedAt: mtime, byteSize: size,
         ageAtSourceMs: now - mtime, startedAt: null };

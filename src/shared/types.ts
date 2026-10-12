@@ -13,6 +13,8 @@ export interface SessionRecord {
   clientKind?: SessionClientKind;
   /** User input age according to source machine clock; may be absent. */
   lastUserInputAgeAtSourceMs?: number | null;
+  /** Stable event timestamp in source clock, used only to deduplicate binding attempts. */
+  lastUserInputAtSourceMs?: number | null;
   /** True only when Codex's own session_meta identifies a subagent. */
   isSubagent?: boolean;
   /** Optional root/parent thread identifier from the persisted metadata. */

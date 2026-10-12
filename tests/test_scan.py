@@ -23,6 +23,7 @@ class TestLinuxCollector(unittest.TestCase):
         result = scanner.details(meta, tail, 'rollout-one.jsonl', False, now - 1000, now)
         self.assertEqual(result['clientKind'], 'terminal')
         self.assertEqual(result['lastUserInputAgeAtSourceMs'], 2000)
+        self.assertEqual(result['lastUserInputAtSourceMs'], now - 2000)
         self.assertNotIn('PRIVATE CONTENT', json.dumps(result))
         self.assertEqual(scanner.client_kind_from_header(json.dumps({
             'type': 'session_meta', 'payload': {'originator': 'Codex Desktop'}})),

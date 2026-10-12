@@ -232,7 +232,7 @@ def client_kind_from_header(head):
     return 'unknown'
 
 
-def last_user_input_age_at_source(records, now):
+def last_user_input_at_source(records):
     latest = None
     for row in records:
         payload = row.get('payload')
@@ -246,7 +246,7 @@ def last_user_input_age_at_source(records, now):
                 latest = at
         except (ValueError, OverflowError):
             pass
-    return None if latest is None else now - latest
+    return latest
 
 
 QUESTION_AGE_LIMIT_MS = 6 * 60 * 60 * 1000
@@ -377,7 +377,8 @@ def details(head, tail, filename, clipped, modified, now):
     checkpoint_after_boundary = False
     parsed_rows = list(rows(tail, clipped))
     question = detect_pending_question_records(parsed_rows)
-    input_age = last_user_input_age_at_source(parsed_rows, now)
+    input_at_source = last_user_input_at_source(parsed_rows)
+    input_age = None if input_at_source is None else now - input_at_source
     for row in parsed_rows:
         payload = row.get('payload') or {}
         if not isinstance(payload, dict):
@@ -442,6 +443,7 @@ def details(head, tail, filename, clipped, modified, now):
         'parentThreadId': origin['parentThreadId'],
         'clientKind': client_kind,
         'lastUserInputAgeAtSourceMs': input_age,
+        'lastUserInputAtSourceMs': input_at_source,
         'title': title_from_head(head),
         'status': status,
         'statusReason': reason,

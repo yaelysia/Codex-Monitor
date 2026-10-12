@@ -108,6 +108,8 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
         entry.clientKind === 'terminal' ? entry.clientKind : 'unknown',
       lastUserInputAgeAtSourceMs: typeof entry.lastUserInputAgeAtSourceMs === 'number' &&
         Number.isFinite(entry.lastUserInputAgeAtSourceMs) ? entry.lastUserInputAgeAtSourceMs : null,
+      lastUserInputAtSourceMs: typeof entry.lastUserInputAtSourceMs === 'number' &&
+        Number.isFinite(entry.lastUserInputAtSourceMs) ? entry.lastUserInputAtSourceMs : null,
       rolloutPath: typeof entry.rolloutPath === 'string' ? entry.rolloutPath : null,
       title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.slice(0, 181) : null,
       status: status === 'working' || status === 'waiting' || status === 'finished' ||

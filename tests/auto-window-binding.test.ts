@@ -85,3 +85,18 @@ describe('independent source scan time prevents cross-host misassociation', () =
     expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1111');
   });
 });
+
+describe('stable user event deduplication', () => {
+  it('does not relink an old user event after another window becomes foreground', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW - 500, 'terminal', '0x1111', 111));
+    const first = makeScan(NOW + 200, 300);
+    first.sources[0]!.sessions[0]!.lastUserInputAtSourceMs = 1000000;
+    resolver.observeScan(first, NOW + 200);
+    resolver.observeFocus(sample(NOW + 3000, 'terminal', '0x2222', 222));
+    const next = makeScan(NOW + 5000, 500);
+    next.sources[0]!.sessions[0]!.lastUserInputAtSourceMs = 1000000;
+    resolver.observeScan(next, NOW + 5000);
+    expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1111');
+  });
+});

@@ -65,8 +65,10 @@ export class AutoWindowResolver {
         const inputAt = (source.capturedAt ?? scan.scannedAt) - age;
         if (inputAt < this.history[0]!.at || inputAt > now + 1000 ||
             now - inputAt > MAX_INPUT_AGE_MS) continue;
+        const token = session.lastUserInputAtSourceMs ?? inputAt;
         const previous = this.lastInput.get(session.key);
-        if (previous != null && Math.abs(inputAt - previous) < 1500) continue;
+        if (previous != null && (previous === token ||
+            (session.lastUserInputAtSourceMs == null && Math.abs(inputAt - previous) < 1500))) continue;
 
         let selected: ForegroundWindow | undefined;
         for (let j = this.history.length - 1; j >= 0; j--) {
@@ -78,7 +80,7 @@ export class AutoWindowResolver {
           continue;
         }
         this.bindings.set(session.key, { ...selected, inputAt });
-        this.lastInput.set(session.key, inputAt);
+        this.lastInput.set(session.key, token);
       }
     }
   }
