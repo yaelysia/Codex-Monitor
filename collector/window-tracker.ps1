@@ -11,6 +11,7 @@ try {
     $nativeSource = @'
 using System;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -37,6 +38,7 @@ namespace CodexMonitor {
     }
     delegate void WinEvent(IntPtr hook, uint kind, IntPtr hwnd, int obj, int child,
       uint thread, uint time);
+    delegate bool EnumTopWindow(IntPtr hwnd, IntPtr unused);
     static readonly WinEvent callback = OnEvent;
     static string lastSignature = null;
     static long lastEmittedAt = 0;
@@ -52,6 +54,8 @@ namespace CodexMonitor {
     [DllImport("user32.dll")] static extern bool TranslateMessage(ref Msg msg);
     [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref Msg msg);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumTopWindow callback,
+      IntPtr lParam);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
@@ -180,14 +184,22 @@ namespace CodexMonitor {
 
     public static void Sample() { Emit(false); }
     public static void InspectTabs() {
-      IntPtr hwnd = GetForegroundWindow();
-      if (hwnd == IntPtr.Zero) {
-        Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false}");
+      // Calling from a shell makes the shell foreground. Prefer a unique
+      // visible MobaXterm top-level HWND so inspection remains useful without
+      // changing user focus or sending anything into a terminal.
+      var windows = new List<IntPtr>();
+      EnumWindows(delegate(IntPtr candidate, IntPtr unused) {
+        if (IsWindowVisible(candidate) && MobaTabProbe.IsMobaWindow(candidate))
+          windows.Add(candidate);
+        return true;
+      }, IntPtr.Zero);
+      if (windows.Count != 1) {
+        string reason = windows.Count == 0 ? "no_visible_mobaxterm" : "multiple_mobaxterm_windows";
+        Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false," +
+          "\"provider\":\"none\",\"reason\":\"" + reason + "\"}");
         return;
       }
-      IntPtr root = GetAncestor(hwnd, 2);
-      if (root != IntPtr.Zero) hwnd = root;
-      TabProbe.Snapshot tab = TabProbe.Read(hwnd);
+      TabProbe.Snapshot tab = TabProbe.Read(windows[0]);
       int count = tab == null ? 0 : tab.Count;
       bool identified = tab != null && tab.Id != null;
       string provider = identified && tab.Id.StartsWith("msaa:") ? "msaa" :
