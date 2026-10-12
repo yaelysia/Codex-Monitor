@@ -2,7 +2,9 @@ import path from 'node:path';
 import { app, BrowserWindow, ipcMain, clipboard } from 'electron';
 import type { Settings } from '../src/shared/types';
 import { readSettings, writeSettings } from './config';
-import { listWslDistros, refresh } from './collector';
+import { listWslDistros } from './collector';
+import { MonitorService } from './monitor-service';
+import { FloatingWindowController } from './floating';
 
 // Windows can crash its Chromium GPU child during sandbox startup (Electron #51761).
 // Opt-in workaround only: disabling the GPU sandbox weakens process isolation.
