@@ -51,7 +51,7 @@ const WINDOW_HISTORY_MS = 5 * 60_000;
 const MAX_INPUT_AGE_MS = 45_000;
 const MAX_SAMPLES = 4096;
 const HEX_HANDLE = /^0x[0-9a-f]{1,16}$/i;
-const TAB_TOKEN = /^rid:-?\d+(?:\.-?\d+){0,19}$/;
+const TAB_TOKEN = /^(?:rid:-?\d+(?:\.-?\d+){0,19}|msaa:[0-9a-f]{32})$/;
 
 /** Keep trustworthy HWND/PID evidence even if optional UIA details are
  * malformed or unsupported. A bad tab ID must never break window binding.

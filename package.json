@@ -59,6 +59,10 @@
       {
         "from": "collector/tab-automation.cs",
         "to": "tab-automation.cs"
+      },
+      {
+        "from": "collector/mobaxterm-tabs.cs",
+        "to": "mobaxterm-tabs.cs"
       }
     ],
     "directories": {

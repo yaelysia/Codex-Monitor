@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('watch', 'focus', 'verify', 'sample')][string]$Mode = 'watch',
+    [ValidateSet('watch', 'focus', 'verify', 'sample', 'inspect-tabs')][string]$Mode = 'watch',
     [string]$WindowHandle = '',
     [int]$TargetPid = 0,
     [long]$ProcessStart = 0,
@@ -179,6 +179,23 @@ namespace CodexMonitor {
     }
 
     public static void Sample() { Emit(false); }
+    public static void InspectTabs() {
+      IntPtr hwnd = GetForegroundWindow();
+      if (hwnd == IntPtr.Zero) {
+        Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false}");
+        return;
+      }
+      IntPtr root = GetAncestor(hwnd, 2);
+      if (root != IntPtr.Zero) hwnd = root;
+      TabProbe.Snapshot tab = TabProbe.Read(hwnd);
+      int count = tab == null ? 0 : tab.Count;
+      bool identified = tab != null && tab.Id != null;
+      string provider = identified && tab.Id.StartsWith("msaa:") ? "msaa" :
+        identified && tab.Id.StartsWith("rid:") ? "uia" : "none";
+      Console.WriteLine("{\"type\":\"tab-probe\",\"count\":" +
+        count.ToString(CultureInfo.InvariantCulture) + ",\"identified\":" +
+        (identified ? "true" : "false") + ",\"provider\":\"" + provider + "\"}");
+    }
 
     public static void Watch() {
       IntPtr foregroundHook = SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0);
@@ -267,8 +284,9 @@ namespace CodexMonitor {
     # Compose one native assembly so the UIA module and Win32 tracker share
     # a concrete, minimal API. Windows PowerShell 5.1 ships these assemblies.
     $tabSource = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'tab-automation.cs'))
+    $mobaSource = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'mobaxterm-tabs.cs'))
     try {
-        Add-Type -ErrorAction Stop -TypeDefinition ($nativeSource + "`n" + $tabSource) -ReferencedAssemblies @('UIAutomationClient', 'UIAutomationTypes')
+        Add-Type -ErrorAction Stop -TypeDefinition ($nativeSource + "`n" + $tabSource + "`n" + $mobaSource) -ReferencedAssemblies @('UIAutomationClient', 'UIAutomationTypes', 'Accessibility')
     } catch {
         # A system lacking UIAutomation must still support original HWND jumps.
         # Verify mode fails in CI instead of concealing a compilation regression.
@@ -293,6 +311,8 @@ namespace CodexMonitor {
 }
 if ($Mode -eq 'sample') {
     [CodexMonitor.WindowProbe]::Sample()
+} elseif ($Mode -eq 'inspect-tabs') {
+    [CodexMonitor.WindowProbe]::InspectTabs()
 } elseif ($Mode -eq 'verify') {
     if (-not [CodexMonitor.WindowProbe]::VerifyFocusShowCommands()) {
         Write-Output '{"ok":false,"reason":"focus_show_policy_failed"}'
@@ -300,6 +320,10 @@ if ($Mode -eq 'sample') {
     }
     if (-not [CodexMonitor.TabProbe]::VerifyTokenEncoding()) {
         Write-Output '{"ok":false,"reason":"tab_runtime_id_encoding_failed"}'
+        exit 3
+    }
+    if (-not [CodexMonitor.MobaTabProbe]::VerifyIdentityEncoding()) {
+        Write-Output '{"ok":false,"reason":"moba_accessible_id_encoding_failed"}'
         exit 3
     }
     Write-Output '{"ok":true}'

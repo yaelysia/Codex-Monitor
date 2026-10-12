@@ -50,6 +50,18 @@ namespace CodexMonitor {
     }
 
     public static Snapshot Read(IntPtr hwnd) {
+      Snapshot uia = ReadUia(hwnd);
+      if (uia.Id != null) return uia;
+      // MobaXterm often exposes its native tab strip through MSAA rather
+      // than UIA TabItem. Keep it strictly scoped to a verified MobaXterm HWND.
+      if (MobaTabProbe.IsMobaWindow(hwnd)) {
+        Snapshot msaa = MobaTabProbe.Read(hwnd);
+        if (msaa.Id != null) return msaa;
+      }
+      return uia;
+    }
+
+    private static Snapshot ReadUia(IntPtr hwnd) {
       try {
         AutomationElementCollection items = Items(hwnd);
         if (items == null || items.Count == 0) return new Snapshot(null, 0);
@@ -70,6 +82,9 @@ namespace CodexMonitor {
 
     public static bool Select(IntPtr hwnd, string id) {
       if (String.IsNullOrEmpty(id) || id.Length > 192) return false;
+      if (id.StartsWith("msaa:", StringComparison.Ordinal))
+        return MobaTabProbe.Select(hwnd, id);
+      if (!id.StartsWith("rid:", StringComparison.Ordinal)) return false;
       try {
         AutomationElementCollection items = Items(hwnd);
         if (items == null || items.Count < 2 || items.Count > MaxTabs) return false;
