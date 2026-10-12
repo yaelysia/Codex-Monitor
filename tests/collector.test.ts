@@ -33,7 +33,11 @@ describe('observed file-growth evidence', () => {
     expect(grown.sessions[0]?.statusReason).toMatch(/日志文件增长/);
     const stale = source(record('growing1', 1_002_000, 130));
     inferObservedActivity([stale], 1_060_000);
-    expect(stale.sessions[0]?.status).toBe('unknown');
+    expect(stale.sessions[0]?.status).toBe('working');
+    expect(stale.sessions[0]?.statusReason).toMatch(/上下文压缩/);
+    const expired = source(record('growing1', 1_002_000, 130));
+    inferObservedActivity([expired], 1_002_000 + 8 * 60_000 + 1);
+    expect(expired.sessions[0]?.status).toBe('unknown');
   });
   it('never overwrites explicit completion or uses timestamps alone', () => {
     inferObservedActivity([], 1_000_000);

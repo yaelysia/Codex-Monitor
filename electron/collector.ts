@@ -4,6 +4,7 @@ import path from 'node:path';
 import { app } from 'electron';
 import type { ScanResponse, SessionRecord, Settings, SourceKind, SourceResult } from '../src/shared/types';
 import { resolveLocalRoot, scanLocal } from './local';
+import { SessionActivityTracker } from '../src/shared/activity-tracker';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
 const MAX_STDOUT = 5 * 1024 * 1024;
@@ -17,30 +18,12 @@ export function isInternalWslDistro(name: string): boolean {
 
 // Recent file growth is evidence of agent activity when lifecycle markers are
 // outside our bounded scan window. Keep the observation transient and tentative.
-const RECENT_CHANGE_MS = 45_000;
-const observed = new Map<string, { modified: number; byteSize: number; lastGrowth: number }>();
+const activityTracker = new SessionActivityTracker();
 
+/** One shared activity timeline across Windows, WSL and SSH, without changing the file adapters. */
 export function inferObservedActivity(sources: SourceResult[], now: number): void {
-  const liveKeys = new Set<string>();
-  for (const source of sources) {
-    if (source.error) continue;
-    for (const session of source.sessions) {
-      liveKeys.add(session.key);
-      const previous = observed.get(session.key);
-      const currentSize = session.byteSize ?? -1;
-      const lastGrowth = previous && session.updatedAt >= previous.modified && currentSize > previous.byteSize && previous.byteSize >= 0
-        ? now : previous?.lastGrowth ?? 0;
-      if (session.status === 'unknown' && lastGrowth && now - lastGrowth <= RECENT_CHANGE_MS && now - session.updatedAt <= RECENT_CHANGE_MS) {
-        session.status = 'working';
-        session.statusReason = '相邻扫描中检测到会话日志文件增长，可能执行中；未获得客户端实时状态';
-      }
-      observed.set(session.key, { modified: session.updatedAt, byteSize: currentSize, lastGrowth });
-    }
-  }
-  // Remove session identities that are no longer visible; no persistent store needed.
-  for (const key of observed.keys()) if (!liveKeys.has(key)) observed.delete(key);
+  activityTracker.annotate(sources, now);
 }
-
 
 function script(): Promise<string> {
   if (!scriptCache) {
