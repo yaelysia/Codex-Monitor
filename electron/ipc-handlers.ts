@@ -70,6 +70,14 @@ export function registerIpcHandlers(monitor: MonitorService,
     if (typeof expanded !== 'boolean') throw new Error('Invalid floating expansion');
     return floating.setExpanded(expanded);
   });
+  ipcMain.handle('floating:set-opacity', (_event, opacity: unknown) => {
+    if (typeof opacity !== 'number' || !Number.isFinite(opacity) ||
+      opacity < 0.4 || opacity > 1) {
+      throw new Error('Floating opacity must be between 40% and 100%');
+    }
+    return floating.setOpacity(opacity);
+  });
+  ipcMain.handle('floating:reset-position', () => floating.resetPosition());
   ipcMain.handle('monitor:consume-focus-key', () => main.consumePendingKey());
   ipcMain.handle('monitor:show-main', (_event, sessionKey?: unknown) => {
     if (sessionKey != null && (typeof sessionKey !== 'string' || sessionKey.length > 300)) {

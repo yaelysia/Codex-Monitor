@@ -265,6 +265,8 @@ export default function App() {
   const [residentError, setResidentError] = useState('');
   const [residentSaving, setResidentSaving] = useState(false);
   const [floatingVisible, setFloatingVisible] = useState(false);
+  const [floatingOpacity, setFloatingOpacity] = useState(1);
+  const [floatingSide, setFloatingSide] = useState<'left' | 'right'>('right');
   const [now, setNow] = useState(Date.now());
   const [laneLimit, setLaneLimit] = useState<Record<string, number>>({
     working: BATCH_SIZE, other: BATCH_SIZE, finished: BATCH_SIZE,
@@ -305,7 +307,10 @@ export default function App() {
       }
     });
     const unsubscribeFloating = window.monitorApi.onFloatingState(state => {
-      if (mounted.current) setFloatingVisible(state.visible);
+      if (!mounted.current) return;
+      setFloatingVisible(state.visible);
+      setFloatingOpacity(state.opacity);
+      setFloatingSide(state.side);
     });
     const focusSession = (key: string) => {
       setSourceId(null);
@@ -322,7 +327,10 @@ export default function App() {
       if (mounted.current && key) focusSession(key);
     }).catch(console.error);
     void window.monitorApi.getFloatingState().then(state => {
-      if (mounted.current) setFloatingVisible(state.visible);
+      if (!mounted.current) return;
+      setFloatingVisible(state.visible);
+      setFloatingOpacity(state.opacity);
+      setFloatingSide(state.side);
     }).catch(console.error);
     void window.monitorApi.getMonitorState().then(state => {
       if (!mounted.current) return;
@@ -715,8 +723,36 @@ export default function App() {
                 : '仅在正式打包的 Windows 版本中可设置；开发模式不会修改系统开机项。'}</small>
             </span>
           </label>
-          <p className="resident-help">悬浮窗的停靠边缘、位置、展开状态和显示状态会自动保存。
-            Windows 本地文件读取使用缓存；事件监听正常时，远程机器会降低兜底轮询频率。</p>
+          <section className="resident-opacity" aria-label="悬浮窗透明度设置">
+            <div className="resident-opacity-head"><strong>悬浮窗透明度</strong>
+              <output htmlFor="floating-opacity-range">{Math.round(floatingOpacity * 100)}% 不透明度</output>
+            </div>
+            <input id="floating-opacity-range" type="range" min="40" max="100" step="5"
+              aria-label="悬浮窗不透明度" value={Math.round(floatingOpacity * 100)}
+              onChange={event => {
+                const next = Number(event.currentTarget.value) / 100;
+                setFloatingOpacity(next);
+                void window.monitorApi.setFloatingOpacity(next).catch(error => {
+                  setResidentError(describeError(error));
+                  void window.monitorApi.getFloatingState().then(current =>
+                    setFloatingOpacity(current.opacity)).catch(console.error);
+                });
+              }}/>
+            <div className="resident-opacity-scale"><span>40% · 更透明</span><span>100% · 不透明</span></div>
+            <p>实时调节悬浮窗整体透明程度；收起和展开时共用设置，重启后自动恢复。</p>
+          </section>
+          <div className="resident-position">
+            <div><strong>停靠位置自动记忆</strong>
+              <small>当前：{floatingSide === 'left' ? '屏幕左侧' : '屏幕右侧'}。拖动悬浮窗顶部 C 标识可以更换位置；重启后恢复上次的屏幕、边缘和高度。</small>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => {
+              void window.monitorApi.resetFloatingPosition().then(state => {
+                setFloatingSide(state.side);
+                setFloatingOpacity(state.opacity);
+              }).catch(error => setResidentError(describeError(error)));
+            }}>重置到主屏幕右侧</button>
+          </div>
+          <p className="resident-help">Windows 本地文件读取使用缓存；事件监听正常时，远程机器会降低兜底轮询频率。</p>
           {residentError && <p className="error-note" role="alert">{residentError}</p>}
         </div>
         <footer className="modal-actions">

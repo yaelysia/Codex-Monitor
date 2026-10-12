@@ -91,6 +91,8 @@ export interface FloatingWindowState {
   visible: boolean;
   expanded: boolean;
   side: FloatingSide;
+  /** 0.4 to 1, where 1 is fully opaque. */
+  opacity: number;
 }
 
 export interface RecentReplyExcerpt {
@@ -121,6 +123,8 @@ export interface MonitorApi {
   getFloatingState(): Promise<FloatingWindowState>;
   setFloatingVisible(visible: boolean): Promise<FloatingWindowState>;
   setFloatingExpanded(expanded: boolean): Promise<FloatingWindowState>;
+  setFloatingOpacity(opacity: number): Promise<FloatingWindowState>;
+  resetFloatingPosition(): Promise<FloatingWindowState>;
   onFloatingState(listener: (state: FloatingWindowState) => void): () => void;
   showMainWindow(sessionKey?: string): Promise<void>;
   onFocusSession(listener: (sessionKey: string) => void): () => void;

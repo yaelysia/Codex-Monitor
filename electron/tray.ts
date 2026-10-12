@@ -34,6 +34,11 @@ export class TrayController {
         click: () => { this.floating.setVisible(!floatingVisible); this.refresh(); } },
       { label: '系统通知静音', type: 'checkbox', checked: muted,
         click: () => { this.monitor.setMuted(!muted); this.refresh(); } },
+      { label: '悬浮窗不透明度', submenu: [1, 0.85, 0.7, 0.55, 0.4].map(value => ({
+        label: Math.round(value * 100) + '%',
+        type: 'radio' as const, checked: Math.abs(this.floating.state().opacity - value) < 0.015,
+        click: () => this.floating.setOpacity(value),
+      })) },
       { type: 'separator' },
       { label: '关闭主窗口时后台运行', type: 'checkbox', checked: prefs.keepRunningOnClose,
         click: () => {

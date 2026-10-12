@@ -3,7 +3,7 @@ import type { FloatingTab, FloatingWindowState, MonitorState, SessionRecord } fr
 import { recentParentCompletions } from '../shared/monitor-view';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
-const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right' };
+const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right', opacity: 1 };
 
 type IconName = 'play' | 'bell' | 'check' | 'fold' | 'open' | 'close' | 'volume' | 'mute' | 'arrow';
 const paths: Record<IconName, string> = {
