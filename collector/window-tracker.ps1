@@ -2,12 +2,13 @@ param(
     [ValidateSet('watch', 'focus', 'verify')][string]$Mode = 'watch',
     [string]$WindowHandle = '',
     [int]$TargetPid = 0,
-    [long]$ProcessStart = 0
+    [long]$ProcessStart = 0,
+    [string]$TabId = ''
 )
 $ErrorActionPreference = 'Stop'
 # No window titles, UI text, commands or screen content are read or transmitted.
 try {
-    Add-Type -ErrorAction Stop -TypeDefinition @'
+    $nativeSource = @'
 using System;
 using System.Diagnostics;
 using System.Globalization;
@@ -27,6 +28,8 @@ namespace CodexMonitor {
     delegate void WinEvent(IntPtr hook, uint kind, IntPtr hwnd, int obj, int child,
       uint thread, uint time);
     static readonly WinEvent callback = OnEvent;
+    static string lastSignature = null;
+    static long lastEmittedAt = 0;
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max,
       IntPtr module, WinEvent callback, uint pid, uint thread, uint flags);
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
@@ -41,6 +44,9 @@ namespace CodexMonitor {
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int cmd);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern UIntPtr SetTimer(IntPtr hwnd, UIntPtr timerId,
+      uint interval, IntPtr callback);
+    [DllImport("user32.dll")] static extern bool KillTimer(IntPtr hwnd, UIntPtr timerId);
 
     static long Start(Process process) {
       return new DateTimeOffset(process.StartTime).ToUnixTimeMilliseconds();
@@ -61,9 +67,16 @@ namespace CodexMonitor {
       }
     }
     static void OnEvent(IntPtr hook, uint kind, IntPtr hwnd, int obj, int child,
-      uint thread, uint time) { Emit(); }
+      uint thread, uint time) {
+      if (kind != 3) {
+        IntPtr current = GetForegroundWindow();
+        IntPtr root = GetAncestor(hwnd, 2);
+        if (current == IntPtr.Zero || (hwnd != current && root != current)) return;
+      }
+      Emit(false);
+    }
 
-    static void Emit() {
+    static void Emit(bool periodic) {
       string app = "other", handle = "0x0";
       uint pid = 0; long startedAt = 0;
       IntPtr window = GetForegroundWindow();
@@ -83,26 +96,53 @@ namespace CodexMonitor {
           }
         } catch { /* Still emit an unknown transition, never reuse old focus. */ }
       }
+      if (periodic && app != "terminal") return;
+      string tabJson = "";
+      if (app == "terminal") {
+        TabProbe.Snapshot tab = TabProbe.Read(window);
+        if (tab.Id != null) tabJson = ",\"tabId\":\"" + tab.Id + "\"";
+        tabJson += ",\"tabCount\":" +
+          tab.Count.ToString(CultureInfo.InvariantCulture);
+      }
       long at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+      string signature = handle + "|" + pid + "|" + tabJson;
+      if (!periodic && signature == lastSignature && at - lastEmittedAt < 250) return;
+      lastSignature = signature;
+      lastEmittedAt = at;
       Console.WriteLine("{\"type\":\"foreground\",\"at\":" +
         at.ToString(CultureInfo.InvariantCulture) + ",\"app\":\"" + app +
         "\",\"hwnd\":\"" + handle + "\",\"pid\":" +
         pid.ToString(CultureInfo.InvariantCulture) + ",\"startedAt\":" +
-        startedAt.ToString(CultureInfo.InvariantCulture) + "}");
+        startedAt.ToString(CultureInfo.InvariantCulture) + tabJson + "}");
     }
     public static void Watch() {
-      IntPtr hook = SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0);
-      if (hook == IntPtr.Zero) throw new InvalidOperationException("win_event_hook_failed");
+      IntPtr foregroundHook = SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0);
+      if (foregroundHook == IntPtr.Zero)
+        throw new InvalidOperationException("win_event_hook_failed");
+      // Focus/selection notifications supplement low-frequency active-tab
+      // sampling. A tab switch often does NOT change the top-level HWND.
+      IntPtr selectionHook = SetWinEventHook(0x8005, 0x8006,
+        IntPtr.Zero, callback, 0, 0, 0);
+      UIntPtr timerId = new UIntPtr(1);
+      UIntPtr timer = SetTimer(IntPtr.Zero, timerId, 1100, IntPtr.Zero);
       try {
-        Emit();
+        Emit(false);
         Msg msg;
         while (GetMessage(out msg, IntPtr.Zero, 0, 0) > 0) {
+          if (msg.message == 0x0113 && msg.wParam == (IntPtr)1) {
+            Emit(true);
+            continue;
+          }
           TranslateMessage(ref msg);
           DispatchMessage(ref msg);
         }
-      } finally { UnhookWinEvent(hook); }
+      } finally {
+        if (timer != UIntPtr.Zero) KillTimer(IntPtr.Zero, timerId);
+        if (selectionHook != IntPtr.Zero) UnhookWinEvent(selectionHook);
+        UnhookWinEvent(foregroundHook);
+      }
     }
-    public static string Focus(string hex, int expectedPid, long startedAt) {
+    public static string Focus(string hex, int expectedPid, long startedAt, string tabId) {
       try {
         if (!hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
           return "{\"ok\":false,\"reason\":\"bad_handle\"}";
@@ -123,13 +163,22 @@ namespace CodexMonitor {
         Thread.Sleep(160);
         IntPtr now = GetForegroundWindow();
         bool okay = now == hwnd || GetAncestor(now, 2) == hwnd;
-        return okay ? "{\"ok\":true}" :
-          "{\"ok\":false,\"reason\":\"foreground_denied\"}";
+        if (!okay) return "{\"ok\":false,\"reason\":\"foreground_denied\"}";
+        if (!String.IsNullOrEmpty(tabId)) {
+          if (!TabProbe.Select(hwnd, tabId))
+            return "{\"ok\":false,\"reason\":\"tab_unavailable\",\"windowFocused\":true}";
+          return "{\"ok\":true,\"tabFocused\":true}";
+        }
+        return "{\"ok\":true,\"tabFocused\":false}";
       } catch { return "{\"ok\":false,\"reason\":\"invalid_or_stale_window\"}"; }
     }
   }
 }
 '@
+    # Compose one native assembly so the UIA module and Win32 tracker share
+    # a concrete, minimal API. Windows PowerShell 5.1 ships these assemblies.
+    $tabSource = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'tab-automation.cs'))
+    Add-Type -ErrorAction Stop -TypeDefinition ($nativeSource + "`n" + $tabSource) -ReferencedAssemblies @('UIAutomationClient', 'UIAutomationTypes')
 } catch {
     Write-Output '{"ok":false,"reason":"native_bridge_unavailable"}'
     exit 2
@@ -137,7 +186,7 @@ namespace CodexMonitor {
 if ($Mode -eq 'verify') {
     Write-Output '{"ok":true}'
 } elseif ($Mode -eq 'focus') {
-    [CodexMonitor.WindowProbe]::Focus($WindowHandle, $TargetPid, $ProcessStart)
+    [CodexMonitor.WindowProbe]::Focus($WindowHandle, $TargetPid, $ProcessStart, $TabId)
 } else {
     [CodexMonitor.WindowProbe]::Watch()
 }
