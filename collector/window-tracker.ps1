@@ -46,7 +46,10 @@ namespace CodexMonitor {
       return new DateTimeOffset(process.StartTime).ToUnixTimeMilliseconds();
     }
     static string App(string name) {
-      switch (name.ToLowerInvariant()) {
+      string lower = name.ToLowerInvariant();
+      // Portable MobaXterm executables commonly add edition/version suffixes.
+      if (lower == "mobaxterm" || lower.StartsWith("mobaxterm_")) return "terminal";
+      switch (lower) {
         case "codex": case "codex desktop": return "desktop";
         case "code": case "code - insiders": case "cursor":
         case "vscodium": case "windsurf": return "vscode";
