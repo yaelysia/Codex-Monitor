@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings } from '../shared/types';
+import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt } from '../shared/types';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
 
@@ -231,6 +231,13 @@ export default function App() {
   const [expandedSources, setExpandedSources] = useState<string[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [replyVersion, setReplyVersion] = useState(0);
+  const [recentReply, setRecentReply] = useState<{
+    key: string;
+    loading: boolean;
+    value: RecentReplyExcerpt | null;
+    error: string | null;
+  } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [floatingVisible, setFloatingVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -322,6 +329,25 @@ export default function App() {
   const lanes = useMemo(() => makeStatusLanes(shown), [shown]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
+
+  // Read reply text only when a session is explicitly opened. The 12-second
+  // metadata scan never fetches text for other sessions.
+  useEffect(() => {
+    if (!detailOpen || !selected) return;
+    let cancelled = false;
+    const key = selected.key;
+    setRecentReply(current => ({
+      key, loading: true,
+      value: current?.key === key ? current.value : null,
+      error: null,
+    }));
+    void window.monitorApi.getRecentReply(key).then(value => {
+      if (!cancelled) setRecentReply({ key, loading: false, value, error: null });
+    }).catch((err: unknown) => {
+      if (!cancelled) setRecentReply({ key, loading: false, value: null, error: describeError(err) });
+    });
+    return () => { cancelled = true; };
+  }, [detailOpen, selected?.key, selected?.updatedAt, replyVersion]);
 
   useEffect(() => {
     if (!shown.length) { setSelectedKey(null); setDetailOpen(false); return; }
@@ -549,6 +575,33 @@ export default function App() {
           <h2>{selected.title || '未命名会话'}</h2>
           <div className="detail-status"><StatusPill status={selected.status}/>
             <span className="source-tag">{selected.sourceLabel}</span></div>
+          <section className="reply-preview" aria-label="最近回复">
+            <div className="reply-preview-top">
+              <strong>最近回复</strong>
+              <button type="button" className="reply-reload" disabled={!detailOpen || recentReply?.loading}
+                onClick={() => setReplyVersion(value => value + 1)}
+                title="重新读取当前会话的最新回复">↻ 刷新</button>
+            </div>
+            {recentReply?.key === selected.key && recentReply.value?.text
+              ? <>
+                <div className="reply-preview-text">{recentReply.value.text}</div>
+                <div className="reply-preview-meta">
+                  <span>{recentReply.value.phase === 'final_answer' ? '最终回复' :
+                    recentReply.value.phase === 'commentary' ? '过程回复' :
+                    recentReply.value.phase === 'partial_answer' ? '部分回复' : '助手回复'}
+                    {recentReply.value.truncated ? ' · 末尾节选' : ''}</span>
+                  {recentReply.value.timestamp && !Number.isNaN(Date.parse(recentReply.value.timestamp)) &&
+                    <span>{formatTime(Date.parse(recentReply.value.timestamp))}</span>}
+                </div>
+              </>
+              : <p className="reply-preview-empty">
+                {!detailOpen ? '点击一个会话即可读取最近的助手回复。' :
+                  recentReply?.key !== selected.key || recentReply.loading ? '正在读取最新回复…' :
+                  recentReply.error ? '读取失败：' + recentReply.error :
+                  '当前读取范围内没有已保存的助手回复。'}
+              </p>}
+            <span className="reply-preview-note">仅按需读取已写入日志的回复，不包含推理过程或工具输出。</span>
+          </section>
           <div className="detail-divider"/>
           <div className="detail-field"><span>工作空间</span>
             <div className="detail-path mono">{selected.workspace || '未记录工作目录'}</div>
