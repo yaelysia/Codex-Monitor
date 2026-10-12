@@ -181,10 +181,24 @@ Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Mon
 
 **2026-10-12 新增 Windows Desktop 应用日志旁路：** 除 JSONL 之外，主监控现在会只读读取 Desktop 自己的应用日志，查找成功的 `[AppServerConnection] response_routed method=turn/start errorCode=null conversationId=<uuid>` 和明确的 `[desktop-notifications] show turn-complete` 事件。扫描同时支持 `%LOCALAPPDATA%\Codex\Logs\YYYY\MM\DD` 和 MSIX 包目录中的 `LocalCache\Local\Codex\Logs`。严格按已有本地 Desktop 会话 UUID 关联，忽略 `Received turn/started|completed for unknown conversation` 等错误日志；不会读取日志内容作为聊天文本，也不会导出其它字段。
 
-当 Desktop 日志确认该会话新的 `turn/start` 成功、且没有后续明确结束证据时，在有限时间窗口内显示“可能执行中”。相反，持久化的本轮结束事件如果更晚，仍优先判定为结束；日志不全时不根据静默倒推出完成。对已识别为 Desktop 来源的本地、WSL 或 SSH 会话，Windows 端即使 JSONL watcher 工作正常，也每 **12 秒**审核一次对应来源；此外会监听 Windows Desktop 日志目录的写入变更。远程会话按准确 UUID 关联，不按项目名或标题猜测。会话详情的「状态判断依据」会标明是有匹配事件，还是日志缺失、格式不受支持、会话 ID 不匹配。
+当 Desktop 日志确认该会话新的 `turn/start` 成功、且没有后续明确结束证据时，在有限时间窗口内显示“可能执行中”。相反，持久化的本轮结束事件如果更晚，仍优先判定为结束；日志不全时不根据静默倒推出完成。现在改为每 **4 秒**单独读取 Windows Desktop 的有限量日志摘要，以准确 UUID 补充**任意创建来源**（Desktop、VS Code 或 CLI）的已有本地、WSL、SSH 会话；不再因为一次新状态就重新扫描所有远程文件系统。GUI 日志里存在 `turn/start` 才能临时补足执行中的证据，更晚的完成事件会撤销它；来源元数据仍保持原始值，不假装创建来源等于当前执行客户端。Desktop 日志写入变化也会触发本地文件事件检查。远程会话只按准确 UUID 关联，不通过标题或工作目录猜测。会话详情的「状态判断依据」会标明是有匹配事件，还是日志缺失、格式不受支持、会话 ID 不匹配。
 
 **能力边界：** Desktop 的私有 stdio App Server 仍未向 Monitor 开放可靠的只读状态订阅。本功能不保证捕获后台所有会话，更不保证有 `waitingOnApproval` / `waitingOnUserInput` 的完整实时状态，不能据此称“100% 追踪”。如果 Desktop 应用日志不记载某个轮次、从其它客户端发起任务、仅显示云端远程任务或日志与 JSONL 使用不同的会话 ID，当前仍可能未知。未验证前**不调用** `thread/resume`、`turn/start`、审批回答，也不会启动新服务去冒充 Desktop。
 
+
+### 同时定位 Desktop 执行漏检和 MobaXterm 标签问题
+
+从 Windows 项目根目录运行 **一条命令**（若有持续运行任务，建议在它开始后运行）：
+
+```powershell
+npm run diagnose:tracking -- --duration 15
+```
+
+该命令仅查询已有 Windows Codex Desktop 应用日志中的轮次开始、轮次完成、失败/未知会话事件**计数与相对时间**，然后对**唯一可见的 MobaXterm 主窗口**执行 UIA/MSAA 原生标签识别诊断。可返回 `uiaTabItems`、`msaaGroups`、`msaaSelected`、`msaaDuplicateNames`、`nativeTabLikeChildren` 和安全的 `reason`。不会打印会话 UUID、SSH 主机名、标签名称、原始日志、命令或对话正文。多个可见的 MobaXterm 窗口会返回 `multiple_mobaxterm_windows`，而不是随机选择目标。
+
+如果 Desktop 完成时能通知，但运行时没有活动卡片，可优先核对 `desktop.events.acceptedStart`、`desktop.events.turnCompleteNotice`、`desktop.filesExamined`；如需确认某一个会话是否命中，可额外用 `--thread-id UUID` 仅筛选该会话，仍不会输出 UUID 原值。零计数不代表没有运行：也可能是 Desktop App Server 的私有内存事件未写入本地应用日志。
+
+MobaXterm 标签探测仍只选取“已确认唯一身份”的标签；此前存在一次扫描先结束、UIA/MSAA 标签后来才到的竞态，现允许在同一窗口和短时间内的后续证据补上标签绑定，并保存持久化结果。若 `identified=false` 或 `reason` 为标签控件不可见，仍需要真实机器的控件类型结果进一步开发，不使用盲目 Ctrl+Tab 轮切。
 
 ### Codex Desktop 可选只读日志探测
 
