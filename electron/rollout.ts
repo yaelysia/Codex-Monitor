@@ -92,26 +92,36 @@ export function extractSessionId(head: string, filename: string): string {
 export function inferStatus(tail: string, updatedAt: number, now = Date.now(), clippedStart = false): {
   status: SessionStatus;
   statusReason: string;
+  finishedToken: string | null;
+  waitingToken: string | null;
 } {
   let phase: 'started' | 'finished' | 'unknown' = 'unknown';
   let awaiting = false;
+  let finishedToken: string | null = null;
+  let waitingToken: string | null = null;
   for (const row of jsonlRows(tail, clippedStart)) {
     if (row.type !== 'event_msg') continue;
     const event = object(row.payload)?.type;
     if (typeof event !== 'string') continue;
-    if (START_EVENTS.has(event)) { phase = 'started'; awaiting = false; }
-    else if (END_EVENTS.has(event)) { phase = 'finished'; awaiting = false; }
-    else if (WAIT_EVENTS.has(event) && phase === 'started') awaiting = true;
-    else if (RESUME_EVENTS.has(event) && phase === 'started') awaiting = false;
+    // Persisted event timestamp + turn id survives unrelated later file writes.
+    // When both are missing, the tracker falls back to lifecycle transitions only.
+    const payload = object(row.payload);
+    const marker = [typeof row.timestamp === 'string' ? row.timestamp : '',
+      typeof payload?.turn_id === 'string' ? payload.turn_id : ''].join('|');
+    const token = marker === '|' ? null : marker;
+    if (START_EVENTS.has(event)) { phase = 'started'; awaiting = false; waitingToken = null; }
+    else if (END_EVENTS.has(event)) { phase = 'finished'; awaiting = false; finishedToken = token; waitingToken = null; }
+    else if (WAIT_EVENTS.has(event) && phase === 'started') { awaiting = true; waitingToken = token; }
+    else if (RESUME_EVENTS.has(event) && phase === 'started') { awaiting = false; waitingToken = null; }
   }
   const age = Math.max(0, now - updatedAt);
-  if (phase === 'finished') return { status: 'finished', statusReason: '检测到本轮结束事件；不代表客户端已退出' };
+  if (phase === 'finished') return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'finished', statusReason: '检测到本轮结束事件；不代表客户端已退出' };
   if (phase === 'started' && awaiting && age <= WAIT_WINDOW_MS) {
-    return { status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };
+    return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };
   }
   if (phase === 'started' && age <= ACTIVE_WINDOW_MS) {
-    return { status: 'working', statusReason: '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）' };
+    return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'working', statusReason: '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）' };
   }
-  if (phase === 'started') return { status: 'unknown', statusReason: '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行' };
-  return { status: 'unknown', statusReason: '没有足够的执行生命周期记录' };
+  if (phase === 'started') return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行' };
+  return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '没有足够的执行生命周期记录' };
 }

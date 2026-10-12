@@ -13,6 +13,9 @@ export interface SessionRecord {
   status: SessionStatus;
   /** User-facing evidence; no transcript contents are exposed. */
   statusReason: string;
+  /** Persisted terminal/approval event fingerprint when present; helps dedupe notifications. */
+  finishedToken?: string | null;
+  waitingToken?: string | null;
   updatedAt: number;
   /** File metadata used only for observing activity across scans. */
   byteSize?: number;
@@ -50,9 +53,48 @@ export interface ConfigResponse {
   distros: string[];
 }
 
+export type AlertKind = 'finished' | 'waiting';
+export type FloatingSide = 'left' | 'right';
+export type FloatingTab = 'running' | 'alerts' | 'completed';
+
+export interface MonitorAlert {
+  id: string;
+  sessionKey: string;
+  sessionId: string;
+  kind: AlertKind;
+  title: string;
+  sourceLabel: string;
+  workspace: string | null;
+  at: number;
+  read: boolean;
+  statusReason: string;
+}
+
+export interface MonitorState {
+  scan: ScanResponse | null;
+  alerts: MonitorAlert[];
+  muted: boolean;
+}
+
+export interface FloatingWindowState {
+  visible: boolean;
+  expanded: boolean;
+  side: FloatingSide;
+}
+
 export interface MonitorApi {
   getConfig(): Promise<ConfigResponse>;
   setConfig(settings: Settings): Promise<ConfigResponse>;
   refresh(): Promise<ScanResponse>;
   copyWorkspace(text: string): Promise<void>;
+  getMonitorState(): Promise<MonitorState>;
+  onMonitorState(listener: (state: MonitorState) => void): () => void;
+  acknowledgeAlert(id: string): Promise<MonitorState>;
+  setNotificationsMuted(muted: boolean): Promise<MonitorState>;
+  getFloatingState(): Promise<FloatingWindowState>;
+  setFloatingVisible(visible: boolean): Promise<FloatingWindowState>;
+  setFloatingExpanded(expanded: boolean): Promise<FloatingWindowState>;
+  onFloatingState(listener: (state: FloatingWindowState) => void): () => void;
+  showMainWindow(sessionKey?: string): Promise<void>;
+  onFocusSession(listener: (sessionKey: string) => void): () => void;
 }

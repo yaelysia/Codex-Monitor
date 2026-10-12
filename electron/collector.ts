@@ -122,6 +122,8 @@ function normalizeRemote(rows: unknown, id: string, label: string): SessionRecor
       title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.slice(0, 181) : null,
       status: status === 'working' || status === 'waiting' || status === 'finished' ? status : 'unknown',
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
+      finishedToken: typeof entry.finishedToken === 'string' ? entry.finishedToken : null,
+      waitingToken: typeof entry.waitingToken === 'string' ? entry.waitingToken : null,
       updatedAt: entry.updatedAt,
       byteSize: typeof entry.byteSize === 'number' && Number.isFinite(entry.byteSize) ? entry.byteSize : undefined,
       startedAt: typeof entry.startedAt === 'number' ? entry.startedAt : null,

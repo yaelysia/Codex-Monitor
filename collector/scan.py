@@ -171,6 +171,8 @@ def details(head, tail, filename, clipped, modified, now):
 
     phase = 'unknown'
     awaiting = False
+    finished_token = None
+    waiting_token = None
     for row in rows(tail, clipped):
         payload = row.get('payload') or {}
         if not isinstance(payload, dict):
@@ -181,14 +183,17 @@ def details(head, tail, filename, clipped, modified, now):
             event = payload.get('type')
             if not isinstance(event, str):
                 continue
+            timestamp = row.get('timestamp') if isinstance(row.get('timestamp'), str) else ''
+            turn_id = payload.get('turn_id') if isinstance(payload.get('turn_id'), str) else ''
+            marker = (timestamp + '|' + turn_id) if timestamp or turn_id else None
             if event in START:
-                phase, awaiting = 'started', False
+                phase, awaiting, waiting_token = 'started', False, None
             elif event in END:
-                phase, awaiting = 'finished', False
+                phase, awaiting, finished_token, waiting_token = 'finished', False, marker, None
             elif event in WAIT and phase == 'started':
-                awaiting = True
+                awaiting, waiting_token = True, marker
             elif event in RESUME and phase == 'started':
-                awaiting = False
+                awaiting, waiting_token = False, None
 
     age = max(0, now - modified)
     if phase == 'finished':
@@ -207,6 +212,8 @@ def details(head, tail, filename, clipped, modified, now):
         'title': title_from_head(head),
         'status': status,
         'statusReason': reason,
+        'finishedToken': finished_token if phase == 'finished' else None,
+        'waitingToken': waiting_token if awaiting else None,
         'updatedAt': modified,
         'startedAt': None,
     }
