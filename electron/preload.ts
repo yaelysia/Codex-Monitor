@@ -23,6 +23,7 @@ const api: MonitorApi = {
     return () => ipcRenderer.removeListener('floating:state', handler);
   },
   showMainWindow: key => ipcRenderer.invoke('monitor:show-main', key),
+  consumePendingFocusKey: () => ipcRenderer.invoke('monitor:consume-focus-key'),
   onFocusSession: listener => {
     const handler = (_event: Electron.IpcRendererEvent, key: string) => listener(key);
     ipcRenderer.on('monitor:focus-session', handler);
