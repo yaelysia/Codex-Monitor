@@ -20,6 +20,7 @@ vi.mock('../electron/watchers', () => ({
     reconcile(_settings: Settings, sources: SourceResult[]) {
       fake.reconciled.push(sources.map(src => src.id));
     }
+    status() { return {}; }
   },
 }));
 

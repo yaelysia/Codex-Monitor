@@ -448,3 +448,9 @@ button svg { flex-shrink: 0; }
 .task-card.status-failed{border-color:#754755;background:#362630}
 .workspace-session-indicator.status-interrupted{background:#d5af84}
 .workspace-session-indicator.status-failed{background:#e497a3}
+
+/* A small second dot indicates transport event coverage, distinct from source scan health. */
+.watch-indicator{display:inline-block;flex-shrink:0;width:5px;height:5px;border-radius:50%;background:#77758a}
+.watch-indicator.active{background:#86cbb4;box-shadow:0 0 0 2px #86cbb422}
+.watch-indicator.connecting{background:#c8b088}
+.watch-indicator.fallback{background:#767487}

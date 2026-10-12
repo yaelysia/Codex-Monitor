@@ -78,10 +78,13 @@ export interface MonitorAlert {
   statusReason: string;
 }
 
+export type EventChannelMode = 'active' | 'connecting' | 'fallback';
 export interface MonitorState {
   scan: ScanResponse | null;
   alerts: MonitorAlert[];
   muted: boolean;
+  /** Per-source event watcher health. "fallback" still has periodic scans. */
+  eventChannels?: Record<string, EventChannelMode>;
 }
 
 export interface FloatingWindowState {

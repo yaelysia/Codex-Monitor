@@ -222,6 +222,7 @@ function SettingsPanel({ config, onClose, onSave }: {
 export default function App() {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [scan, setScan] = useState<ScanResponse | null>(null);
+  const [eventChannels, setEventChannels] = useState<Record<string, 'active' | 'connecting' | 'fallback'>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -271,7 +272,9 @@ export default function App() {
       if (mounted.current) setConfig(value);
     }).catch(err => { if (mounted.current) setError(describeError(err)); });
     const unsubscribe = window.monitorApi.onMonitorState(state => {
-      if (mounted.current && state.scan) {
+      if (!mounted.current) return;
+      setEventChannels(state.eventChannels || {});
+      if (state.scan) {
         setScan(state.scan);
         setNow(Date.now());
       }
@@ -297,7 +300,9 @@ export default function App() {
       if (mounted.current) setFloatingVisible(state.visible);
     }).catch(console.error);
     void window.monitorApi.getMonitorState().then(state => {
-      if (mounted.current && state.scan) setScan(state.scan);
+      if (!mounted.current) return;
+      setEventChannels(state.eventChannels || {});
+      if (state.scan) setScan(state.scan);
     }).catch(console.error);
     void refresh();
     const clock = setInterval(() => setNow(Date.now()), 5000);
@@ -423,13 +428,18 @@ export default function App() {
         {scan?.sources.map(source => {
           const group = sourceGroups.find(item => item.sourceId === source.id);
           const folders = group?.workspaces ?? [];
+          const watchMode = eventChannels[source.id] || 'fallback';
+          const watchText = watchMode === 'active' ? '文件事件监听中' :
+            watchMode === 'connecting' ? '正在连接事件通道' : '轮询兜底';
           const expanded = expandedSources.includes(source.id);
           const visible = expanded ? folders : folders.slice(0, MAX_SIDEBAR_FOLDERS);
           return <div className="source-node" key={source.id}>
             <button type="button" className={'tree-source' + (sourceId === source.id && !workspaceId ? ' active' : '')}
-              onClick={() => selectScope(source.id)} title={source.error || source.label}>
+              onClick={() => selectScope(source.id)} title={source.label + ' · ' +
+                (source.error ? source.error + ' · ' : '') + watchText}>
               <Icon name={source.kind === 'ssh' ? 'server' : 'monitor'} size={15}/>
               <span className="tree-label">{source.label}</span>
+              <span className={'watch-indicator ' + watchMode} aria-label={watchText} title={watchText}/>
               <span className={'source-light ' + (source.error ? 'error' : 'ok')}/>
               <span className="tree-count">{source.sessions.length}</span>
             </button>

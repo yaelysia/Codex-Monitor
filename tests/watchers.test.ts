@@ -45,6 +45,7 @@ describe('event watcher protocol', () => {
       await new Promise(resolve => setTimeout(resolve, 30));
     }
     expect(changes).toContain('local');
+    expect(monitor.status().local).toBe('active');
     monitor.stop();
     changes.length = 0;
     await fs.appendFile(filename, '{"type":"event_msg"}\n');
@@ -67,6 +68,7 @@ describe('event watcher protocol', () => {
     monitor.reconcile(settings, [source]);
     monitor.reconcile(settings, [source]);
     monitor.reconcile(settings, []);
+    expect(monitor.status().local).toBeUndefined();
     await fs.writeFile(path.join(root, 'sessions', 'rollout-test.jsonl'), '{}');
     await new Promise(resolve => setTimeout(resolve, 90));
     expect(changes).toEqual([]);

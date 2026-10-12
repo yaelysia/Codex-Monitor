@@ -17,7 +17,10 @@ export class MonitorService {
   private inFlight: Promise<ScanResponse> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
-  private watchers = new WatchCoordinator(sourceId => this.queueSource(sourceId));
+  private watchers = new WatchCoordinator(
+    sourceId => this.queueSource(sourceId),
+    () => { if (this.running) this.onChange(this.state()); },
+  );
   private pendingSources = new Set<string>();
   private lastEventScan = new Map<string, number>();
   private needsFullScan = false;
@@ -50,7 +53,7 @@ export class MonitorService {
     this.watchers.stop();
   }
 
-  state(): MonitorState { return this.tracker.state(this.lastScan); }
+  state(): MonitorState { return { ...this.tracker.state(this.lastScan), eventChannels: this.watchers.status() }; }
   setMuted(muted: boolean): MonitorState {
     this.tracker.setMuted(muted);
     this.onChange(this.state());
