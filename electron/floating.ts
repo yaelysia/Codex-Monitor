@@ -26,7 +26,12 @@ export class FloatingWindowController {
   get browserWindow(): BrowserWindow | null { return this.win; }
 
   show(): FloatingWindowState {
+    // Expanded panels are transient popovers. Re-showing a hidden dock must
+    // never leave an unfocused, permanently expanded window on screen.
+    const wasExpanded = this.dock.expanded;
+    if (wasExpanded) this.dock.expanded = false;
     if (!this.win || this.win.isDestroyed()) this.create();
+    else if (wasExpanded) this.place(this.bounds(this.display()));
     this.dock.visible = true;
     this.win!.showInactive();
     this.persist();
@@ -47,8 +52,13 @@ export class FloatingWindowController {
 
   setExpanded(expanded: boolean): FloatingWindowState {
     if (!this.win || this.win.isDestroyed()) this.create();
+    const wasExpanded = this.dock.expanded;
     this.dock.expanded = expanded;
     this.place(this.bounds(this.display()));
+    // A rail click must grant focus to the expanded panel; otherwise an
+    // inactive always-on-top window receives no blur when clicking elsewhere.
+    // Collapsed rail remains non-activating and never steals focus.
+    if (expanded && !wasExpanded && this.win!.isVisible()) this.win!.focus();
     this.persist();
     return this.state();
   }
@@ -123,6 +133,12 @@ export class FloatingWindowController {
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', event => event.preventDefault());
     win.on('moved', () => { if (!this.snapping) this.snapToDisplayEdge(); });
+    win.on('blur', () => {
+      // A click outside this BrowserWindow removes focus. Collapse its panel
+      // while keeping the resident 55px rail visible at the saved location.
+      if (!this.quitting && this.win === win && !win.isDestroyed() &&
+          win.isVisible() && this.dock.expanded) this.setExpanded(false);
+    });
     win.on('close', event => {
       if (this.quitting) return;
       event.preventDefault();

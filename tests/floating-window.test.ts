@@ -15,6 +15,8 @@ vi.mock('electron', () => {
     bounds: { x: number; y: number; width: number; height: number };
     opacity = 1;
     visible = false;
+    focused = false;
+    focusCalls = 0;
     destroyed = false;
     readonly webContents = {
       setWindowOpenHandler: () => undefined,
@@ -39,7 +41,10 @@ vi.mock('electron', () => {
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
     showInactive() { this.visible = true; }
-    hide() { this.visible = false; }
+    focus() { this.focused = true; this.focusCalls++; }
+    isFocused() { return this.focused; }
+    loseFocus() { this.focused = false; this.emit('blur'); }
+    hide() { this.visible = false; this.focused = false; }
     setAlwaysOnTop() {}
     loadURL() { return Promise.resolve(); }
     loadFile() { return Promise.resolve(); }
@@ -83,6 +88,7 @@ describe('floating window native opacity and position memory', () => {
     controller.setOpacity(0.55);
     expect(win.opacity).toBe(0.55);
     controller.setExpanded(true);
+    expect(win.focusCalls).toBe(1);
     expect(win.bounds.width).toBe(350);
     expect(win.opacity).toBe(0.55);
     controller.hide();
@@ -90,6 +96,8 @@ describe('floating window native opacity and position memory', () => {
     expect(controller.state()).toMatchObject({ visible: false, opacity: 0.85, expanded: true });
     controller.show();
     expect(fake.windows).toHaveLength(1); // No extra renderer on show.
+    expect(controller.state().expanded).toBe(false); // Restored dock starts collapsed.
+    expect(win.bounds.width).toBe(55);
     expect(win.opacity).toBe(0.85);
     expect(snapshots.at(-1)).toMatchObject({
       displayId: 2, side: 'left', offsetY: 430, opacity: 0.85,
@@ -98,7 +106,7 @@ describe('floating window native opacity and position memory', () => {
       () => undefined, () => undefined, snapshots.at(-1)!, () => undefined);
     restored.show();
     expect(fake.windows[1]?.opacity).toBe(0.85);
-    expect(fake.windows[1]?.bounds).toMatchObject({ x: 1920, y: 430, width: 350 });
+    expect(fake.windows[1]?.bounds).toMatchObject({ x: 1920, y: 430, width: 55 });
   });
 
   it('captures a cross-monitor drag and remembers the new location after restart', () => {
@@ -134,5 +142,65 @@ describe('floating window native opacity and position memory', () => {
     controller.resetPosition();
     expect(fake.windows[0]!.bounds).toMatchObject({ x: 1865, y: 92 });
     expect(states.at(-1)).toMatchObject({ opacity: 0.7, side: 'right', offsetY: 92 });
+  });
+});
+
+describe('floating panel blur-to-collapse behavior', () => {
+  it('expands with focus and collapses after clicking another window', () => {
+    const persisted: SavedDock[] = [];
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, dock => persisted.push(dock));
+    controller.show();
+    const win = fake.windows[0]!;
+    const closedBounds = { ...win.bounds };
+    controller.setExpanded(true);
+    expect(controller.state().expanded).toBe(true);
+    expect(win.focused).toBe(true);
+    expect(win.bounds.width).toBe(350);
+    win.loseFocus();
+    expect(controller.state()).toMatchObject({ visible: true, expanded: false });
+    expect(win.bounds).toEqual(closedBounds);
+    expect(persisted.at(-1)?.expanded).toBe(false);
+  });
+
+  it('does not collapse while still focused, and does not steal focus when collapsed', () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    const win = fake.windows[0]!;
+    controller.setExpanded(true);
+    expect(win.focusCalls).toBe(1);
+    win.emit('moved');
+    expect(controller.state().expanded).toBe(true);
+    controller.setExpanded(false);
+    expect(win.focusCalls).toBe(1);
+    win.loseFocus();
+    expect(controller.state()).toMatchObject({ visible: true, expanded: false });
+    controller.setExpanded(true);
+    expect(win.focusCalls).toBe(2);
+  });
+
+  it('ignores blur when hidden; next show starts with collapsed rail', () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    const win = fake.windows[0]!;
+    controller.setExpanded(true);
+    controller.hide();
+    win.loseFocus();
+    expect(controller.state()).toMatchObject({ visible: false, expanded: true });
+    controller.show();
+    expect(controller.state()).toMatchObject({ visible: true, expanded: false });
+    expect(win.bounds.width).toBe(55);
+  });
+
+  it('restores old persisted expanded=true docks as collapsed without focusing user desktop', () => {
+    const saved = normalizeDock({ ...INITIAL, expanded: true, visible: true });
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, saved, () => undefined);
+    controller.show();
+    expect(controller.state()).toMatchObject({ visible: true, expanded: false });
+    expect(fake.windows[0]!.focusCalls).toBe(0);
+    expect(fake.windows[0]!.bounds.width).toBe(55);
   });
 });
