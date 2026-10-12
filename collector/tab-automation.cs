@@ -50,15 +50,18 @@ namespace CodexMonitor {
     }
 
     public static Snapshot Read(IntPtr hwnd) {
-      Snapshot uia = ReadUia(hwnd);
-      if (uia.Id != null) return uia;
-      // MobaXterm often exposes its native tab strip through MSAA rather
-      // than UIA TabItem. Keep it strictly scoped to a verified MobaXterm HWND.
+      // MobaXterm's UIA tree can report an unrelated settings/sidebar tab,
+      // while the actual SSH tab strip is exposed via legacy MSAA. Prefer an
+      // unambiguous multi-tab MSAA group specifically for that application.
+      // Both providers are read-only; a single unrelated TabItem is not proof.
+      Snapshot legacy = null;
       if (MobaTabProbe.IsMobaWindow(hwnd)) {
-        Snapshot msaa = MobaTabProbe.Read(hwnd);
-        if (msaa.Id != null) return msaa;
+        legacy = MobaTabProbe.Read(hwnd);
+        if (legacy.Id != null && legacy.Count >= 2) return legacy;
       }
-      return uia;
+      Snapshot uia = ReadUia(hwnd);
+      if (uia.Id != null && uia.Count >= 2) return uia;
+      return new Snapshot(null, Math.Max(uia.Count, legacy == null ? 0 : legacy.Count));
     }
 
     private static Snapshot ReadUia(IntPtr hwnd) {
