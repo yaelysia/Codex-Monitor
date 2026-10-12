@@ -36,7 +36,7 @@ describe('resident window persistence and multi-display layout', () => {
     const store = new ResidentStore(folder);
     expect(store.load().preferences).toEqual({ keepRunningOnClose: true, launchAtLogin: false });
     store.updatePreferences({ keepRunningOnClose: false, launchAtLogin: true });
-    store.updateDock({ side: 'left', displayId: 100, offsetY: 220, expanded: false, visible: false });
+    store.updateDock({ side: 'left', displayId: 100, offsetY: 220, expanded: false, visible: false, opacity: 1 });
     store.updateMainBounds({ x: 20, y: 60, width: 920, height: 640 });
     store.flush();
     const reopened = new ResidentStore(folder);
