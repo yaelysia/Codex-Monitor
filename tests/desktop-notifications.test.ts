@@ -72,6 +72,7 @@ describe('native notification acknowledge action', () => {
     const acknowledge = vi.fn();
     showDesktopAlert({ ...alert, kind: 'finished', questionText: null }, focus, acknowledge);
     const notice = fake.notifications[0]!;
+    expect(notice.options.title).toBe('Codex · 本轮回复已结束');
     notice.fire('click');
     expect(focus).toHaveBeenCalledWith(alert.sessionKey);
     expect(acknowledge).not.toHaveBeenCalled();

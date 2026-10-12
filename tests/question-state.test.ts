@@ -37,6 +37,10 @@ describe('Codex durable question evidence', () => {
     expect(detectPendingQuestion(pending)).toEqual({ token: 'async:a1', blocking: false, text: '哪个环境？' });
     expect(detectPendingQuestion(pending +
       row('event_msg', { type: 'user_message', message: '开发' }) + '\n').token).toBeNull();
+    expect(detectPendingQuestion(pending +
+      row('event_msg', { type: 'item_completed',
+        item: { type: 'UserMessage', content: [{ type: 'Text', text: 'SECRET' }] } }) +
+      '\n').token).toBeNull();
   });
   it('ignores ordinary assistant messages, tool invocations, and false pending async calls', () => {
     expect(detectPendingQuestion(text(

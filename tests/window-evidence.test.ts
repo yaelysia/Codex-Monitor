@@ -5,6 +5,7 @@ import { extractLastUserInputAt } from '../electron/rollout';
 describe('read-only client/window evidence from Codex rollouts', () => {
   it('uses originator, never infers vscode from source alone', () => {
     expect(classifyClientKind('Codex Desktop')).toBe('desktop');
+    expect(classifyClientKind('codex_desktop')).toBe('desktop');
     expect(classifyClientKind('codex_vscode')).toBe('vscode');
     expect(classifyClientKind('codex-tui')).toBe('terminal');
     expect(classifyClientKind('custom app')).toBe('unknown');
@@ -32,5 +33,12 @@ describe('read-only client/window evidence from Codex rollouts', () => {
     expect(extractLastUserInputAt('clipped\n' + JSON.stringify(events[2]), true))
       .toBe(Date.parse('2026-10-12T08:03:00Z'));
     expect(extractLastUserInputAt('garbled')).toBeNull();
+    const item = JSON.stringify({ type: 'event_msg', timestamp: '2026-10-12T09:10:00Z',
+      payload: { type: 'item_completed', item: { type: 'UserMessage',
+        content: [{ type: 'Text', text: 'PRIVATE' }] } } });
+    const raw = JSON.stringify({ type: 'response_item', timestamp: '2026-10-12T09:11:00Z',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'SECRET' }] } });
+    expect(extractLastUserInputAt([item, raw].join('\n')))
+      .toBe(Date.parse('2026-10-12T09:11:00Z'));
   });
 });

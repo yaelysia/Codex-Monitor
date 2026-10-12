@@ -160,7 +160,7 @@ describe('persisted Codex question state inference', () => {
       r('event_msg', { type: 'turn_complete', turn_id: 'turn-a' }),
     ].join('\n'), NOW - 1000, NOW);
     expect(state).toMatchObject({
-      status: 'finished', pendingQuestionToken: 'async:ask-a',
+      status: 'unknown', pendingQuestionToken: 'async:ask-a',
       questionText: '哪个分支要发布？',
     });
     expect(inferStatus([
@@ -178,5 +178,70 @@ describe('persisted Codex question state inference', () => {
       NOW - 8 * 60 * 60_000, NOW);
     expect(state.pendingQuestionToken).toBeNull();
     expect(state.status).toBe('unknown');
+  });
+});
+
+describe('Codex Desktop paginated turn lifecycle', () => {
+  const row = (type: string, payload: Record<string, unknown>) =>
+    JSON.stringify({ type, timestamp: '2026-10-12T10:15:00Z', payload });
+  const boundary = (event: string, turn: string) =>
+    row('event_msg', { type: event, turn_id: turn });
+  const paginatedInput = (kind = 'UserMessage') =>
+    row('event_msg', { type: 'item_completed', item: {
+      type: kind, id: 'message-2', content: [{ type: 'Text', text: 'PRIVATE MESSAGE' }],
+    } });
+
+  it('does not close active turn-b upon receiving delayed turn-a completion', () => {
+    const data = [boundary('turn_started', 'turn-a'), boundary('turn_complete', 'turn-a'),
+      boundary('turn_started', 'turn-b'), boundary('turn_complete', 'turn-a')].join('\n');
+    const result = inferStatus(data, NOW - 1000, NOW);
+    expect(result.status).toBe('working');
+    expect(result.finishedToken).toBeNull();
+  });
+
+  it('does not reuse prior completion when a new paginated user message arrives', () => {
+    const data = [boundary('turn_started', 'turn-a'), boundary('turn_complete', 'turn-a'),
+      paginatedInput()].join('\n');
+    expect(inferStatus(data, NOW - 1200, NOW)).toMatchObject({
+      status: 'working', finishedToken: null,
+    });
+    expect(inferStatus(data, NOW - 180_000, NOW).status).toBe('unknown');
+    const staleDuplicate = data + '\n' + boundary('turn_complete', 'turn-a');
+    expect(inferStatus(staleDuplicate, NOW - 1200, NOW).status).toBe('working');
+  });
+
+  it('accepts genuine completion of a new turn without treating it as old', () => {
+    const data = [
+      boundary('turn_started', 'turn-a'), boundary('turn_complete', 'turn-a'),
+      paginatedInput(), boundary('turn_started', 'turn-b'),
+      boundary('turn_complete', 'turn-a'), boundary('turn_complete', 'turn-b'),
+    ].join('\n');
+    expect(inferStatus(data, NOW - 1200, NOW)).toMatchObject({
+      status: 'finished', finishedToken: '2026-10-12T10:15:00Z|turn-b',
+    });
+  });
+
+  it('does not declare the user task finished when a structured async question is outstanding', () => {
+    const data = [
+      boundary('turn_started', 'turn-a'),
+      row('event_msg', { type: 'item_completed',
+        item: { type: 'AgentMessage', id: 'q-1', delivery: 'async',
+          questions: [{ title: '继续执行吗？' }] } }),
+      boundary('turn_complete', 'turn-a'),
+    ].join('\n');
+    const result = inferStatus(data, NOW - 1000, NOW);
+    expect(result).toMatchObject({
+      status: 'unknown', finishedToken: null, pendingQuestionToken: 'async:q-1',
+    });
+    expect(result.statusReason).toContain('尚未回答');
+  });
+
+  it('does not treat a user response item as a completion marker', () => {
+    const data = [boundary('turn_complete', 'old'),
+      row('response_item', { type: 'message', role: 'user',
+        content: [{ type: 'input_text', text: 'PRIVATE RESPONSE' }] })].join('\n');
+    expect(inferStatus(data, NOW - 1000, NOW)).toMatchObject({
+      status: 'working', finishedToken: null,
+    });
   });
 });

@@ -51,6 +51,11 @@ describe('Codex session origin', () => {
     }))).toEqual({ isSubagent: false, parentThreadId: null });
   });
 
+  it('recognizes native Codex Desktop originator rather than dropping it as unknown', () => {
+    expect(extractSessionOrigin(meta({ id: PARENT, originator: 'codex_desktop' })).isSubagent)
+      .toBe(false);
+  });
+
   it('does not mark regular forks as subagents', () => {
     const fork = meta({ id: CHILD, session_id: CHILD, source: 'vscode', forked_from_id: PARENT });
     expect(extractSessionOrigin(fork).isSubagent).toBe(false);

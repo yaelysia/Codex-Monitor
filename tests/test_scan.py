@@ -31,6 +31,64 @@ class TestLinuxCollector(unittest.TestCase):
         self.assertEqual(scanner.client_kind_from_header(json.dumps({
             'type': 'session_meta', 'payload': {'source': 'vscode'}})), 'unknown')
 
+
+    def test_desktop_paginated_user_message_and_late_turn_completion(self):
+        now = 1_800_000_000_000
+        row = lambda kind, payload: {'type': kind, 'payload': payload,
+                                     'timestamp': '2026-10-12T09:00:00Z'}
+        start = lambda turn: row('event_msg', {'type': 'turn_started', 'turn_id': turn})
+        end = lambda turn: row('event_msg', {'type': 'turn_complete', 'turn_id': turn})
+        user = row('event_msg', {'type': 'item_completed',
+                    'item': {'type': 'UserMessage', 'id': 'm1',
+                             'content': [{'type': 'Text', 'text': 'PRIVATE QUERY'}]}})
+        records = [start('a'), end('a'), user, end('a')]
+        tail = '\n'.join(map(json.dumps, records))
+        result = scanner.details('', tail, 'rollout-abc.jsonl', False, now - 1000, now)
+        self.assertEqual(result['status'], 'working')
+        self.assertIsNone(result['finishedToken'])
+        self.assertNotIn('PRIVATE QUERY', json.dumps(result))
+        future = scanner.details('', tail, 'rollout-abc.jsonl', False, now - 200_000, now)
+        self.assertEqual(future['status'], 'unknown')
+        records = [start('a'), end('a'), start('b'), end('a')]
+        self.assertEqual(scanner.details('', '\n'.join(map(json.dumps, records)),
+                         'x.jsonl', False, now - 1000, now)['status'], 'working')
+        records.append(end('b'))
+        self.assertEqual(scanner.details('', '\n'.join(map(json.dumps, records)),
+                         'x.jsonl', False, now - 1000, now)['status'], 'finished')
+
+    def test_desktop_async_question_cannot_be_a_fully_completed_user_task(self):
+        now = 1_800_000_000_000
+        events = [
+            {'type': 'event_msg', 'payload': {'type': 'turn_started', 'turn_id': 'a'}},
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {
+                'type': 'AgentMessage', 'id': 'request-1', 'delivery': 'async',
+                'questions': [{'title': '继续运行吗？'}]}}},
+            {'type': 'event_msg', 'payload': {'type': 'turn_complete', 'turn_id': 'a'}},
+        ]
+        tail = '\n'.join(map(json.dumps, events))
+        result = scanner.details('', tail, 'x.jsonl', False, now - 1000, now)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(result['pendingQuestionToken'], 'async:request-1')
+        self.assertIsNone(result['finishedToken'])
+        events.append({'type': 'event_msg', 'payload': {'type': 'item_completed',
+                       'item': {'type': 'UserMessage', 'id': 'm1', 'content': []}}})
+        answer = scanner.details('', '\n'.join(map(json.dumps, events)),
+                                 'x.jsonl', False, now - 1000, now)
+        self.assertIsNone(answer['pendingQuestionToken'])
+        self.assertEqual(answer['status'], 'working')
+
+    def test_desktop_client_originator_alias_and_paginated_input_timestamp(self):
+        head = json.dumps({'type': 'session_meta', 'payload': {
+            'originator': 'codex_desktop', 'source': 'appServer'}})
+        self.assertEqual(scanner.client_kind_from_header(head), 'desktop')
+        now = int(datetime.fromisoformat('2026-10-12T09:00:02+00:00').timestamp() * 1000)
+        row = {'type': 'event_msg', 'timestamp': '2026-10-12T09:00:00Z',
+               'payload': {'type': 'item_completed', 'item': {
+                   'type': 'UserMessage', 'content': [{'type': 'Text', 'text': 'PRIVATE'}]}}}
+        details = scanner.details(head, json.dumps(row), 'x.jsonl', False, now - 1000, now)
+        self.assertEqual(details['lastUserInputAtSourceMs'], now - 2000)
+        self.assertNotIn('PRIVATE', json.dumps(details))
+
     def test_sessions_and_cwd_are_read_without_full_transcript(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / 'sessions' / '2026' / '10' / '10'
