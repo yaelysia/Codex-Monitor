@@ -34,6 +34,9 @@ const write = (root: string, lines: string[], opts?: { msix?: boolean; when?: nu
   fs.mkdirSync(folder, { recursive: true });
   const file = path.join(folder, 'codex-desktop-session-1357-t0-i1-101010-0.log');
   fs.writeFileSync(file, lines.join('\n') + '\n');
+  // Tests use an intentionally fixed clock (NOW). Match filesystem mtime to
+  // that clock instead of inheriting CI wall time, which drifts during a run.
+  fs.utimesSync(file, new Date(at), new Date(at));
   return file;
 };
 const row = (status: SessionRecord['status'], id = SESSION): SessionRecord => ({
