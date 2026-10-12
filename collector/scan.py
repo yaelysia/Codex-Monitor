@@ -25,6 +25,22 @@ START = {'task_started', 'turn_started'}
 END = {'task_complete', 'turn_complete', 'turn_aborted'}
 WAIT = {'exec_approval_request', 'apply_patch_approval_request', 'request_user_input', 'request_permissions', 'elicitation_request'}
 RESUME = {'exec_command_begin', 'patch_apply_begin', 'agent_message', 'agent_reasoning'}
+COMPACT_RESPONSES = {'compaction', 'context_compaction', 'contextCompaction'}
+COMPACT_ITEMS = {'ContextCompaction', 'contextCompaction', 'context_compaction'}
+
+
+def is_compaction_checkpoint(row, payload):
+    if row.get('type') == 'compacted':
+        return True
+    if row.get('type') == 'response_item' and payload.get('type') in COMPACT_RESPONSES:
+        return True
+    if row.get('type') == 'event_msg':
+        if payload.get('type') == 'context_compacted':
+            return True
+        if payload.get('type') == 'item_completed':
+            item = payload.get('item')
+            return isinstance(item, dict) and item.get('type') in COMPACT_ITEMS
+    return False
 
 
 def rows(text, clipped=False):
@@ -173,9 +189,13 @@ def details(head, tail, filename, clipped, modified, now):
     awaiting = False
     finished_token = None
     waiting_token = None
+    checkpoint_after_boundary = False
     for row in rows(tail, clipped):
         payload = row.get('payload') or {}
         if not isinstance(payload, dict):
+            continue
+        if is_compaction_checkpoint(row, payload):
+            checkpoint_after_boundary = True
             continue
         if row.get('type') == 'turn_context':
             cwd = safe_cwd(payload.get('cwd')) or cwd
@@ -188,31 +208,39 @@ def details(head, tail, filename, clipped, modified, now):
             marker = (timestamp + '|' + turn_id) if timestamp or turn_id else None
             if event in START:
                 phase, awaiting, waiting_token = 'started', False, None
+                finished_token, checkpoint_after_boundary = None, False
             elif event in END:
                 phase, awaiting, finished_token, waiting_token = 'finished', False, marker, None
+                checkpoint_after_boundary = False
             elif event in WAIT and phase == 'started':
                 awaiting, waiting_token = True, marker
             elif event in RESUME and phase == 'started':
                 awaiting, waiting_token = False, None
 
     age = max(0, now - modified)
-    if phase == 'finished':
+    terminal = phase == 'finished' and not checkpoint_after_boundary
+    if terminal:
         status, reason = 'finished', '检测到本轮结束事件；不代表客户端已退出'
     elif phase == 'started' and awaiting and age <= 600000:
         status, reason = 'waiting', '日志存在等待用户操作事件（推断）'
     elif phase == 'started' and age <= 90000:
-        status, reason = 'working', '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）'
+        status = 'working'
+        reason = ('检测到上下文压缩结果，尚无本轮结束事件；可能仍在继续执行（推断）'
+                  if checkpoint_after_boundary
+                  else '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）')
+    elif checkpoint_after_boundary and age <= 90000:
+        status, reason = 'working', '最近检测到上下文压缩完成记录，但未见之后的任务结束事件；可能正在继续执行（推断）'
     elif phase == 'started':
         status, reason = 'unknown', '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行'
     else:
-        status, reason = 'unknown', '没有足够的执行生命周期记录'
+        status, reason = 'unknown', '没有足够的近期执行生命周期记录'
     return {
         'id': session_id,
         'workspace': cwd,
         'title': title_from_head(head),
         'status': status,
         'statusReason': reason,
-        'finishedToken': finished_token if phase == 'finished' else None,
+        'finishedToken': finished_token if terminal else None,
         'waitingToken': waiting_token if awaiting else None,
         'updatedAt': modified,
         'startedAt': None,

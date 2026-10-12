@@ -118,5 +118,45 @@ class TestLinuxCollector(unittest.TestCase):
             self.assertEqual(scanner.names_from_index(Path(tmp), {'ok'}), {'ok': 'title'})
 
 
+
+    def test_compaction_checkpoints_report_recent_progress_even_without_turn_start(self):
+        now = 1_800_000_000_000
+        variants = [
+            {'type': 'compacted', 'payload': {'message': 'checkpoint'}},
+            {'type': 'event_msg', 'payload': {'type': 'context_compacted'}},
+            {'type': 'event_msg', 'payload': {
+                'type': 'item_completed', 'item': {'type': 'ContextCompaction', 'id': 'x'}}},
+            {'type': 'response_item', 'payload': {'type': 'compaction'}},
+        ]
+        for row in variants:
+            with self.subTest(row=row['type']):
+                status = scanner.details('', json.dumps(row), 'rollout-abc.jsonl',
+                                         False, now - 5000, now)
+                self.assertEqual(status['status'], 'working')
+                self.assertIsNone(status['finishedToken'])
+                self.assertIn('压缩完成记录', status['statusReason'])
+
+    def test_terminal_after_compaction_wins_and_carries_finished_token(self):
+        now = 1_800_000_000_000
+        tail = '\n'.join(json.dumps(row) for row in [
+            {'type': 'compacted', 'payload': {'message': 'checkpoint'}},
+            {'type': 'event_msg', 'timestamp': '2026-10-12T09:00:00Z',
+             'payload': {'type': 'task_complete', 'turn_id': 'turn1'}},
+        ])
+        status = scanner.details('', tail, 'rollout-abc.jsonl', False, now - 5000, now)
+        self.assertEqual(status['status'], 'finished')
+        self.assertEqual(status['finishedToken'], '2026-10-12T09:00:00Z|turn1')
+
+    def test_stale_checkpoint_cannot_keep_finished_or_active_state(self):
+        now = 1_800_000_000_000
+        tail = '\n'.join(json.dumps(row) for row in [
+            {'type': 'event_msg', 'payload': {'type': 'task_complete', 'turn_id': 'old'}},
+            {'type': 'compacted', 'payload': {}},
+        ])
+        status = scanner.details('', tail, 'rollout-abc.jsonl', False, now - 500_000, now)
+        self.assertEqual(status['status'], 'unknown')
+        self.assertIsNone(status['finishedToken'])
+
+
 if __name__ == '__main__':
     unittest.main()

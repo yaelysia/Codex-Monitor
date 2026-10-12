@@ -45,3 +45,46 @@ describe('conservative status inference', () => {
     expect(inferStatus(session(), NOW - 1_000, NOW).status).toBe('unknown');
   });
 });
+
+
+describe('compaction checkpoint interpretation', () => {
+  const json = (type: string, payload: Record<string, unknown>) =>
+    JSON.stringify({ type, timestamp: '2026-10-12T08:00:00Z', payload });
+  const compacted = json('compacted', { message: 'checkpoint' });
+
+  it('uses fresh persisted compaction evidence when the start event was clipped', () => {
+    const variants = [
+      compacted,
+      json('event_msg', { type: 'context_compacted' }),
+      json('event_msg', { type: 'item_completed', item: { type: 'ContextCompaction', id: 'a' } }),
+      json('response_item', { type: 'compaction' }),
+    ];
+    for (const tail of variants) {
+      const status = inferStatus(tail, NOW - 5000, NOW);
+      expect(status.status).toBe('working');
+      expect(status.statusReason).toMatch(/压缩完成记录/);
+      expect(status.finishedToken).toBeNull();
+    }
+  });
+
+  it('does not mistake an old compaction result for live activity', () => {
+    expect(inferStatus(compacted, NOW - 600_000, NOW).status).toBe('unknown');
+  });
+
+  it('prefers a later completed turn to compaction progress', () => {
+    const tail = [compacted, json('event_msg', { type: 'task_complete', turn_id: 't1' })].join('\n');
+    expect(inferStatus(tail, NOW - 5000, NOW)).toMatchObject({
+      status: 'finished', finishedToken: '2026-10-12T08:00:00Z|t1',
+    });
+  });
+
+  it('never leaks a previous turn completion token into fresh compaction activity', () => {
+    const tail = [
+      json('event_msg', { type: 'task_complete', turn_id: 'prior' }),
+      compacted,
+    ].join('\n');
+    const status = inferStatus(tail, NOW - 5000, NOW);
+    expect(status.status).toBe('working');
+    expect(status.finishedToken).toBeNull();
+  });
+});

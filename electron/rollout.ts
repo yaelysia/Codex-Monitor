@@ -14,6 +14,24 @@ const WAIT_EVENTS = new Set([
   'elicitation_request',
 ]);
 const RESUME_EVENTS = new Set(['exec_command_begin', 'patch_apply_begin', 'agent_message', 'agent_reasoning']);
+const COMPACT_RESPONSE_ITEMS = new Set(['compaction', 'context_compaction', 'contextCompaction']);
+const COMPACT_TURN_ITEMS = new Set(['ContextCompaction', 'contextCompaction', 'context_compaction']);
+
+/** Checkpoints are persisted after compaction, unlike transient item-start events. */
+function isCompactionCheckpoint(row: JsonObject, payload: JsonObject | null): boolean {
+  if (row.type === 'compacted') return true;
+  if (row.type === 'response_item' && typeof payload?.type === 'string') {
+    return COMPACT_RESPONSE_ITEMS.has(payload.type);
+  }
+  if (row.type === 'event_msg') {
+    if (payload?.type === 'context_compacted') return true;
+    if (payload?.type === 'item_completed') {
+      const kind = object(payload.item)?.type;
+      return typeof kind === 'string' && COMPACT_TURN_ITEMS.has(kind);
+    }
+  }
+  return false;
+}
 
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): JsonObject | null {
@@ -99,29 +117,60 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   let awaiting = false;
   let finishedToken: string | null = null;
   let waitingToken: string | null = null;
+  let checkpointAfterBoundary = false;
   for (const row of jsonlRows(tail, clippedStart)) {
+    const payload = object(row.payload);
+    if (isCompactionCheckpoint(row, payload)) {
+      checkpointAfterBoundary = true;
+      continue;
+    }
     if (row.type !== 'event_msg') continue;
-    const event = object(row.payload)?.type;
+    const event = payload?.type;
     if (typeof event !== 'string') continue;
     // Persisted event timestamp + turn id survives unrelated later file writes.
     // When both are missing, the tracker falls back to lifecycle transitions only.
-    const payload = object(row.payload);
     const marker = [typeof row.timestamp === 'string' ? row.timestamp : '',
       typeof payload?.turn_id === 'string' ? payload.turn_id : ''].join('|');
     const token = marker === '|' ? null : marker;
-    if (START_EVENTS.has(event)) { phase = 'started'; awaiting = false; waitingToken = null; }
-    else if (END_EVENTS.has(event)) { phase = 'finished'; awaiting = false; finishedToken = token; waitingToken = null; }
+    if (START_EVENTS.has(event)) {
+      phase = 'started'; awaiting = false; waitingToken = null;
+      finishedToken = null; checkpointAfterBoundary = false;
+    } else if (END_EVENTS.has(event)) {
+      phase = 'finished'; awaiting = false; finishedToken = token; waitingToken = null;
+      checkpointAfterBoundary = false;
+    }
     else if (WAIT_EVENTS.has(event) && phase === 'started') { awaiting = true; waitingToken = token; }
     else if (RESUME_EVENTS.has(event) && phase === 'started') { awaiting = false; waitingToken = null; }
   }
   const age = Math.max(0, now - updatedAt);
-  if (phase === 'finished') return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'finished', statusReason: '检测到本轮结束事件；不代表客户端已退出' };
+  const terminal = phase === 'finished' && !checkpointAfterBoundary;
+  const tokenFields = {
+    finishedToken: terminal ? finishedToken : null,
+    waitingToken: awaiting ? waitingToken : null,
+  };
+  if (terminal) {
+    return { ...tokenFields, status: 'finished', statusReason: '检测到本轮结束事件；不代表客户端已退出' };
+  }
   if (phase === 'started' && awaiting && age <= WAIT_WINDOW_MS) {
-    return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };
+    return { ...tokenFields, status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };
   }
   if (phase === 'started' && age <= ACTIVE_WINDOW_MS) {
-    return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'working', statusReason: '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）' };
+    return {
+      ...tokenFields, status: 'working',
+      statusReason: checkpointAfterBoundary
+        ? '检测到上下文压缩结果，尚无本轮结束事件；可能仍在继续执行（推断）'
+        : '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）',
+    };
   }
-  if (phase === 'started') return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行' };
-  return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '没有足够的执行生命周期记录' };
+  // The start event may be outside the bounded file tail. A *completed*
+  // compaction checkpoint is fresh progress evidence, not proof it is currently compacting.
+  if (checkpointAfterBoundary && age <= ACTIVE_WINDOW_MS) {
+    return { ...tokenFields, status: 'working',
+      statusReason: '最近检测到上下文压缩完成记录，但未见之后的任务结束事件；可能正在继续执行（推断）' };
+  }
+  if (phase === 'started') {
+    return { ...tokenFields, status: 'unknown',
+      statusReason: '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行' };
+  }
+  return { ...tokenFields, status: 'unknown', statusReason: '没有足够的近期执行生命周期记录' };
 }
