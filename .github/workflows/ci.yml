@@ -47,7 +47,9 @@ jobs:
           if (-not $item) { throw "Missing tab probe summary" }
           $parsed = $item | ConvertFrom-Json
           if ($parsed.type -ne 'tab-probe' -or $parsed.count -lt 0 -or
-              $parsed.provider -notin @('msaa', 'uia', 'none')) {
+              $parsed.provider -notin @('msaa', 'uia', 'none') -or
+              $parsed.mainCandidates -lt 0 -or
+              $parsed.candidates -isnot [array]) {
             throw "Unexpected native tab probe fields"
           }
       - run: npm run typecheck

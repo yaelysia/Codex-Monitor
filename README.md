@@ -194,11 +194,11 @@ Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Mon
 npm run diagnose:tracking -- --duration 15
 ```
 
-该命令仅查询已有 Windows Codex Desktop 应用日志中的轮次开始、轮次完成、失败/未知会话事件**计数与相对时间**，然后对**唯一可见的 MobaXterm 主窗口**执行 UIA/MSAA 原生标签识别诊断。可返回 `uiaTabItems`、`msaaGroups`、`msaaSelected`、`msaaDuplicateNames`、`nativeTabLikeChildren` 和安全的 `reason`。不会打印会话 UUID、SSH 主机名、标签名称、原始日志、命令或对话正文。多个可见的 MobaXterm 窗口会返回 `multiple_mobaxterm_windows`，而不是随机选择目标。
+该命令和正式监控**共用同一套有边界的日志发现器**：检测普通安装目录、Microsoft Store 包的 `LocalCache`、部分 Roaming 日志目录，输出各类目录是否存在、日志文件数量、最近候选数量及明确的 `discovery.reason`。`no_known_log_root`、`log_filename_not_matched`、`no_recent_log_candidates` 与 `readable_log_files` 表示不同问题；这些统计不包含真实文件路径。随后它会筛除 MobaXterm 的辅助/工具窗口，对真正的主窗口逐个只读采样，报告 `mainCandidates`、`visibleProcessWindows` 和每个候选的 `uiaTabItems`、`msaaGroups`、`msaaSelected`、`msaaDuplicateNames`、`nativeTabLikeChildren`。多个主窗口不会自动挑选一个，更不会向 SSH 会话写入命令。全部输出不包含会话 UUID、SSH 主机名、标签名称、原始日志、命令或对话正文。
 
 如果 Desktop 完成时能通知，但运行时没有活动卡片，可优先核对 `desktop.events.acceptedStart`、`desktop.events.turnCompleteNotice`、`desktop.filesExamined`；如需确认某一个会话是否命中，可额外用 `--thread-id UUID` 仅筛选该会话，仍不会输出 UUID 原值。零计数不代表没有运行：也可能是 Desktop App Server 的私有内存事件未写入本地应用日志。
 
-MobaXterm 标签探测仍只选取“已确认唯一身份”的标签；此前存在一次扫描先结束、UIA/MSAA 标签后来才到的竞态，现允许在同一窗口和短时间内的后续证据补上标签绑定，并保存持久化结果。若 `identified=false` 或 `reason` 为标签控件不可见，仍需要真实机器的控件类型结果进一步开发，不使用盲目 Ctrl+Tab 轮切。
+MobaXterm 标签选择仍要求“已确认唯一身份”。原生选择新增 MSAA 简单子元素兼容、选中与获得焦点组合尝试、标签默认动作后验校验；仅当前后选中标签身份一致时才算成功。若 `identified=false` 或某一主窗口候选 `reason` 为辅助功能未暴露控件，仍需该版本的只读诊断结果来开发精确定位，不使用盲目的 Ctrl+Tab 轮切。
 
 ### Codex Desktop 可选只读日志探测
 
