@@ -95,7 +95,7 @@ describe('terminal turn status accuracy', () => {
     const tail = [
       { type: 'event_msg', payload: { type: 'task_started' } },
       { type: 'event_msg', payload: { type: 'turn_aborted', turn_id: 't1', reason: 'interrupted' } },
-    ].map(JSON.stringify).join('\n');
+    ].map(item => JSON.stringify(item)).join('\n');
     const result = inferStatus(tail, NOW - 1000, NOW);
     expect(result.status).toBe('interrupted');
     expect(result.finishedToken).toBeNull();
