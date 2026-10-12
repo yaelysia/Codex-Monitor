@@ -97,4 +97,5 @@ export interface MonitorApi {
   onFloatingState(listener: (state: FloatingWindowState) => void): () => void;
   showMainWindow(sessionKey?: string): Promise<void>;
   onFocusSession(listener: (sessionKey: string) => void): () => void;
+  consumePendingFocusKey(): Promise<string | null>;
 }

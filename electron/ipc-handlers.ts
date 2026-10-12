@@ -35,6 +35,7 @@ export function registerIpcHandlers(monitor: MonitorService,
     if (typeof expanded !== 'boolean') throw new Error('Invalid floating expansion');
     return floating.setExpanded(expanded);
   });
+  ipcMain.handle('monitor:consume-focus-key', () => main.consumePendingKey());
   ipcMain.handle('monitor:show-main', (_event, sessionKey?: unknown) => {
     if (sessionKey != null && (typeof sessionKey !== 'string' || sessionKey.length > 300)) {
       throw new Error('Invalid session key');

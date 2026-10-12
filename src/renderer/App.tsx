@@ -270,7 +270,7 @@ export default function App() {
     const unsubscribeFloating = window.monitorApi.onFloatingState(state => {
       if (mounted.current) setFloatingVisible(state.visible);
     });
-    const unsubscribeFocus = window.monitorApi.onFocusSession(key => {
+    const focusSession = (key: string) => {
       setSourceId(null);
       setWorkspaceId(null);
       setFilter('all');
@@ -279,7 +279,11 @@ export default function App() {
       setView('sessions');
       setSelectedKey(key);
       setDetailOpen(true);
-    });
+    };
+    const unsubscribeFocus = window.monitorApi.onFocusSession(focusSession);
+    void window.monitorApi.consumePendingFocusKey().then(key => {
+      if (mounted.current && key) focusSession(key);
+    }).catch(console.error);
     void window.monitorApi.getFloatingState().then(state => {
       if (mounted.current) setFloatingVisible(state.visible);
     }).catch(console.error);

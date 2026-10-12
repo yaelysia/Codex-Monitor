@@ -3,6 +3,7 @@ import { BrowserWindow } from 'electron';
 
 export class MainWindowController {
   private win: BrowserWindow | null = null;
+  private pendingKey: string | null = null;
 
   constructor(private readonly onClosed: () => void) {}
 
@@ -16,6 +17,7 @@ export class MainWindowController {
     win.show();
     win.focus();
     if (sessionKey) {
+      this.pendingKey = sessionKey;
       const send = () => {
         if (win && !win.isDestroyed()) win.webContents.send('monitor:focus-session', sessionKey);
       };
@@ -25,6 +27,13 @@ export class MainWindowController {
   }
 
   isOpen(): boolean { return !!this.win && !this.win.isDestroyed(); }
+
+  /** A renderer can request an early focus action even if it missed its load-time IPC event. */
+  consumePendingKey(): string | null {
+    const key = this.pendingKey;
+    this.pendingKey = null;
+    return key;
+  }
 
   private create(): BrowserWindow {
     const win = new BrowserWindow({
