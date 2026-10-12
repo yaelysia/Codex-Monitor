@@ -167,6 +167,23 @@ npm run probe:app-server -- --duration 20 --thread-id "真实会话UUID" --show-
 
 运行 `npm run test:probe` 可以在不连接真实账号/会话的前提下，用模拟 App Server 验证 WebSocket/JSON-RPC、状态 flags、批准请求绝不代答等行为。**下一阶段**在独立测试服务上验证 `thread/resume` 的第二客户端订阅、审批请求分发与断线回退后，才考虑可选地接入正式 Monitor。不可用独立进程假装共享所有已有会话。
 
+## 自动返回原窗口（Windows 实验版）
+
+主窗口「会话详情 → 返回原窗口」、悬浮窗任务条目、Windows 原生通知正文现在优先**激活正在使用的原窗口**。无法可靠关联时，悬浮窗与系统通知仍打开 Monitor 中的会话详情；主窗口显示具体原因。不会创建新终端、新 Codex 会话或调用 App Server resume/approval。
+
+**默认自动关联，无需先手动绑定：**
+
+1. Monitor 在 Windows 上启动一个仅监听前台变化的临时 PowerShell 子进程（\`collector/window-tracker.ps1\`）；它通过 Win32 \`SetWinEventHook(EVENT_SYSTEM_FOREGROUND)\` 接收事件，而非持续轮询 GUI。
+2. Windows 只向 Monitor 返回时间、窗口句柄、进程 PID/启动时间及**允许的客户端类别**（Desktop、VS Code、终端或其他）。不采集窗口标题、路径、键盘输入、屏幕画面、UI 文本、命令行及凭证。
+3. 本地 Windows / WSL / SSH 会话扫描器只从 Codex rollout 提取 \`session_meta.originator\` 所属类别和最近一条真实 \`user_message\` 的时间，不传送消息正文。远程时间按照远程机器自身的时钟计算年龄，避免 SSH/Windows 时钟不一致。
+4. 仅当**Monitor 已经运行、用户确实在对应前台窗口提交过消息**且事件时间接近时，才关联 \`sourceId + threadId → HWND + PID + 进程启动时间\`；子代理不自动关联。重新激活前会验证该窗口仍然存在且进程身份未变化。绑定仅存于 Monitor 内存，退出后不保留。
+
+**重要限制：** 初次启动 Monitor 之前已经发生的用户输入无法回溯，因此旧会话可能要在原窗口再发送一次消息才能学习关联。Windows Terminal、MobaXterm 和 VS Code 的多标签/多窗格场景，目前只定位**顶层原窗口**，**不保证自动选中原来的标签、远程 SSH 连接或 Codex 对话**。如果识别结果不够可靠则不跳转，不靠文件目录、标题或最新活动窗口猜测。终端/网络传输与远程扫描延迟可能造成漏关联；缺失绝不说明会话没有运行。
+
+**关闭功能：** 在启动 Monitor 之前设置 \`$env:CODEX_MONITOR_DISABLE_AUTO_WINDOW_TRACKING = "1"\`，只关闭窗口关联功能，不影响既有 JSONL/inotify 监控或通知。如果 Windows 不允许跨进程激活，窗口不会被强行切换，详情会显示失败原因。
+
+本阶段不修改 Codex 配置、不向终端注入输入、不调用 \`codex resume\`、不向远程主机安装代理。Windows PowerShell 原生桥接在 CI 中执行仅编译检查；**实际窗口切换及 MobaXterm/VS Code/WSL 的关联准确性仍需要真实桌面测试**。
+
 ## 问题 / 用户输入待回答提醒
 
 Codex Monitor 现在除既有生命周期事件外，还解析**已持久化的提问证据**：
