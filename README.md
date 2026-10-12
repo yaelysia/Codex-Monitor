@@ -181,6 +181,17 @@ Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Mon
 
 进一步提升覆盖率必须在真实 Windows Desktop 上确认它的 App Server 传输是否可**只读旁路观测**、或是否存在可安全读取的独立实时事件来源。未验证前**不调用** `thread/resume`、`turn/start`、审批回答，也不会自动启动新进程伪装为 Desktop 的状态源。无法观察到状态时应标记未知，而不是通过日志静默时间宣布“任务完成”。
 
+
+### Codex Desktop 可选只读日志探测
+
+`logs_2.sqlite` 可能包含 Desktop 私有 App Server 的部分请求或运行事件，但格式会随版本变化，而且包含大量敏感诊断信息。**本探测器不会接入正式状态/通知判断，也不会打印日志正文。** 它仅查询 `CODEX_HOME/logs_2.sqlite` 中带有目标 `thread_id` 的最多 500 条近期记录，输出可能出现的事件类型及计数。
+
+```powershell
+npm run probe:desktop-logs -- --thread-id "真实会话UUID" --duration 20
+```
+
+程序只读打开已存在的 SQLite DB，不修改数据库、创建索引或启动新的 Codex；即使出现 `turn/completed` 或 `waitingOnUserInput` 字样也**只是候选证据**，必须在真实 Desktop 版本上核对进程来源、事件时序和误命中，才能将其作为可靠状态输入。缺少命中不代表没有运行中的任务。高频 TRACE 日志会被自动省略（不打印）。
+
 ## 自动返回原窗口与多标签（Windows 实验版）
 
 主窗口详情里的「返回原窗口」、悬浮窗任务点击和 Windows 原生通知点击，优先返回**原来运行 Codex 的窗口**；无法确认时回到 Monitor 会话详情，不创建新终端、新 Codex 会话，也不调用 resume、审批或用户输入。

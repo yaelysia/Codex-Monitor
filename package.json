@@ -12,7 +12,8 @@
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "test:probe": "node --test tests/app-server-probe.node.mjs",
     "probe:app-server": "node scripts/probe-app-server.mjs",
-    "dist:win": "npm run build && electron-builder --win nsis --publish never"
+    "dist:win": "npm run build && electron-builder --win nsis --publish never",
+    "probe:desktop-logs": "node scripts/probe-desktop-logs.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",
