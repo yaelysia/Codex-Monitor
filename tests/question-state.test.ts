@@ -55,7 +55,7 @@ describe('Codex durable question evidence', () => {
       type: 'user_message', message: 'I am waiting for request_user_input' }))).token).toBeNull();
   });
   it('accepts a namespaced request_permissions tool as pending human action', () => {
-    expect(detectPendingQuestion(text(ask('permission', 'functions.request_permissions')))
+    expect(detectPendingQuestion(text(ask('permission', 'functions.request_permissions'))))
       .toMatchObject({ token: 'blocking:permission', blocking: true });
   });
 });
