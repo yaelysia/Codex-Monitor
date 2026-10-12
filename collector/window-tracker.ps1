@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('watch', 'focus', 'verify')][string]$Mode = 'watch',
+    [ValidateSet('watch', 'focus', 'verify', 'sample')][string]$Mode = 'watch',
     [string]$WindowHandle = '',
     [int]$TargetPid = 0,
     [long]$ProcessStart = 0,
@@ -178,6 +178,8 @@ namespace CodexMonitor {
       }
     }
 
+    public static void Sample() { Emit(false); }
+
     public static void Watch() {
       IntPtr foregroundHook = SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0);
       if (foregroundHook == IntPtr.Zero)
@@ -289,7 +291,9 @@ namespace CodexMonitor {
     Write-Output '{"ok":false,"reason":"native_bridge_unavailable"}'
     exit 2
 }
-if ($Mode -eq 'verify') {
+if ($Mode -eq 'sample') {
+    [CodexMonitor.WindowProbe]::Sample()
+} elseif ($Mode -eq 'verify') {
     if (-not [CodexMonitor.WindowProbe]::VerifyFocusShowCommands()) {
         Write-Output '{"ok":false,"reason":"focus_show_policy_failed"}'
         exit 3

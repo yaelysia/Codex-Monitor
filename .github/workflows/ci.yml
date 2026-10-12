@@ -25,6 +25,18 @@ jobs:
       - name: Compile Windows window observer without desktop interaction
         if: runner.os == 'Windows'
         run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode verify
+      - name: Smoke-test Windows foreground output without driving any GUI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $result = @(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode sample)
+          if ($LASTEXITCODE -ne 0) { throw "Native observer sample command failed" }
+          $item = $result | Where-Object { $_ -match '"type":"foreground"' } | Select-Object -First 1
+          if (-not $item) { throw "Native observer returned no foreground evidence" }
+          $parsed = $item | ConvertFrom-Json
+          if ($parsed.type -ne 'foreground' -or -not $parsed.at -or -not $parsed.hwnd) {
+            throw "Native observer foreground shape invalid"
+          }
       - run: npm run typecheck
       - run: npm run build
       - run: python -m unittest discover -s tests -p 'test_*.py'
