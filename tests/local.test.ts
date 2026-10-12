@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { scanLocal } from '../electron/local';
+import { localScanCacheStats, scanLocal } from '../electron/local';
+import { LocalScanCache } from '../src/shared/local-scan-cache';
+import type { SessionRecord } from '../src/shared/types';
 
 const created: string[] = [];
 afterEach(async () => { await Promise.all(created.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true }))); });
@@ -47,5 +49,49 @@ describe('local scanner', () => {
     expect(records[0]).toMatchObject({ status: 'working', byteSize: (await fs.stat(file)).size });
     await fs.utimes(file, new Date(Date.now() - 600_000), new Date(Date.now() - 600_000));
     expect((await scanLocal(root))[0]?.status).toBe('unknown');
+  });
+});
+
+
+describe('bounded and safe local file cache', () => {
+  const base: SessionRecord = {
+    key: 'local:one', id: 'one', sourceId: 'local', sourceLabel: 'Windows',
+    title: 'task', workspace: '/repo', status: 'working',
+    statusReason: 'recent', updatedAt: 1_000_000, byteSize: 200, startedAt: null,
+  };
+  it('expires cached working/waiting states but retains terminal evidence', () => {
+    const cache = new LocalScanCache();
+    cache.put('/one', 1_000_000, 200, base);
+    expect(cache.get('/one', 1_000_000, 200, 1_010_000)?.status).toBe('working');
+    expect(cache.get('/one', 1_000_000, 200, 1_100_000)?.status).toBe('unknown');
+    expect(cache.get('/one', 1_000_000, 201, 1_010_000)).toBeNull();
+    cache.put('/two', 1_000_000, 100, { ...base, status: 'finished', finishedToken: 'turn-1' });
+    expect(cache.get('/two', 1_000_000, 100, 2_000_000)?.status).toBe('finished');
+    cache.put('/wait', 1_000_000, 100, { ...base, status: 'waiting' });
+    expect(cache.get('/wait', 1_000_000, 100, 1_610_000)?.status).toBe('unknown');
+    cache.retain(new Set(['/two']));
+    expect(cache.stats().entries).toBe(1);
+  });
+
+  it('reuses unchanged rollout metadata and invalidates when new JSONL is written', async () => {
+    const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-monitor-cache-'));
+    created.push(folder);
+    const directory = path.join(folder, 'sessions', '2026', '10', '12');
+    await fs.mkdir(directory, { recursive: true });
+    const file = path.join(directory, 'rollout-cache.jsonl');
+    await fs.writeFile(file, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'cache', cwd: '/repo' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_started' } }),
+    ].join('\n'));
+    const baseline = localScanCacheStats();
+    expect((await scanLocal(folder))[0]?.status).toBe('working');
+    const first = localScanCacheStats();
+    expect(first.misses).toBeGreaterThan(baseline.misses);
+    expect((await scanLocal(folder))[0]?.status).toBe('working');
+    expect(localScanCacheStats().hits).toBeGreaterThan(first.hits);
+    await fs.appendFile(file, '\n' +
+      JSON.stringify({ type: 'event_msg', payload: { type: 'task_complete', turn_id: 'turn-one' } }));
+    expect((await scanLocal(folder))[0]?.status).toBe('finished');
+    expect(localScanCacheStats().misses).toBeGreaterThan(first.misses);
   });
 });

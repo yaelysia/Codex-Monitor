@@ -6,6 +6,7 @@ const fake = vi.hoisted(() => ({
   reconciled: [] as string[][],
   started: 0,
   stopped: 0,
+  health: {} as Record<string, 'active' | 'connecting' | 'fallback'>,
 }));
 
 vi.mock('../electron/config', () => ({
@@ -20,7 +21,7 @@ vi.mock('../electron/watchers', () => ({
     reconcile(_settings: Settings, sources: SourceResult[]) {
       fake.reconciled.push(sources.map(src => src.id));
     }
-    status() { return {}; }
+    status() { return fake.health; }
   },
 }));
 
@@ -53,6 +54,7 @@ beforeEach(() => {
   fake.reconciled = [];
   fake.started = 0;
   fake.stopped = 0;
+  fake.health = {};
 });
 afterEach(() => {
   service?.stop();
@@ -123,7 +125,7 @@ describe('event-driven scan orchestration', () => {
     expect(rescans).toBe(2);
   });
 
-  it('keeps the 12-second full fallback even when event scans updated the UI timestamp', async () => {
+  it('keeps a 12-second targeted fallback for hosts with no active event stream', async () => {
     vi.mocked(collect).mockImplementation(async (_settings, selected) => snapshot(Date.now(),
       selected ? [source('ssh:one', [session('p', 'finished', Date.now())])] :
         [source('local', []), source('ssh:one', [session('p', 'working', Date.now())])]));
@@ -135,7 +137,37 @@ describe('event-driven scan orchestration', () => {
     expect(vi.mocked(collect).mock.calls[1]?.[1]).toEqual(new Set(['ssh:one']));
     await vi.advanceTimersByTimeAsync(11_500);
     expect(vi.mocked(collect).mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1])
+      .toEqual(new Set(['local', 'ssh:one']));
+  });
+
+  it('limits healthy watch-connected hosts to a 60-second safety audit', async () => {
+    fake.health = { local: 'active', 'ssh:one': 'active' };
+    vi.mocked(collect).mockImplementation(async (_settings, target) => snapshot(Date.now(),
+      target ? [source('ssh:one', [session('p', 'finished', Date.now())])] :
+        [source('local', []), source('ssh:one', [session('p', 'working', Date.now())])]));
+    service = new MonitorService(() => undefined, () => undefined);
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(collect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(48_000);
+    expect(collect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(collect).toHaveBeenCalledTimes(2);
     expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toBeUndefined();
+  });
+
+  it('falls back immediately when a formerly healthy SSH event stream goes down', async () => {
+    fake.health = { local: 'active', 'ssh:one': 'active' };
+    vi.mocked(collect).mockImplementation(async (_settings, target) => snapshot(Date.now(),
+      target ? [source('ssh:one', [session('p', 'working', Date.now())])] :
+        [source('local', []), source('ssh:one', [session('p', 'working', Date.now())])]));
+    service = new MonitorService(() => undefined, () => undefined);
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    fake.health['ssh:one'] = 'fallback';
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['ssh:one']));
   });
 
   it('never schedules a watcher-triggered scan after monitoring stops', async () => {
