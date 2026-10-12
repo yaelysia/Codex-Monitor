@@ -197,7 +197,7 @@ npm run probe:desktop-logs -- --thread-id "真实会话UUID" --duration 20
 - 原窗口与会话关联现在写入 Electron 用户数据目录的 `window-bindings.json`（最多 200 条，只保存 `sourceId:threadId`、HWND、PID、进程启动时间、输入事件时间与可选标签 ID，不保存会话正文、登录信息或 SSH 密钥）。写入采用临时文件 + 原子重命名；退出时刷新。已持久化的关联**不需要下一次提问才能恢复**，前提是 Codex/VS Code/MobaXterm 原窗口在 Monitor 重启期间仍然存活。
 - 重新启动 Monitor 后会加载已保存的关联，但**不会盲信旧句柄**。用户点击跳转时再次校验 `IsWindow`、拥有者 PID、进程创建时间及目标是否可见。窗口已关闭、客户端已重启、句柄已更换时，不会跳到另一窗口；记录会自动失效，新的输入会重新学习。仅重启 Monitor 能恢复，重启整个 Windows 或目标客户端不保证恢复旧窗口。
 - MobaXterm 增加专用 MSAA 可访问性后备：普通 UI Automation 找不到唯一 `TabItem` 时，探测原生的 `ROLE_SYSTEM_PAGETAB`、`STATE_SYSTEM_SELECTED`，并以**窗口作用域内的 SHA-256 截断指纹**区分标签。标签标题只在独立 Windows 原生组件内临时读取以计算指纹，**不回传、不写入原始标题**。只有单一标签组、名称唯一、切换后重新读取确认同一标签时，才报告“定位到原标签”。名称重复、标签被移除或辅助功能接口不暴露标签时仍只返回 MobaXterm 主窗口，不使用易变序号或发送热键。
-- **只读探测标签支持性：** 在 MobaXterm 窗口处于前台时，从项目根目录执行
+- **只读探测标签支持性：** 保持一个 MobaXterm 主窗口可见（无需使它获得焦点），从项目根目录执行
   `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\collector\window-tracker.ps1 -Mode inspect-tabs`。
   输出仅包含 `identified`、`count`、`provider`（`uia`/`msaa`/`none`），不输出 SSH 主机名、标签名或终端内容。该探测仅帮助判断现有版本 MobaXterm 是否向 Windows 暴露可选择的标签；**尚未在用户真实桌面上验证，不能保证所有 MobaXterm 版本都可精确跳转。**
 
