@@ -457,7 +457,7 @@ button svg { flex-shrink: 0; }
 
 /* Persistent resident preferences, consistent with the existing settings dialog. */
 .resident-modal{width:min(540px,95vw)}
-.resident-fields{padding:22px 24px;display:flex;flex-direction:column;gap:13px}
+.resident-fields{padding:22px 24px;display:flex;flex-direction:column;gap:13px;min-height:0;overflow-y:auto}
 .resident-toggle{display:flex;align-items:flex-start;gap:12px;padding:15px;border:1px solid #4a3c59;border-radius:9px;background:#292535;cursor:pointer}
 .resident-toggle input{accent-color:#a98ade;margin-top:3px;flex:0 0 auto}
 .resident-toggle:has(input:disabled){opacity:.7;cursor:default}
