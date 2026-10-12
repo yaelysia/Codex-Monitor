@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { AutoWindowResolver, normalizeForegroundWindow } from '../src/shared/auto-window-binding';
+import { WindowBindingStore } from './window-bindings-store';
 import type { OriginalWindowFocusResult, OriginalWindowStatus, ScanResponse } from '../src/shared/types';
 
 const MAX_LINE_BYTES = 4096;
@@ -20,8 +21,12 @@ export class AutoWindowTracker {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private restartCount = 0;
   private lastNativeError: string | null = null;
+  private readonly bindingStore: WindowBindingStore | null;
+  private readonly restoredKeys = new Set<string>();
 
-  constructor(private readonly platform = process.platform) {}
+  constructor(private readonly platform = process.platform, storageDirectory?: string) {
+    this.bindingStore = storageDirectory ? new WindowBindingStore(storageDirectory) : null;
+  }
 
   private scriptPath(): string {
     return app.isPackaged
@@ -33,6 +38,10 @@ export class AutoWindowTracker {
     if (this.platform !== 'win32' ||
         process.env.CODEX_MONITOR_DISABLE_AUTO_WINDOW_TRACKING === '1') return;
     this.stopRequested = false;
+    if (this.bindingStore) {
+      const persisted = this.bindingStore.load();
+      for (const key of this.resolver.restoreBindings(persisted)) this.restoredKeys.add(key);
+    }
     this.launch();
   }
 
@@ -143,11 +152,17 @@ export class AutoWindowTracker {
     const child = this.child;
     this.child = null;
     child?.kill();
+    this.bindingStore?.flush();
+    this.restoredKeys.clear();
     this.resolver.clear();
   }
 
   observeScan(snapshot: ScanResponse): void {
-    if (this.watching) this.resolver.observeScan(snapshot);
+    if (!this.watching) return;
+    if (!this.resolver.observeScan(snapshot)) return;
+    // A new submission can move a session to a different original window.
+    // Persist the now-observed bindings, not the stale file snapshot.
+    this.bindingStore?.update(this.resolver.savedBindings());
   }
 
   status(sessionKey: string): OriginalWindowStatus {
@@ -168,7 +183,9 @@ export class AutoWindowTracker {
     };
     return found ? {
       ready: true, host: found.app === 'other' ? undefined : found.app,
-      message: found.tabId ? '已自动关联原窗口及原标签（待实机验证）' :
+      message: this.restoredKeys.has(sessionKey)
+        ? '已加载上次窗口绑定；点击跳转时会校验原窗口与进程身份，已关闭窗口不会误跳'
+        : found.tabId ? '已自动关联原窗口及原标签（待实机验证）' :
         (found.tabCount != null && found.tabCount > 1) ||
           (found.tabHost === 'multi' && !found.tabId)
           ? '已关联原窗口，但多标签位置尚无可靠证据'
@@ -221,7 +238,9 @@ export class AutoWindowTracker {
         });
         if (['stale_window', 'process_changed', 'invalid_or_stale_window'].includes(result.reason || '')) {
           this.resolver.invalidate(sessionKey);
-          return resolve({ state: 'stale', message: '原窗口已关闭或进程已变化；等待下一次输入重新识别' });
+          this.restoredKeys.delete(sessionKey);
+          this.bindingStore?.update(this.resolver.savedBindings());
+          return resolve({ state: 'stale', message: '上次绑定的窗口已关闭或进程已变化；等待新的输入重新识别' });
         }
         resolve({ state: 'blocked', message: 'Windows 未允许该次窗口激活；原窗口关联仍保留' });
       });

@@ -48,7 +48,7 @@ if (firstInstance) {
       saved.dock,
       state => resident?.updateDock(state),
     );
-    windowTracker = new AutoWindowTracker();
+    windowTracker = new AutoWindowTracker(process.platform, app.getPath('userData'));
     windowTracker.start();
     monitor = new MonitorService(
       state => broadcast('monitor:state', state),

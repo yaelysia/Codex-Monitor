@@ -15,6 +15,37 @@ export interface ForegroundWindow {
   tabHost?: 'single' | 'multi' | 'unknown';
 }
 export type OriginalWindow = ForegroundWindow & { inputAt: number };
+export interface PersistedWindowBinding {
+  sessionKey: string;
+  /** Only native window metadata; never a title, path, prompt or credential. */
+  window: OriginalWindow;
+  /** Persisted user-input event timestamp for avoiding stale re-associations. */
+  inputToken: number;
+  savedAt: number;
+}
+const MAX_BINDINGS = 200;
+const MAX_BINDING_AGE_MS = 30 * 24 * 60 * 60_000;
+const SAFE_SESSION_KEY = /^[^\s\u0000-\u001f]{1,350}$/;
+
+export function normalizeSavedWindowBinding(raw: unknown, now = Date.now()): PersistedWindowBinding | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const data = raw as Record<string, unknown>;
+  if (typeof data.sessionKey !== 'string' || !SAFE_SESSION_KEY.test(data.sessionKey) ||
+      !data.sessionKey.includes(':')) return null;
+  const window = normalizeForegroundWindow(data.window);
+  if (!window || window.app === 'other') return null;
+  const inputAt = (data.window as Record<string, unknown>).inputAt;
+  if (typeof inputAt !== 'number' || !Number.isSafeInteger(inputAt) ||
+      inputAt <= 0) return null;
+  const token = data.inputToken;
+  const savedAt = data.savedAt;
+  if (typeof token !== 'number' || !Number.isFinite(token) ||
+      typeof savedAt !== 'number' || !Number.isFinite(savedAt) ||
+      savedAt > now + 60_000 || now - savedAt > MAX_BINDING_AGE_MS ||
+      savedAt < 0) return null;
+  return { sessionKey: data.sessionKey, window: { ...window, inputAt },
+    inputToken: token, savedAt };
+}
 
 const WINDOW_HISTORY_MS = 5 * 60_000;
 const MAX_INPUT_AGE_MS = 45_000;
@@ -82,8 +113,9 @@ export class AutoWindowResolver {
     if (this.history.length > MAX_SAMPLES) this.history.splice(0, this.history.length - MAX_SAMPLES);
   }
 
-  observeScan(scan: ScanResponse, now = Date.now()): void {
-    if (!this.history.length) return;
+  observeScan(scan: ScanResponse, now = Date.now()): boolean {
+    if (!this.history.length) return false;
+    let changed = false;
     for (const source of scan.sources) {
       if (source.error) continue;
       for (const session of source.sessions) {
@@ -150,8 +182,43 @@ export class AutoWindowResolver {
             confirmedAfter?.tabCount ?? 0),
         });
         this.lastInput.set(session.key, token);
+        changed = true;
       }
     }
+    return changed;
+  }
+
+  /** Only import bounded, structurally valid metadata. The HWND identity must
+   * still be checked by the native focus action before activating anything.
+   */
+  restoreBindings(input: readonly unknown[], now = Date.now()): string[] {
+    const accepted: PersistedWindowBinding[] = [];
+    for (const value of input.slice(0, MAX_BINDINGS * 2)) {
+      const record = normalizeSavedWindowBinding(value, now);
+      if (record) accepted.push(record);
+    }
+    accepted.sort((a, b) => a.savedAt - b.savedAt);
+    const keys: string[] = [];
+    for (const entry of accepted.slice(-MAX_BINDINGS)) {
+      const old = this.bindings.get(entry.sessionKey);
+      if (old && old.inputAt > entry.window.inputAt) continue;
+      this.bindings.set(entry.sessionKey, { ...entry.window });
+      this.lastInput.set(entry.sessionKey, entry.inputToken);
+      keys.push(entry.sessionKey);
+    }
+    return keys;
+  }
+
+  savedBindings(now = Date.now()): PersistedWindowBinding[] {
+    const values: PersistedWindowBinding[] = [];
+    for (const [sessionKey, window] of this.bindings) {
+      const item = normalizeSavedWindowBinding({
+        sessionKey, window, savedAt: window.inputAt,
+        inputToken: this.lastInput.get(sessionKey) ?? window.inputAt,
+      }, now);
+      if (item) values.push(item);
+    }
+    return values.sort((a, b) => b.savedAt - a.savedAt).slice(0, MAX_BINDINGS);
   }
 
   get(sessionKey: string): OriginalWindow | null {
