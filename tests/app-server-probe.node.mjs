@@ -122,6 +122,8 @@ test('connection arguments reject unsafe sockets, credentials and cleartext remo
   });
   assert.throws(() => parseArguments(['--duration', '999']), /between 0 and 120/);
   assert.throws(() => parseArguments(['--attach-thread', threadId]), /Unrecognized/);
+  assert.equal(parseArguments(['--thread-id', threadId]).threadId, threadId);
+  assert.throws(() => parseArguments(['--thread-id', 'not-a-uuid']), /valid UUID/);
 });
 
 test('probe supports actual WebSocket/JSON-RPC handshake and ONLY read-only methods', async () => {
@@ -135,7 +137,9 @@ test('probe supports actual WebSocket/JSON-RPC handshake and ONLY read-only meth
     assert.throws(() => client.request('thread/resume', {}), /forbids/);
     assert.throws(() => client.request('config/value/write', {}), /forbids/);
     await client.start();
-    assert.deepEqual(await client.loadedThreads(3), [threadId]);
+    assert.deepEqual(await client.loadedThreads(3), {
+      ids: [threadId], observedCount: 1, listComplete: true, targetMatched: null,
+    });
     assert.deepEqual(await client.readStatus(threadId), {
       id: threadId.slice(0, 8) + '…' + threadId.slice(-4),
       status: { state: 'active', flags: [] }, isSubagent: false,
@@ -211,6 +215,57 @@ test('CLI observes changing activeFlags by metadata reads, without subscribing o
   assert.equal(JSON.stringify(json).includes('HIDDEN_MODEL_THOUGHT'), false);
 });
 
+test('loaded list paginates beyond oldest sessions and supports exact target matching', async () => {
+  const ids = Array.from({ length: 135 }, (_, i) =>
+    '019a1020-0000-7000-8000-' + i.toString(16).padStart(12, '0'));
+  const requests = [];
+  const server = await mockServer((packet, ws) => {
+    requests.push(packet);
+    if (packet.method === 'initialize') {
+      ws.send(JSON.stringify({ id: packet.id, result: {} }));
+    } else if (packet.method === 'thread/loaded/list') {
+      const start = packet.params.cursor ? ids.indexOf(packet.params.cursor) + 1 : 0;
+      const end = Math.min(ids.length, start + packet.params.limit);
+      ws.send(JSON.stringify({ id: packet.id, result: {
+        data: ids.slice(start, end), nextCursor: end < ids.length ? ids[end - 1] : null,
+      } }));
+    }
+  });
+  const client = new AppServerProbeClient({ kind: 'ws', url: server.url });
+  try {
+    await client.start();
+    assert.deepEqual(await client.loadedThreads(3), {
+      ids: ids.slice(-3), observedCount: ids.length,
+      listComplete: true, targetMatched: null,
+    });
+    assert.deepEqual(await client.loadedThreads(3, ids[1]), {
+      ids: [ids[1]], observedCount: ids.length, listComplete: true, targetMatched: true,
+    });
+    const absent = '019a1020-0000-7000-8000-ffffffffffff';
+    assert.deepEqual(await client.loadedThreads(3, absent), {
+      ids: [], observedCount: ids.length, listComplete: true, targetMatched: false,
+    });
+    assert.equal(requests.filter(packet => packet.method === 'thread/loaded/list').length, 6);
+    assert.equal(requests.some(packet => packet.method === 'thread/resume'), false);
+    assert.equal(requests.some(packet => packet.method === 'thread/read'), false);
+  } finally { await client.close(); }
+});
+
+test('target missing from shared server is distinguished from an unloaded session', async () => {
+  const { handler } = makeMockHandler();
+  const server = await mockServer(handler);
+  const lines = [];
+  const absent = '019a1020-0000-7000-8000-ffffffffffff';
+  await runProbe({
+    ...parseArguments(['--duration', '0', '--json', '--thread-id', absent]),
+    ws: server.url,
+  }, { write: line => lines.push(JSON.parse(line)) });
+  assert.equal(lines.find(line => line.type === 'discovered').targetLoaded, false);
+  assert.equal(lines.find(line => line.type === 'error').code,
+    'target_not_loaded_in_this_app_server');
+  assert.equal(lines.find(line => line.type === 'summary').selected, 0);
+});
+
 test('missing existing daemon socket is reported without launching Codex', async () => {
   const missing = path.join(os.tmpdir(), 'missing-codex-daemon-' + process.pid, 'no.sock');
   const lines = [];
@@ -255,7 +310,7 @@ test('Unix-domain control socket uses WebSocket frames over existing local socke
   const client = new AppServerProbeClient({ kind: 'socket', path: socket });
   try {
     await client.start();
-    assert.equal((await client.loadedThreads(1))[0], threadId);
+    assert.equal((await client.loadedThreads(1)).ids[0], threadId);
     assert.deepEqual((await client.readStatus(threadId)).status,
       { state: 'active', flags: ['waitingOnApproval'] });
   } finally { await client.close(); }

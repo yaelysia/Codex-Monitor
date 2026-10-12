@@ -19,6 +19,7 @@ export function parseArguments(args) {
   const flags = new Map([
     ['--socket', 'socket'], ['--ws', 'ws'], ['--duration', 'duration'],
     ['--poll-ms', 'pollMs'], ['--max-threads', 'maxThreads'],
+    ['--thread-id', 'threadId'],
   ]);
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -36,6 +37,9 @@ export function parseArguments(args) {
   parsed.duration = numberFlag(parsed.duration, '--duration', 0, 120);
   parsed.pollMs = numberFlag(parsed.pollMs, '--poll-ms', 500, 30_000);
   parsed.maxThreads = numberFlag(parsed.maxThreads, '--max-threads', 1, 50);
+  if (parsed.threadId && !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(parsed.threadId)) {
+    throw new Error('--thread-id must be a valid UUID');
+  }
   return parsed;
 }
 function showHelp() {
@@ -49,7 +53,8 @@ function showHelp() {
     'Options:',
     '  --duration N      0 = one snapshot; otherwise observe for N seconds (max 120)',
     '  --poll-ms N       Snapshot interval in ms, default 2000 (min 500)',
-    '  --max-threads N   Max loaded threads to inspect, default 15 (max 50)',
+    '  --max-threads N   Select up to N newest loaded IDs (max 50; not necessarily active)',
+    '  --thread-id UUID   Inspect this exact loaded session even if it is older',
     '  --show-ids        Print full thread IDs for matching with Monitor sessions',
     '  --json            One sanitized JSON object per line',
     '  --allow-remote    Opt in to explicit non-loopback TLS (wss://) connections',
@@ -109,7 +114,8 @@ export async function runProbe(options, { write = console.log, clientFactory } =
     ? clientFactory(endpoint, { onEvent: event => emit('push', event), showIds: opts.showIds })
     : new AppServerProbeClient(endpoint,
       { onEvent: event => emit('push', event), showIds: opts.showIds });
-  const stats = { connected: false, selected: 0, statusUpdates: 0,
+  const stats = { connected: false, selected: 0, observedLoaded: 0,
+    listComplete: false, statusUpdates: 0,
     pendingUserInput: 0, pendingApproval: 0, methodScope: 'metadata-only' };
   let previous = new Map();
   let threadIds = [];
@@ -124,16 +130,29 @@ export async function runProbe(options, { write = console.log, clientFactory } =
     do {
       const now = Date.now();
       if (first || now >= nextListAt) {
-        try { threadIds = await client.loadedThreads(opts.maxThreads); }
-        catch {
+        let selection;
+        try {
+          selection = await client.loadedThreads(opts.maxThreads, opts.threadId);
+          threadIds = selection.ids;
+        } catch {
           emit('error', { code: 'thread_loaded_list_unavailable',
             next: 'This endpoint may use an older Codex protocol; no resume attempted' });
           break;
         }
         nextListAt = Date.now() + 10_000;
         stats.selected = threadIds.length;
-        if (first) emit('discovered', { loadedCount: threadIds.length,
-          note: 'Only threads loaded by this SAME App Server are visible' });
+        stats.observedLoaded = selection.observedCount;
+        stats.listComplete = selection.listComplete;
+        if (first) {
+          emit('discovered', { loadedCount: selection.observedCount,
+            selectedCount: threadIds.length, listComplete: selection.listComplete,
+            ...(opts.threadId ? { targetLoaded: selection.targetMatched } : {}),
+            note: 'Only threads loaded by this SAME App Server are visible' });
+          if (opts.threadId && !selection.targetMatched) {
+            emit('error', { code: selection.listComplete
+              ? 'target_not_loaded_in_this_app_server' : 'target_not_seen_in_partial_listing' });
+          }
+        }
       }
       for (const id of threadIds) {
         let row;
@@ -157,7 +176,8 @@ export async function runProbe(options, { write = console.log, clientFactory } =
       await sleep(Math.min(opts.pollMs, untilNext));
     } while (Date.now() < deadline);
     emit('summary', {
-      connected: true, loaded: stats.selected, statusUpdates: stats.statusUpdates,
+      connected: true, loaded: stats.observedLoaded, selected: stats.selected,
+      listComplete: stats.listComplete, statusUpdates: stats.statusUpdates,
       receivedPushEvents: client.stats.pushEvents,
       ignoredServerRequests: client.stats.serverRequests,
       nativeSubscription: false, daemonCreated: false,

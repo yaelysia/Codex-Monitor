@@ -155,6 +155,16 @@ ssh -N -L 127.0.0.1:17891:/home/user/.codex/app-server-control/app-server-contro
 
 **如何判断结果：** 显示 `connected` 只说明连接到一个现有 App Server；`loadedCount > 0` 只能说明**这个服务**管理这些会话，并不代表所有 VS Code、Desktop 或独立 CLI 进程均可见。只有通过 `--show-ids` 将已加载会话的真实 ID 与你的 Codex 会话对应起来，才能验证覆盖范围。没有匹配会话时，继续保留 JSONL 监控即可，不必改动正在执行的 Codex。
 
+**分页与指定会话（防止漏检）：** `thread/loaded/list` 以线程 ID 升序分页返回；默认 `--max-threads 15` 选择列表末尾的 15 个 ID（通常是较新创建的会话，**并不等同于最近活动**）。探测器最多扫描 50 页、每页 100 个 ID，并在输出中区分已观察总数、被选会话数和列表是否完整。对于较早创建但仍活跃的会话，应直接从 Monitor 复制完整 thread ID（UUID），运行：
+
+```powershell
+npm run probe:app-server -- --duration 20 --thread-id "真实会话UUID" --show-ids
+```
+
+`targetLoaded: false` 且 `listComplete: true` 说明**当前连接的 App Server** 未加载目标线程，并非该线程不存在。若列表不完整，不可将未发现的 ID 判定为不在服务内。所有查询保持只读。
+
+**协议版本提醒：** 较早版本 Codex 的 Unix Socket 曾使用无需 HTTP Upgrade 的 WebSocket 帧，而当前源码使用标准 HTTP Upgrade 握手；若套接字存在但连接失败，应先核对实际 CLI 版本及启动方式，不要自动启动新服务或把握手错误当作会话已结束。
+
 运行 `npm run test:probe` 可以在不连接真实账号/会话的前提下，用模拟 App Server 验证 WebSocket/JSON-RPC、状态 flags、批准请求绝不代答等行为。**下一阶段**在独立测试服务上验证 `thread/resume` 的第二客户端订阅、审批请求分发与断线回退后，才考虑可选地接入正式 Monitor。不可用独立进程假装共享所有已有会话。
 
 ## 问题 / 用户输入待回答提醒

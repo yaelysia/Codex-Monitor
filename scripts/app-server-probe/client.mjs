@@ -149,25 +149,43 @@ export class AppServerProbeClient {
     this.pending.clear();
   }
 
-  async loadedThreads(limit = 20) {
+  async loadedThreads(limit = 20, targetThreadId = null) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid loaded-thread limit');
-    const ids = [];
+    if (targetThreadId !== null &&
+      (typeof targetThreadId !== 'string' ||
+        !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(targetThreadId))) {
+      throw new Error('Invalid target thread UUID');
+    }
+
+    // Codex paginates loaded IDs in ascending order. Reading only the first
+    // page could hide a user's newer active thread behind older sessions.
     const seen = new Set();
+    const cursors = new Set();
     let cursor = null;
-    for (let page = 0; page < 10 && ids.length < limit; page++) {
-      const result = await this.request('thread/loaded/list', { limit: Math.min(50, limit - ids.length), cursor });
+    let listComplete = false;
+    for (let page = 0; page < 50; page++) {
+      const result = await this.request('thread/loaded/list', { limit: 100, cursor });
       if (!result || !Array.isArray(result.data)) throw new Error('Unrecognized loaded-thread response');
       for (const id of result.data) {
-        if (typeof id !== 'string' || id.length > 128 || !id || seen.has(id)) continue;
-        ids.push(id);
-        seen.add(id);
-        if (ids.length >= limit) break;
+        if (typeof id === 'string' && id.length > 0 && id.length <= 128) seen.add(id);
       }
-      const next = typeof result.nextCursor === 'string' ? result.nextCursor : null;
-      if (!next || next === cursor || !result.data.length) break;
+      const next = typeof result.nextCursor === 'string' && result.nextCursor
+        ? result.nextCursor : null;
+      if (!next) { listComplete = true; break; }
+      if (cursors.has(next) || next === cursor || result.data.length === 0) break;
+      cursors.add(next);
       cursor = next;
     }
-    return ids;
+
+    const allIds = [...seen].sort();
+    const target = targetThreadId && allIds.find(id =>
+      id.toLowerCase() === targetThreadId.toLowerCase());
+    return {
+      ids: targetThreadId ? (target ? [target] : []) : allIds.slice(-limit),
+      observedCount: allIds.length,
+      listComplete,
+      targetMatched: targetThreadId ? Boolean(target) : null,
+    };
   }
 
   async readStatus(threadId) {
