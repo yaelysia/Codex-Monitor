@@ -330,6 +330,12 @@ namespace CodexMonitor {
         Add-Type -ErrorAction Stop -TypeDefinition ($nativeSource + "`n" + $tabFallback)
     }
 } catch {
+    if ($Mode -eq 'verify') {
+        # All embedded code is static first-party source. On CI compile errors
+        # must identify the actual broken C# line, not conceal it behind a
+        # generic native_bridge_unavailable summary.
+        Write-Error ($_.Exception.ToString())
+    }
     Write-Output '{"ok":false,"reason":"native_bridge_unavailable"}'
     exit 2
 }
