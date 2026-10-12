@@ -274,3 +274,25 @@ describe('prompt submission followed by immediate app switch', () => {
     expect(resolver.get('local:thread')).toBeNull();
   });
 });
+
+describe('persisted association normalization', () => {
+  it('only restores valid bounded HWND/PID/start metadata and preserves input deduplication', () => {
+    const old = new AutoWindowResolver();
+    old.observeFocus(sample(NOW - 1000, 'vscode'));
+    const snap = makeScan(NOW, 200, 'vscode', 'local:thread');
+    snap.sources[0]!.sessions[0]!.lastUserInputAtSourceMs = NOW - 200;
+    old.observeScan(snap, NOW);
+    const saved = old.savedBindings(NOW + 1000);
+    expect(saved).toHaveLength(1);
+    const fresh = new AutoWindowResolver();
+    expect(fresh.restoreBindings([...saved, { ...saved[0], sessionKey: 'x', window: { hwnd: 'bad' } }],
+      NOW + 1000)).toEqual(['local:thread']);
+    expect(fresh.get('local:thread')).toMatchObject({ hwnd: '0x1234', pid: 123 });
+    fresh.observeFocus(sample(NOW + 3000, 'vscode', '0x9999', 999));
+    fresh.observeScan({ ...snap, scannedAt: NOW + 3500, sources: [{
+      ...snap.sources[0]!, capturedAt: NOW + 3500,
+      sessions: [{ ...snap.sources[0]!.sessions[0]!, lastUserInputAgeAtSourceMs: 500 }],
+    }] }, NOW + 3500);
+    expect(fresh.get('local:thread')?.hwnd).toBe('0x1234');
+  });
+});

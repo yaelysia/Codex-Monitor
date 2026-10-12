@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { ScanResponse } from '../src/shared/types';
 
 const fake = vi.hoisted(() => ({ spawn: vi.fn(), execFile: vi.fn() }));
@@ -110,5 +113,74 @@ describe('Windows foreground watcher recovery', () => {
       children[0]!.emit('exit', 1);
       expect(tracker.status(sessionKey).ready).toBe(true);
     } finally { tracker.stop(); }
+  });
+});
+
+describe('original-window persistent bindings across Monitor restarts', () => {
+  it('reloads the binding without another user prompt, then revalidates before focus', async () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-window-binding-'));
+    const now = Date.now();
+    try {
+      const tracker = new AutoWindowTracker('win32', storage);
+      tracker.start();
+      children[0]!.stdout.emit('data', Buffer.from(sample(now - 1000)));
+      const scan: ScanResponse = { scannedAt: now, sources: [{
+        id: 'local', kind: 'local', label: 'Windows', error: null, sessions: [{
+          key: sessionKey, id: sessionKey.slice(6), sourceId: 'local',
+          sourceLabel: 'Windows', workspace: null, title: null,
+          status: 'working', statusReason: 'test', updatedAt: now,
+          startedAt: null, clientKind: 'vscode', lastUserInputAgeAtSourceMs: 100,
+          lastUserInputAtSourceMs: now - 100,
+        }],
+      }] };
+      tracker.observeScan(scan);
+      expect(tracker.status(sessionKey).ready).toBe(true);
+      tracker.stop();
+      const file = path.join(storage, 'window-bindings.json');
+      expect(fs.existsSync(file)).toBe(true);
+      const persisted = fs.readFileSync(file, 'utf8');
+      expect(persisted).toContain(sessionKey);
+      expect(persisted).not.toContain('statusReason');
+
+      const reopened = new AutoWindowTracker('win32', storage);
+      try {
+        reopened.start();
+        expect(reopened.status(sessionKey).ready).toBe(true);
+        expect(reopened.status(sessionKey).message).toContain('上次窗口绑定');
+        fake.execFile.mockImplementationOnce((_cmd, _args, _options, cb) =>
+          cb(null, '{"ok":true,"tabFocused":false}\n', ''));
+        const result = await reopened.focusOriginalWindow(sessionKey);
+        expect(result.state).toBe('focused');
+        const nativeArguments = fake.execFile.mock.calls.at(-1)?.[1] as string[];
+        expect(nativeArguments).toContain('0x1357');
+        expect(nativeArguments).toContain('1357');
+        expect(nativeArguments).toContain('1000');
+      } finally { reopened.stop(); }
+    } finally { fs.rmSync(storage, { recursive: true, force: true }); }
+  });
+
+  it('does not activate or retain an OS window when native verification finds it stale', async () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-binding-stale-'));
+    const now = Date.now();
+    try {
+      const persisted = { version: 1, bindings: [{
+        sessionKey, savedAt: now - 10_000, inputToken: now - 10_000,
+        window: { at: now - 10_000, inputAt: now - 10_000,
+          hwnd: '0xbeef', pid: 777, startedAt: now - 90_000, app: 'vscode' },
+      }] };
+      fs.writeFileSync(path.join(storage, 'window-bindings.json'), JSON.stringify(persisted));
+      const tracker = new AutoWindowTracker('win32', storage);
+      try {
+        tracker.start();
+        expect(tracker.status(sessionKey).ready).toBe(true);
+        fake.execFile.mockImplementationOnce((_cmd, _args, _options, cb) =>
+          cb(null, '{"ok":false,"reason":"process_changed"}\n', ''));
+        const result = await tracker.focusOriginalWindow(sessionKey);
+        expect(result.state).toBe('stale');
+        expect(tracker.status(sessionKey).ready).toBe(false);
+      } finally { tracker.stop(); }
+      const next = JSON.parse(fs.readFileSync(path.join(storage, 'window-bindings.json'), 'utf8'));
+      expect(next.bindings).toHaveLength(0);
+    } finally { fs.rmSync(storage, { recursive: true, force: true }); }
   });
 });
