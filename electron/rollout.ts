@@ -52,13 +52,29 @@ export function jsonlRows(text: string, clippedStart: boolean): JsonObject[] {
   return lines.map(parseLine).filter((row): row is JsonObject => !!row);
 }
 
+
+/** Modern paginated Codex histories persist UserMessage as item_completed.
+ * Older rollouts use event_msg.user_message or response_item.message(user).
+ * Only record the event kind: never inspect or return prompt contents.
+ */
+function isPersistedUserInput(row: JsonObject, payload: JsonObject | null): boolean {
+  if (!payload) return false;
+  if (row.type === 'event_msg') {
+    if (payload.type === 'user_message') return true;
+    const itemType = object(payload.item)?.type;
+    return payload.type === 'item_completed' &&
+      (itemType === 'UserMessage' || itemType === 'userMessage');
+  }
+  return row.type === 'response_item' &&
+    payload.type === 'message' && payload.role === 'user';
+}
+
 /** Parse a timestamp only; never expose a user message's text. */
 export function extractLastUserInputAt(tail: string, clippedStart = false): number | null {
   let last: number | null = null;
   for (const row of jsonlRows(tail, clippedStart)) {
     const payload = object(row.payload);
-    if (row.type !== 'event_msg' || payload?.type !== 'user_message' ||
-        typeof row.timestamp !== 'string') continue;
+    if (!isPersistedUserInput(row, payload) || typeof row.timestamp !== 'string') continue;
     const at = Date.parse(row.timestamp);
     if (Number.isFinite(at) && at > 0 && (last === null || at > last)) last = at;
   }
@@ -131,7 +147,9 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   pendingQuestionToken: string | null;
   questionText: string | null;
 } {
-  let phase: 'started' | 'finished' | 'interrupted' | 'failed' | 'unknown' = 'unknown';
+  let phase: 'started' | 'submitted' | 'finished' | 'interrupted' | 'failed' | 'unknown' = 'unknown';
+  let activeTurnId: string | null = null;
+  let lastTerminalTurnId: string | null = null;
   let awaiting = false;
   let finishedToken: string | null = null;
   let waitingToken: string | null = null;
@@ -140,6 +158,16 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   const question = detectPendingQuestionRows(parsedRows);
   for (const row of parsedRows) {
     const payload = object(row.payload);
+    // A new submitted message invalidates an older turn's completion, even
+    // when the corresponding turn/started event has not yet been persisted.
+    if (isPersistedUserInput(row, payload) && phase !== 'started') {
+      phase = 'submitted';
+      activeTurnId = null;
+      awaiting = false;
+      finishedToken = null;
+      waitingToken = null;
+      checkpointAfterBoundary = false;
+    }
     if (isCompactionCheckpoint(row, payload)) {
       checkpointAfterBoundary = true;
       continue;
@@ -152,16 +180,27 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     const marker = [typeof row.timestamp === 'string' ? row.timestamp : '',
       typeof payload?.turn_id === 'string' ? payload.turn_id : ''].join('|');
     const token = marker === '|' ? null : marker;
+    const turnId = typeof payload.turn_id === 'string' && payload.turn_id
+      ? payload.turn_id : null;
     if (START_EVENTS.has(event)) {
-      phase = 'started'; awaiting = false; waitingToken = null;
+      phase = 'started'; activeTurnId = turnId;
+      awaiting = false; waitingToken = null;
       finishedToken = null; checkpointAfterBoundary = false;
-    } else if (END_EVENTS.has(event)) {
-      phase = payload?.error == null ? 'finished' : 'failed';
-      awaiting = false; finishedToken = phase === 'finished' ? token : null;
-      waitingToken = null; checkpointAfterBoundary = false;
-    } else if (ABORT_EVENTS.has(event)) {
-      phase = 'interrupted'; awaiting = false; finishedToken = null;
-      waitingToken = null; checkpointAfterBoundary = false;
+    } else if (END_EVENTS.has(event) || ABORT_EVENTS.has(event)) {
+      // A late turn-a completion must never close currently running turn-b.
+      if (activeTurnId && turnId && activeTurnId !== turnId) continue;
+      // Ignore duplicate terminal events from a prior turn when a fresh user
+      // input is already pending; old histories may lack turn IDs.
+      if ((!activeTurnId && turnId && turnId === lastTerminalTurnId) ||
+          (phase === 'submitted' && !activeTurnId && !turnId)) continue;
+      phase = ABORT_EVENTS.has(event) ? 'interrupted' :
+        payload.error == null ? 'finished' : 'failed';
+      awaiting = false;
+      finishedToken = phase === 'finished' ? token : null;
+      waitingToken = null;
+      checkpointAfterBoundary = false;
+      lastTerminalTurnId = turnId ?? activeTurnId;
+      activeTurnId = null;
     }
     else if (WAIT_EVENTS.has(event) && phase === 'started') { awaiting = true; waitingToken = token; }
     else if (RESUME_EVENTS.has(event) && phase === 'started') { awaiting = false; waitingToken = null; }
@@ -184,14 +223,27 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     return { ...tokenFields, status: 'waiting',
       statusReason: '检测到未匹配回答的 Codex 请求用户输入/确认工具调用；可能正在等待用户处理' };
   }
+  if (terminal && pendingQuestionToken) {
+    // Structured async questions remain outstanding after a turn ends. That
+    // does not prove the model is blocked, or that the user's task is done.
+    return { ...tokenFields, finishedToken: null, status: 'unknown',
+      statusReason: '本轮已结束，但存在尚未回答的异步提问；是否仍有后续执行，需客户端实时状态确认' };
+  }
   if (terminal) {
-    return { ...tokenFields, status: 'finished', statusReason: '检测到本轮正常结束事件；不代表客户端已退出' };
+    return { ...tokenFields, status: 'finished',
+      statusReason: '检测到本轮回复结束事件；不代表整段会话或用户任务已完成' };
   }
   if (phase === 'interrupted' && !checkpointAfterBoundary) {
     return { ...tokenFields, status: 'interrupted', statusReason: '检测到 Codex 本轮中断事件，不能视为任务完成' };
   }
   if (phase === 'failed' && !checkpointAfterBoundary) {
     return { ...tokenFields, status: 'failed', statusReason: '检测到本轮结束事件携带错误信息，不能视为正常完成' };
+  }
+  if (phase === 'submitted') {
+    return { ...tokenFields, status: age <= ACTIVE_WINDOW_MS ? 'working' : 'unknown',
+      statusReason: age <= ACTIVE_WINDOW_MS
+        ? '检测到新的用户输入，但该轮开始/结束事件尚不完整；可能执行中（推断）'
+        : '检测到新的用户输入，但随后没有可靠轮次事件；不能判定任务已完成' };
   }
   if (phase === 'started' && awaiting && age <= WAIT_WINDOW_MS) {
     return { ...tokenFields, status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };

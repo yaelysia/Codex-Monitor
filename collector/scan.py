@@ -223,7 +223,7 @@ def client_kind_from_header(head):
     if not isinstance(originator, str):
         return 'unknown'
     name = originator.strip().lower()
-    if name in ('codex desktop', 'codex_work_desktop'):
+    if name in ('codex desktop', 'codex_desktop', 'codex_work_desktop'):
         return 'desktop'
     if name in ('codex_vscode', 'codex-vscode'):
         return 'vscode'
@@ -232,13 +232,25 @@ def client_kind_from_header(head):
     return 'unknown'
 
 
+def is_persisted_user_input(row, payload):
+    if not isinstance(payload, dict):
+        return False
+    if row.get('type') == 'event_msg':
+        if payload.get('type') == 'user_message':
+            return True
+        item = payload.get('item')
+        return (payload.get('type') == 'item_completed'
+                and isinstance(item, dict)
+                and item.get('type') in ('UserMessage', 'userMessage'))
+    return (row.get('type') == 'response_item'
+            and payload.get('type') == 'message' and payload.get('role') == 'user')
+
+
 def last_user_input_at_source(records):
     latest = None
     for row in records:
         payload = row.get('payload')
-        if row.get('type') != 'event_msg' or not isinstance(payload, dict):
-            continue
-        if payload.get('type') != 'user_message' or not isinstance(row.get('timestamp'), str):
+        if not is_persisted_user_input(row, payload) or not isinstance(row.get('timestamp'), str):
             continue
         try:
             at = int(datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00')).timestamp() * 1000)
@@ -322,6 +334,8 @@ def detect_pending_question_records(records):
             item = payload.get('item')
             if not isinstance(item, dict):
                 continue
+            if item.get('type') in ('UserMessage', 'userMessage'):
+                pending = {k: v for k, v in pending.items() if v['blocking']}
             questions = item.get('questions')
             if (item.get('type') in ('AgentMessage', 'agentMessage') and
                     item.get('delivery') == 'async' and
@@ -371,6 +385,8 @@ def details(head, tail, filename, clipped, modified, now):
         session_id = match.group(1) if match else filename.removesuffix('.jsonl')
 
     phase = 'unknown'
+    active_turn_id = None
+    last_terminal_turn_id = None
     awaiting = False
     finished_token = None
     waiting_token = None
@@ -383,6 +399,11 @@ def details(head, tail, filename, clipped, modified, now):
         payload = row.get('payload') or {}
         if not isinstance(payload, dict):
             continue
+        if is_persisted_user_input(row, payload) and phase != 'started':
+            phase = 'submitted'
+            active_turn_id = None
+            awaiting, finished_token, waiting_token = False, None, None
+            checkpoint_after_boundary = False
         if is_compaction_checkpoint(row, payload):
             checkpoint_after_boundary = True
             continue
@@ -396,16 +417,23 @@ def details(head, tail, filename, clipped, modified, now):
             turn_id = payload.get('turn_id') if isinstance(payload.get('turn_id'), str) else ''
             marker = (timestamp + '|' + turn_id) if timestamp or turn_id else None
             if event in START:
-                phase, awaiting, waiting_token = 'started', False, None
+                phase, active_turn_id = 'started', turn_id or None
+                awaiting, waiting_token = False, None
                 finished_token, checkpoint_after_boundary = None, False
-            elif event in END:
-                phase = 'failed' if payload.get('error') is not None else 'finished'
+            elif event in END or event in ABORT:
+                # Late turn-a completion cannot terminate a newer running turn-b.
+                if active_turn_id and turn_id and active_turn_id != turn_id:
+                    continue
+                if ((not active_turn_id and turn_id and turn_id == last_terminal_turn_id)
+                        or (phase == 'submitted' and not active_turn_id and not turn_id)):
+                    continue
+                phase = ('interrupted' if event in ABORT else
+                         'failed' if payload.get('error') is not None else 'finished')
                 awaiting, finished_token, waiting_token = (
                     False, marker if phase == 'finished' else None, None)
                 checkpoint_after_boundary = False
-            elif event in ABORT:
-                phase, awaiting, finished_token, waiting_token = 'interrupted', False, None, None
-                checkpoint_after_boundary = False
+                last_terminal_turn_id = turn_id or active_turn_id
+                active_turn_id = None
             elif event in WAIT and phase == 'started':
                 awaiting, waiting_token = True, marker
             elif event in RESUME and phase == 'started':
@@ -417,12 +445,20 @@ def details(head, tail, filename, clipped, modified, now):
     if question['blocking'] and pending_token:
         status, reason = 'waiting', (
             '检测到未匹配回答的 Codex 请求用户输入/确认工具调用；可能正在等待用户处理')
+    elif terminal and pending_token:
+        status, reason = 'unknown', (
+            '本轮已结束，但存在尚未回答的异步提问；是否仍有后续执行，需客户端实时状态确认')
     elif terminal:
-        status, reason = 'finished', '检测到本轮正常结束事件；不代表客户端已退出'
+        status, reason = 'finished', '检测到本轮回复结束事件；不代表整段会话或用户任务已完成'
     elif phase == 'interrupted' and not checkpoint_after_boundary:
         status, reason = 'interrupted', '检测到 Codex 本轮中断事件，不能视为任务完成'
     elif phase == 'failed' and not checkpoint_after_boundary:
         status, reason = 'failed', '检测到本轮结束事件携带错误信息，不能视为正常完成'
+    elif phase == 'submitted':
+        status = 'working' if age <= 90000 else 'unknown'
+        reason = ('检测到新的用户输入，但该轮开始/结束事件尚不完整；可能执行中（推断）'
+                  if age <= 90000 else
+                  '检测到新的用户输入，但随后没有可靠轮次事件；不能判定任务已完成')
     elif phase == 'started' and awaiting and age <= 600000:
         status, reason = 'waiting', '日志存在等待用户操作事件（推断）'
     elif phase == 'started' and age <= 90000:
@@ -447,7 +483,7 @@ def details(head, tail, filename, clipped, modified, now):
         'title': title_from_head(head),
         'status': status,
         'statusReason': reason,
-        'finishedToken': finished_token if terminal and not (question['blocking'] and pending_token) else None,
+        'finishedToken': finished_token if terminal and not pending_token else None,
         'waitingToken': pending_token if question['blocking'] and pending_token
                         else waiting_token if awaiting else None,
         'pendingQuestionToken': pending_token,

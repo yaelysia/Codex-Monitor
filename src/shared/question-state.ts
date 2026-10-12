@@ -73,6 +73,9 @@ export function detectPendingQuestionRows(rows: ReadonlyArray<Record<string, unk
       for (const [key, item] of pending) if (!item.blocking) pending.delete(key);
     } else if (kind === 'item_completed') {
       const item = obj(payload.item);
+      if (item?.type === 'UserMessage' || item?.type === 'userMessage') {
+        for (const [key, value] of pending) if (!value.blocking) pending.delete(key);
+      }
       if ((item?.type === 'AgentMessage' || item?.type === 'agentMessage') &&
           item.delivery === 'async' && Array.isArray(item.questions) && item.questions.length) {
         const id = validId(item.id);

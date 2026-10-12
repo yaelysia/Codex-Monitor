@@ -62,7 +62,7 @@ export function extractSessionOrigin(head: string): SessionOrigin {
 export function classifyClientKind(originator: unknown): import('./types').SessionClientKind {
   if (typeof originator !== 'string') return 'unknown';
   const name = originator.trim().toLowerCase();
-  if (name === 'codex desktop' || name === 'codex_work_desktop') return 'desktop';
+  if (['codex desktop', 'codex_desktop', 'codex_work_desktop'].includes(name)) return 'desktop';
   if (name === 'codex_vscode' || name === 'codex-vscode') return 'vscode';
   if (['codex-tui', 'codex_cli_rs', 'codex-cli', 'codex_cli'].includes(name)) return 'terminal';
   return 'unknown';
