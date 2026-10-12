@@ -31,7 +31,14 @@ export function showDesktopAlert(
       activeNotices.delete(notice);
     });
     notice.on('click', () => {
-      if (!acknowledged) focus(alert.sessionKey);
+      // Clicking the notification is itself an acknowledgement, regardless of
+      // whether Windows subsequently permits the window navigation.
+      if (acknowledged) return;
+      acknowledged = true;
+      acknowledge(alert.id);
+      notice.close();
+      activeNotices.delete(notice);
+      focus(alert.sessionKey);
     });
     notice.on('close', () => activeNotices.delete(notice));
     activeNotices.add(notice);

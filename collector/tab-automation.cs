@@ -12,17 +12,25 @@ namespace CodexMonitor {
     }
     const int MaxTabs = 80;
 
+    public static string EncodeRuntimeId(int[] id) {
+      if (id == null || id.Length < 1 || id.Length > 20) return null;
+      StringBuilder result = new StringBuilder("rid:");
+      for (int i = 0; i < id.Length; i++) {
+        if (i > 0) result.Append('.');
+        result.Append(id[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
+      }
+      return result.Length <= 192 ? result.ToString() : null;
+    }
+
+    public static bool VerifyTokenEncoding() {
+      return EncodeRuntimeId(new int[] { 42, -7, 3 }) == "rid:42.-7.3" &&
+        EncodeRuntimeId(new int[] { 123 }) == "rid:123" &&
+        EncodeRuntimeId(new int[0]) == null;
+    }
+
     static string Token(AutomationElement element) {
-      try {
-        int[] id = element.GetRuntimeId();
-        if (id == null || id.Length < 1 || id.Length > 20) return null;
-        StringBuilder result = new StringBuilder("rid:");
-        foreach (int part in id) {
-          if (result.Length > 0) result.Append('.');
-          result.Append(part.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
-        return result.Length <= 192 ? result.ToString() : null;
-      } catch { return null; }
+      try { return EncodeRuntimeId(element.GetRuntimeId()); }
+      catch { return null; }
     }
 
     static AutomationElementCollection Items(IntPtr hwnd) {

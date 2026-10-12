@@ -75,7 +75,11 @@ describe('native notification acknowledge action', () => {
     expect(notice.options.title).toBe('Codex · 本轮回复已结束');
     notice.fire('click');
     expect(focus).toHaveBeenCalledWith(alert.sessionKey);
-    expect(acknowledge).not.toHaveBeenCalled();
+    expect(acknowledge).toHaveBeenCalledWith(alert.id);
+    expect(notice.closed).toBe(true);
+    notice.fire('click');
+    expect(acknowledge).toHaveBeenCalledTimes(1);
+    expect(focus).toHaveBeenCalledTimes(1);
   });
 
   it('accepts positional action-index callbacks on older Electron builds', () => {
@@ -95,5 +99,19 @@ describe('native notification acknowledge action', () => {
     const acknowledge = vi.fn();
     showDesktopAlert(alert, focus, acknowledge);
     expect(fake.notifications).toHaveLength(0);
+  });
+});
+
+describe('notification is acknowledged even when focus is blocked', () => {
+  it('acknowledges first and navigates second, without depending on focus success', () => {
+    const calls: string[] = [];
+    const focus = vi.fn(() => { calls.push('focus'); throw new Error('window denied'); });
+    const acknowledge = vi.fn(() => { calls.push('ack'); });
+    showDesktopAlert(alert, focus, acknowledge);
+    const notice = fake.notifications[0]!;
+    expect(() => notice.fire('click')).toThrow('window denied');
+    expect(calls).toEqual(['ack', 'focus']);
+    expect(acknowledge).toHaveBeenCalledExactlyOnceWith(alert.id);
+    expect(notice.closed).toBe(true);
   });
 });

@@ -255,6 +255,10 @@ if ($Mode -eq 'verify') {
         Write-Output '{"ok":false,"reason":"focus_show_policy_failed"}'
         exit 3
     }
+    if (-not [CodexMonitor.TabProbe]::VerifyTokenEncoding()) {
+        Write-Output '{"ok":false,"reason":"tab_runtime_id_encoding_failed"}'
+        exit 3
+    }
     Write-Output '{"ok":true}'
 } elseif ($Mode -eq 'focus') {
     [CodexMonitor.WindowProbe]::Focus($WindowHandle, $TargetPid, $ProcessStart, $TabId)

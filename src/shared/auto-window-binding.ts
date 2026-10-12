@@ -22,6 +22,22 @@ const MAX_SAMPLES = 4096;
 const HEX_HANDLE = /^0x[0-9a-f]{1,16}$/i;
 const TAB_TOKEN = /^rid:-?\d+(?:\.-?\d+){0,19}$/;
 
+/** Keep trustworthy HWND/PID evidence even if optional UIA details are
+ * malformed or unsupported. A bad tab ID must never break window binding.
+ */
+export function normalizeForegroundWindow(value: unknown): ForegroundWindow | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const item = { ...(value as Record<string, unknown>) };
+  if (item.tabId != null && (typeof item.tabId !== 'string' ||
+      item.tabId.length > 192 || !TAB_TOKEN.test(item.tabId))) delete item.tabId;
+  if (item.tabCount !== undefined &&
+      (typeof item.tabCount !== 'number' || !Number.isInteger(item.tabCount) ||
+       item.tabCount < 0 || item.tabCount > 1000)) delete item.tabCount;
+  if (item.tabHost !== undefined &&
+      !['single', 'multi', 'unknown'].includes(String(item.tabHost))) delete item.tabHost;
+  return validForegroundWindow(item) ? item : null;
+}
+
 export function validForegroundWindow(value: unknown): value is ForegroundWindow {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;

@@ -102,7 +102,10 @@ export default function FloatingApp() {
         {tab === 'alerts' && <>
           {alerts.slice(0, 12).map(alert =>
             <div key={alert.id} className={'alert-item' + (alert.read ? ' is-read' : '')}>
-              <button type="button" className="alert-body" onClick={() => openOriginal(alert.sessionKey)}>
+              <button type="button" className="alert-body" onClick={() => {
+                if (!alert.read) acknowledge(alert.id);
+                openOriginal(alert.sessionKey);
+              }}>
                 <span className={'small-dot ' + (alert.kind === 'waiting' ? 'amber' : 'green')}/>
                 <span className="task-info"><strong>{alert.title}</strong>
                   <small title={alert.questionText || undefined}>{alert.kind === 'waiting'

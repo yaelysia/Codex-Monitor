@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AutoWindowResolver, validForegroundWindow } from '../src/shared/auto-window-binding';
+import { AutoWindowResolver, normalizeForegroundWindow, validForegroundWindow } from '../src/shared/auto-window-binding';
 import type { ScanResponse, SessionRecord } from '../src/shared/types';
 
 const NOW = Date.parse('2026-10-12T09:00:00Z');
@@ -205,5 +205,28 @@ describe('multi-tab hosts with inaccessible tab controls', () => {
     r.observeScan(makeScan(NOW + 100, 100), NOW + 300);
     expect(r.get('ssh:server:thread')).toMatchObject({ tabHost: 'multi', tabId: null, tabCount: 0 });
     expect(validForegroundWindow({ ...sample(NOW, 'terminal'), tabHost: 'invalid' })).toBe(false);
+  });
+});
+
+describe('UI Automation optional fields must never disable foreground correlation', () => {
+  it('strips malformed tab identity but retains original HWND and process evidence', () => {
+    const row = { ...sample(NOW, 'terminal'), tabId: 'rid:.3.42',
+      tabCount: 3, tabHost: 'multi' };
+    expect(validForegroundWindow(row)).toBe(false);
+    expect(normalizeForegroundWindow(row)).toMatchObject({
+      hwnd: '0x1234', pid: 123, tabCount: 3, tabHost: 'multi',
+    });
+    expect(normalizeForegroundWindow(row)?.tabId).toBeUndefined();
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(normalizeForegroundWindow({ ...row, at: NOW - 1000 })!);
+    resolver.observeScan(makeScan(NOW, 100), NOW);
+    expect(resolver.get('ssh:server:thread')?.hwnd).toBe('0x1234');
+    expect(resolver.get('ssh:server:thread')?.tabId).toBeNull();
+  });
+
+  it('does not accept unsafe HWND or PID even when optional UIA fields are dropped', () => {
+    expect(normalizeForegroundWindow({ ...sample(NOW, 'terminal'), hwnd: 'cmd /c whoami',
+      tabId: 'rid:.3.42' })).toBeNull();
+    expect(normalizeForegroundWindow({ ...sample(NOW, 'vscode'), pid: -1 })).toBeNull();
   });
 });
