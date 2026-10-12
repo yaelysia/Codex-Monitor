@@ -251,8 +251,17 @@ namespace CodexMonitor {
         // A provider might silently accept TAKEFOCUS without changing the
         // selected page; attempt the narrower flag once and verify again.
         if (!target.Selected) {
-          target.Parent.accSelect(2, target.ChildId);
-          System.Threading.Thread.Sleep(120);
+          try {
+            target.Parent.accSelect(2, target.ChildId);
+            System.Threading.Thread.Sleep(120);
+            if (String.Equals(Read(hwnd).Id, token, StringComparison.Ordinal)) return true;
+          } catch { /* Fall through to the tab's declared default action. */ }
+          try {
+            // MSAA defines the ROLE_SYSTEM_PAGETAB default action as switching
+            // to that page. Never invoke this on any other accessible role.
+            target.Parent.accDoDefaultAction(target.ChildId);
+            System.Threading.Thread.Sleep(120);
+          } catch { return false; }
         }
         return String.Equals(Read(hwnd).Id, token, StringComparison.Ordinal);
       } catch { return false; }
