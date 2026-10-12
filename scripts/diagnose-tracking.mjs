@@ -126,15 +126,32 @@ async function inspectMoba() {
     if (!data) return { available: false, reason: 'native_probe_unavailable' };
     const allowed = (name, max = 1000) => Number.isInteger(data[name]) &&
       data[name] >= 0 && data[name] <= max ? data[name] : 0;
+    const sanitized = entry => {
+      const number = name => Number.isInteger(entry[name]) &&
+        entry[name] >= 0 && entry[name] <= 1000 ? entry[name] : 0;
+      return {
+        index: number('index'),
+        identified: entry.identified === true,
+        provider: ['uia', 'msaa', 'none'].includes(entry.provider) ? entry.provider : 'none',
+        reason: /^[a-z_]{1,80}$/.test(entry.reason ?? '') ? entry.reason : 'not_identified',
+        count: number('count'),
+        uiaTabItems: number('uiaTabItems'),
+        msaaGroups: number('msaaGroups'),
+        msaaMaxTabs: number('msaaMaxTabs'),
+        msaaSelected: number('msaaSelected'),
+        msaaDuplicateNames: entry.msaaDuplicateNames === true,
+        nativeTabLikeChildren: number('nativeTabLikeChildren'),
+      };
+    };
     return {
-      available: true, identified: data.identified === true,
-      provider: ['uia', 'msaa', 'none'].includes(data.provider) ? data.provider : 'none',
-      reason: /^[a-z_]{1,80}$/.test(data.reason ?? '') ? data.reason : 'not_identified',
-      count: allowed('count'),
-      uiaTabItems: allowed('uiaTabItems'), msaaGroups: allowed('msaaGroups'),
-      msaaMaxTabs: allowed('msaaMaxTabs'), msaaSelected: allowed('msaaSelected'),
-      msaaDuplicateNames: data.msaaDuplicateNames === true,
-      nativeTabLikeChildren: allowed('nativeTabLikeChildren'),
+      available: true,
+      ...sanitized(data),
+      visibleProcessWindows: allowed('visibleProcessWindows'),
+      mainCandidates: allowed('mainCandidates'),
+      selectableCandidates: allowed('selectableCandidates'),
+      candidates: Array.isArray(data.candidates)
+        ? data.candidates.slice(0, 6).filter(e => e && typeof e === 'object')
+          .map(sanitized) : [],
     };
   } catch { return { available: false, reason: 'probe_error_or_timeout' }; }
 }
