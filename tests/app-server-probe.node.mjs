@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { WebSocket, WebSocketServer } from 'ws';
 import { AppServerProbeClient, parseProbeEndpoint } from '../scripts/app-server-probe/client.mjs';
@@ -258,4 +259,20 @@ test('Unix-domain control socket uses WebSocket frames over existing local socke
     assert.deepEqual((await client.readStatus(threadId)).status,
       { state: 'active', flags: ['waitingOnApproval'] });
   } finally { await client.close(); }
+});
+
+
+test('the actual npm probe entrypoint exposes help and refuses a missing existing socket', () => {
+  const entry = path.resolve('scripts/probe-app-server.mjs');
+  const help = spawnSync(process.execPath, [entry, '--help'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /read-only App Server probe/i);
+  assert.match(help.stdout, /--max-threads/);
+  const notRunning = spawnSync(process.execPath, [
+    entry, '--duration', '0', '--json', '--socket',
+    path.join(os.tmpdir(), 'missing-daemon-' + process.pid, 'control.sock'),
+  ], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(notRunning.status, 2, notRunning.stderr);
+  const rows = notRunning.stdout.trim().split('\n').map(JSON.parse);
+  assert.equal(rows[0]?.code, 'no_existing_control_socket');
 });
