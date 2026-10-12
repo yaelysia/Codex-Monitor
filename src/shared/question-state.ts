@@ -41,14 +41,9 @@ function questionFromArguments(value: unknown): string | null {
 const tokenFor = (kind: string, id: string) => kind + ':' + id;
 
 /** Accepts bounded JSONL content. "clippedStart" drops its potentially partial first row. */
-export function detectPendingQuestion(tail: string, clippedStart = false): PendingQuestion {
+export function detectPendingQuestionRows(rows: ReadonlyArray<Record<string, unknown>>): PendingQuestion {
   const pending = new Map<string, { text: string | null; blocking: boolean }>();
-  const lines = tail.split(/\r?\n/);
-  if (clippedStart) lines.shift();
-  for (const line of lines) {
-    let row: ObjectValue | null = null;
-    try { row = obj(JSON.parse(line)); } catch { /* partial records */ }
-    if (!row) continue;
+  for (const row of rows) {
     const payload = obj(row.payload);
     if (!payload) continue;
     if (row.type === 'response_item') {
@@ -100,4 +95,19 @@ export function detectPendingQuestion(tail: string, clippedStart = false): Pendi
     text: latest[1].text,
     blocking: latest[1].blocking,
   } : { token: null, text: null, blocking: false };
+}
+
+
+/** Convenience adapter for independent parser tests and tools. */
+export function detectPendingQuestion(tail: string, clippedStart = false): PendingQuestion {
+  const lines = tail.split(/\r?\n/);
+  if (clippedStart) lines.shift();
+  const rows: Record<string, unknown>[] = [];
+  for (const line of lines) {
+    try {
+      const row = obj(JSON.parse(line));
+      if (row) rows.push(row);
+    } catch { /* incomplete JSONL record */ }
+  }
+  return detectPendingQuestionRows(rows);
 }
