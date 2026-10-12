@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test:probe": "node --test tests/app-server-probe.test.mjs",
+    "probe:app-server": "node scripts/probe-app-server.mjs",
     "dist:win": "npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
@@ -26,7 +28,8 @@
     "electron-vite": "^4.0.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "ws": "^8.18.3"
   },
   "build": {
     "appId": "dev.yaelysia.codex-monitor",

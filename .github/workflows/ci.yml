@@ -21,6 +21,7 @@ jobs:
           python-version: '3.12'
       - run: npm install --no-audit --no-fund
       - run: npm test
+      - run: npm run test:probe
       - run: npm run typecheck
       - run: npm run build
       - run: python -m unittest discover -s tests -p 'test_*.py'

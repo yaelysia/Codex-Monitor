@@ -2,6 +2,7 @@
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { AppServerProbeClient, parseProbeEndpoint } from './app-server-probe/client.mjs';
 
 const DEFAULTS = { duration: 20, pollMs: 2000, maxThreads: 15, showIds: false,
@@ -174,8 +175,8 @@ async function main(args = process.argv.slice(2)) {
   if (!result.connected) process.exitCode = 2;
 }
 
-const launchedDirectly = process.argv[1] && import.meta.url === new URL('file://' +
-  (process.platform === 'win32' ? '/' : '') + path.resolve(process.argv[1]).replace(/\\/g, '/')).href;
+const launchedDirectly = !!process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (launchedDirectly) {
   main().catch(error => {
     console.error('Probe failed: ' + (error instanceof Error ? error.message : 'unknown error'));
