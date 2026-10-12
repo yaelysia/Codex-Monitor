@@ -18,7 +18,7 @@ const WINDOW_HISTORY_MS = 5 * 60_000;
 const MAX_INPUT_AGE_MS = 45_000;
 const MAX_SAMPLES = 4096;
 const HEX_HANDLE = /^0x[0-9a-f]{1,16}$/i;
-const TAB_TOKEN = /^-?\d+(?:\.-?\d+){0,19}$/;
+const TAB_TOKEN = /^rid:-?\d+(?:\.-?\d+){0,19}$/;
 
 export function validForegroundWindow(value: unknown): value is ForegroundWindow {
   if (!value || typeof value !== 'object') return false;
@@ -92,23 +92,26 @@ export class AutoWindowResolver {
         };
         const earliest = foregroundAt(earliestInputAt);
         const selected = foregroundAt(inputAt);
-        // The remote scanner's moment within SSH/WSL execution is uncertain.
-        // Bind only if the same native window was foreground throughout that
-        // bounded interval. Otherwise don't guess where the input came from.
-        if (!earliest || !selected || selected.hwnd !== earliest.hwnd ||
-            selected.pid !== earliest.pid || selected.startedAt !== earliest.startedAt ||
-            selected.app === 'other' || !isClientMatch(client, selected.app)) {
-          // Do not replace an existing link with a guessed candidate.
-          continue;
-        }
-        // Require a later confirmed observation of the same selected tab.
-        // An unobserved tab switch may occur without changing the top-level HWND.
+        if (!earliest || !selected || selected.app === 'other' ||
+            !isClientMatch(client, selected.app)) continue;
+        const sameWindow = (item: ForegroundWindow): boolean =>
+          item.hwnd === selected.hwnd && item.pid === selected.pid &&
+          item.startedAt === selected.startedAt && item.app === selected.app;
+        // Checking endpoints alone is insufficient: a user could leave a window,
+        // type in another tab, then return before the remote scan completes.
+        const during = this.history.filter(item =>
+          item.at >= earliestInputAt && item.at <= inputAt);
+        if (!sameWindow(earliest) || during.some(item => !sameWindow(item))) continue;
+        // A tab identity requires continuity across every observed sample,
+        // including a post-input sample. A partial/ambiguous provider is a
+        // WINDOW-only match and must not be described as exact-tab navigation.
         const confirmedAfter = this.history.find(item =>
-          item.at >= inputAt && item.at <= inputAt + 3000);
-        const tabConfirmed = !!selected.tabId && earliest.tabId === selected.tabId &&
-          confirmedAfter?.tabId === selected.tabId &&
-          confirmedAfter.hwnd === selected.hwnd && confirmedAfter.pid === selected.pid &&
-          confirmedAfter.startedAt === selected.startedAt;
+          item.at > inputAt && item.at <= inputAt + 3000);
+        const tabConfirmed = !!selected.tabId && sameWindow(earliest) &&
+          earliest.tabId === selected.tabId &&
+          during.every(item => item.tabId === selected.tabId) &&
+          !!confirmedAfter && sameWindow(confirmedAfter) &&
+          confirmedAfter.tabId === selected.tabId;
         this.bindings.set(session.key, {
           ...selected, inputAt,
           tabId: tabConfirmed ? selected.tabId : null,

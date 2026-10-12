@@ -16,7 +16,7 @@ namespace CodexMonitor {
       try {
         int[] id = element.GetRuntimeId();
         if (id == null || id.Length < 1 || id.Length > 20) return null;
-        StringBuilder result = new StringBuilder();
+        StringBuilder result = new StringBuilder("rid:");
         foreach (int part in id) {
           if (result.Length > 0) result.Append('.');
           result.Append(part.ToString(System.Globalization.CultureInfo.InvariantCulture));
