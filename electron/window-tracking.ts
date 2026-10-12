@@ -159,9 +159,11 @@ export class AutoWindowTracker {
 
   observeScan(snapshot: ScanResponse): void {
     if (!this.watching) return;
-    if (!this.resolver.observeScan(snapshot)) return;
-    // A new submission can move a session to a different original window.
-    // Persist the now-observed bindings, not the stale file snapshot.
+    const changed = this.resolver.observeScan(snapshot);
+    if (!changed.length) return;
+    // A new submission can move a session to another original window.
+    // The restored identity should no longer be described as unverified.
+    for (const key of changed) this.restoredKeys.delete(key);
     this.bindingStore?.update(this.resolver.savedBindings());
   }
 

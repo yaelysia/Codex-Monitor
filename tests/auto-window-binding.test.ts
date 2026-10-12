@@ -296,3 +296,32 @@ describe('persisted association normalization', () => {
     expect(fresh.get('local:thread')?.hwnd).toBe('0x1234');
   });
 });
+
+describe('opaque MobaXterm MSAA tab tokens and saved metadata safety', () => {
+  it('preserves only the validated opaque name fingerprint, never a caption', () => {
+    const binding = { ...sample(NOW, 'terminal'), tabId: 'msaa:' + 'a'.repeat(32),
+      tabHost: 'multi' as const, tabCount: 3 };
+    expect(validForegroundWindow(binding)).toBe(true);
+    expect(normalizeForegroundWindow(binding)?.tabId).toBe(binding.tabId);
+    expect(normalizeForegroundWindow({ ...binding, tabId: 'msaa:' + 'a'.repeat(31) })?.tabId)
+      .toBeUndefined();
+    expect(normalizeForegroundWindow({ ...binding, tabId: 'msaa:terminal.example.org' })?.tabId)
+      .toBeUndefined();
+  });
+
+  it('rejects persisted bindings from future, expired, or forged process identities', () => {
+    const resolver = new AutoWindowResolver();
+    const stored = { sessionKey: 'ssh:box:thread', inputToken: NOW - 100,
+      savedAt: NOW - 100, window: { ...sample(NOW - 100, 'terminal'),
+        inputAt: NOW - 100, tabHost: 'multi', tabId: 'msaa:' + 'b'.repeat(32) } };
+    expect(resolver.restoreBindings([stored, { ...stored, sessionKey: 'invalid' }], NOW))
+      .toEqual(['ssh:box:thread']);
+    expect(resolver.get(stored.sessionKey)?.tabId).toBe(stored.window.tabId);
+    expect(new AutoWindowResolver().restoreBindings(
+      [{ ...stored, savedAt: NOW + 90_000 }], NOW)).toEqual([]);
+    expect(new AutoWindowResolver().restoreBindings(
+      [{ ...stored, savedAt: NOW - 31 * 24 * 60 * 60_000 }], NOW)).toEqual([]);
+    expect(new AutoWindowResolver().restoreBindings(
+      [{ ...stored, window: { ...stored.window, hwnd: 'attack' } }], NOW)).toEqual([]);
+  });
+});

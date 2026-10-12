@@ -113,9 +113,9 @@ export class AutoWindowResolver {
     if (this.history.length > MAX_SAMPLES) this.history.splice(0, this.history.length - MAX_SAMPLES);
   }
 
-  observeScan(scan: ScanResponse, now = Date.now()): boolean {
-    if (!this.history.length) return false;
-    let changed = false;
+  observeScan(scan: ScanResponse, now = Date.now()): string[] {
+    if (!this.history.length) return [];
+    const changed: string[] = [];
     for (const source of scan.sources) {
       if (source.error) continue;
       for (const session of source.sessions) {
@@ -182,7 +182,7 @@ export class AutoWindowResolver {
             confirmedAfter?.tabCount ?? 0),
         });
         this.lastInput.set(session.key, token);
-        changed = true;
+        changed.push(session.key);
       }
     }
     return changed;
