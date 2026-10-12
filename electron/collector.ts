@@ -6,7 +6,7 @@ import type { ScanResponse, SessionRecord, Settings, SourceKind, SourceResult } 
 import { resolveLocalRoot, scanLocal } from './local';
 import { SessionActivityTracker } from '../src/shared/activity-tracker';
 import { inspectDesktopLogSignals } from './desktop-runtime-logs';
-import { applyDesktopLogEvidence } from '../src/shared/desktop-log-status';
+import { applyDesktopLogEvidence, DesktopLogEventCache } from '../src/shared/desktop-log-status';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
 const MAX_STDOUT = 5 * 1024 * 1024;
@@ -21,6 +21,7 @@ export function isInternalWslDistro(name: string): boolean {
 // Recent file growth is evidence of agent activity when lifecycle markers are
 // outside our bounded scan window. Keep the observation transient and tentative.
 const activityTracker = new SessionActivityTracker();
+const desktopLogCache = new DesktopLogEventCache();
 
 /** One shared activity timeline across Windows, WSL and SSH, without changing the file adapters. */
 export function inferObservedActivity(sources: SourceResult[], now: number): void {
@@ -181,13 +182,14 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
     const scan = await inspectDesktopLogSignals().catch(() => ({
       events: new Map(), logFilesRead: 0, signalCount: 0,
     }));
+    const retainedEvents = desktopLogCache.observe(scan.events, scannedAt);
     for (const source of sources) {
       if (source.error) continue;
-      applyDesktopLogEvidence(source.sessions, scan.events, scannedAt);
+      applyDesktopLogEvidence(source.sessions, retainedEvents, scannedAt);
       for (const row of source.sessions) {
         if (row.clientKind !== 'desktop' || row.isSubagent ||
             row.status !== 'unknown') continue;
-        const matched = scan.events.has(row.id.toLowerCase());
+        const matched = retainedEvents.has(row.id.toLowerCase());
         const detail = matched
           ? '已找到该会话的 Desktop 生命周期日志，但未能据此确认当前运行状态'
           : scan.logFilesRead === 0

@@ -87,3 +87,27 @@ export function applyDesktopLogEvidence(
       'Codex Desktop 自身日志确认本会话 turn/start 已被接受，尚未观察到匹配的结束信号；可能执行中（非实时订阅）';
   }
 }
+
+
+/** Desktop can produce many megabytes of logs in one long turn. Keep only
+ * previously parsed (threadId, lifecycle, time) evidence, so a turn/start
+ * is not lost when that original log line rotates out of the bounded tail.
+ */
+export class DesktopLogEventCache {
+  private latest = new Map<string, DesktopLogEvent>();
+  observe(events: ReadonlyMap<string, DesktopLogEvent>, now = Date.now()): Map<string, DesktopLogEvent> {
+    for (const [threadId, event] of events) {
+      const prior = this.latest.get(threadId);
+      if (!prior || event.at > prior.at ||
+          (event.at === prior.at && event.type === 'turn-displayed-complete')) {
+        this.latest.set(threadId, event);
+      }
+    }
+    for (const [threadId, event] of this.latest) {
+      if (now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS ||
+          event.at > now + 5000) this.latest.delete(threadId);
+    }
+    // Never expose a mutable view of the retained state to callers.
+    return new Map(this.latest);
+  }
+}

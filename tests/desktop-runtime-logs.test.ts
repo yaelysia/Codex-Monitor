@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseDesktopLogEvent, newestDesktopEvents, applyDesktopLogEvidence } from
+import { parseDesktopLogEvent, newestDesktopEvents, applyDesktopLogEvidence,
+  DesktopLogEventCache } from
   '../src/shared/desktop-log-status';
 import { findDesktopLogRoots, readDesktopLogSignals, inspectDesktopLogSignals } from '../electron/desktop-runtime-logs';
 import type { SessionRecord } from '../src/shared/types';
@@ -167,5 +168,28 @@ describe('remote sessions controlled by the Windows Desktop app', () => {
     applyDesktopLogEvidence([remote], events, NOW);
     expect(remote.status).toBe('working');
     expect(remote.statusReason).toContain('turn/start');
+  });
+});
+
+describe('long running Desktop log rotation continuity', () => {
+  it('retains only parsed evidence when a verbose log no longer contains start', () => {
+    const memory = new DesktopLogEventCache();
+    const initial = new Map([[SESSION, parseDesktopLogEvent(accepted(-40), NOW)!]]);
+    const first = memory.observe(initial, NOW);
+    expect(first.get(SESSION)?.type).toBe('turn-start-accepted');
+    // A later scan no longer includes the old line in its bounded tail.
+    const retained = memory.observe(new Map(), NOW + 18 * 60_000);
+    const active = row('unknown');
+    applyDesktopLogEvidence([active], retained, NOW + 18 * 60_000);
+    expect(active.status).toBe('working');
+    // A real completion seen after the start must suppress stale liveness.
+    const completedEvent = new Map([[SESSION, parseDesktopLogEvent(
+      completed(-5), NOW)!]]);
+    const finished = memory.observe(completedEvent, NOW + 18 * 60_000);
+    expect(finished.get(SESSION)?.type).toBe('turn-displayed-complete');
+    const task = row('unknown');
+    applyDesktopLogEvidence([task], finished, NOW + 18 * 60_000);
+    expect(task.status).toBe('unknown');
+    expect(memory.observe(new Map(), NOW + 25 * 60 * 60_000)).toEqual(new Map());
   });
 });
