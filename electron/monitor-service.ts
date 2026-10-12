@@ -6,6 +6,7 @@ import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 
 const POLLING_FALLBACK_MS = 12_000;
+const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
 const MIN_FULL_SCAN_GAP_MS = 9_000;
 const EVENT_DEBOUNCE_MS = 400;
 const MIN_SOURCE_SCAN_GAP_MS = 3_000;
@@ -27,6 +28,7 @@ export class MonitorService {
   /** Emergency switch for hosts that disallow watch connections. */
   private readonly eventsEnabled = process.env.CODEX_MONITOR_DISABLE_EVENT_WATCHERS !== '1';
   private lastFullScanAt = 0;
+  private lastSourceScan = new Map<string, number>();
   private scanningFull = false;
   private running = false;
 
@@ -39,9 +41,7 @@ export class MonitorService {
     if (this.running) return;
     this.running = true;
     if (this.eventsEnabled) this.watchers.start();
-    this.timer = setInterval(() => {
-      void this.refresh().catch(error => console.warn('Codex fallback scan failed:', error));
-    }, POLLING_FALLBACK_MS);
+    this.timer = setInterval(() => this.pollFallback(), POLLING_FALLBACK_MS);
     void this.refresh().catch(error => console.warn('Initial Codex scan failed:', error));
   }
 
@@ -65,6 +65,25 @@ export class MonitorService {
     this.tracker.acknowledge(id);
     this.onChange(this.state());
     return this.state();
+  }
+
+  /** Watch-connected machines need only a periodic 60-second audit; disconnected
+   * machines keep the original 12-second safety net. */
+  private pollFallback(): void {
+    if (!this.running) return;
+    if (!this.lastScan || Date.now() - this.lastFullScanAt >= HEALTHY_CHANNEL_AUDIT_MS) {
+      void this.refresh().catch(error => console.warn('Codex full fallback failed:', error));
+      return;
+    }
+    const modes = this.watchers.status();
+    const due = this.lastScan.sources.filter(source =>
+      modes[source.id] !== 'active' &&
+      Date.now() - (this.lastSourceScan.get(source.id) ?? this.lastFullScanAt) >= POLLING_FALLBACK_MS
+    ).map(source => source.id);
+    if (due.length) {
+      void this.refresh(true, new Set(due)).catch(error =>
+        console.warn('Codex per-source fallback failed:', error));
+    }
   }
 
   private queueSource(id: string): void {
@@ -125,6 +144,7 @@ export class MonitorService {
 
       // Notify from only the genuinely rescanned sources. Marking unchanged,
       // cached sources as freshly scanned could fabricate transitions.
+      for (const source of delta.sources) this.lastSourceScan.set(source.id, delta.scannedAt);
       const alerts = this.tracker.observe(delta);
       if (partial && this.lastScan) {
         this.lastScan = mergeSourceSnapshots(this.lastScan, delta);
