@@ -232,6 +232,7 @@ export default function App() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [floatingVisible, setFloatingVisible] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [laneLimit, setLaneLimit] = useState<Record<string, number>>({
     working: BATCH_SIZE, other: BATCH_SIZE, finished: BATCH_SIZE,
@@ -257,12 +258,43 @@ export default function App() {
 
   useEffect(() => {
     mounted.current = true;
-    window.monitorApi.getConfig().then(value => { if (mounted.current) setConfig(value); })
-      .catch(err => { if (mounted.current) setError(describeError(err)); });
+    window.monitorApi.getConfig().then(value => {
+      if (mounted.current) setConfig(value);
+    }).catch(err => { if (mounted.current) setError(describeError(err)); });
+    const unsubscribe = window.monitorApi.onMonitorState(state => {
+      if (mounted.current && state.scan) {
+        setScan(state.scan);
+        setNow(Date.now());
+      }
+    });
+    const unsubscribeFloating = window.monitorApi.onFloatingState(state => {
+      if (mounted.current) setFloatingVisible(state.visible);
+    });
+    const unsubscribeFocus = window.monitorApi.onFocusSession(key => {
+      setSourceId(null);
+      setWorkspaceId(null);
+      setFilter('all');
+      setQuery('');
+      setRecentOnly(false);
+      setView('sessions');
+      setSelectedKey(key);
+      setDetailOpen(true);
+    });
+    void window.monitorApi.getFloatingState().then(state => {
+      if (mounted.current) setFloatingVisible(state.visible);
+    }).catch(console.error);
+    void window.monitorApi.getMonitorState().then(state => {
+      if (mounted.current && state.scan) setScan(state.scan);
+    }).catch(console.error);
     void refresh();
-    const scanTimer = setInterval(() => void refresh(), REFRESH_MS);
     const clock = setInterval(() => setNow(Date.now()), 5000);
-    return () => { mounted.current = false; clearInterval(scanTimer); clearInterval(clock); };
+    return () => {
+      mounted.current = false;
+      unsubscribe();
+      unsubscribeFloating();
+      unsubscribeFocus();
+      clearInterval(clock);
+    };
   }, [refresh]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -403,6 +435,12 @@ export default function App() {
         </div>
         <div className="header-actions">
           <span className="read-only-mark"><span className="live-dot"/>只读模式</span>
+          <button type="button" className="header-button float-entry"
+            aria-pressed={floatingVisible}
+            onClick={() => void window.monitorApi.setFloatingVisible(!floatingVisible)
+              .then(state => setFloatingVisible(state.visible)).catch(console.error)}>
+            <Icon name="monitor" size={15}/>{floatingVisible ? '隐藏悬浮窗' : '显示悬浮窗'}
+          </button>
           <button type="button" className="header-button" disabled={busy} onClick={() => void refresh()}>
             <Icon name="refresh" size={15}/>{busy ? '扫描中…' : '刷新'}
           </button>
