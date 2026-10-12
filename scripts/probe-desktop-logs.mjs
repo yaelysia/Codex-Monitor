@@ -19,7 +19,7 @@ const CANDIDATES = Object.freeze([
   ['thread_status_change', /thread\/status\/changed/i],
   ['turn_started', /turn\/started/i],
   ['turn_completed', /turn\/completed/i],
-  ['turn_start_request', /turn\/start/i],
+  ['turn_start_request', /turn\/start\b/i],
 ]);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
