@@ -186,6 +186,24 @@ describe('event-driven scan orchestration', () => {
 });
 
 describe('Desktop local-runtime log audit cadence', () => {
+
+  it('includes Desktop-owned remote sources in its Windows runtime-audit scope', async () => {
+    fake.health = { local: 'active', 'ssh:one': 'active' };
+    const remote = { ...session('p', 'unknown', NOW), clientKind: 'desktop' as const };
+    vi.mocked(collect).mockImplementation(async (_settings, selected) =>
+      snapshot(Date.now(), selected ? [source('ssh:one', [remote])] :
+        [source('local', []), source('ssh:one', [remote])]));
+    service = new MonitorService(() => undefined, () => undefined);
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(12_000);
+    if (process.platform === 'win32') {
+      expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['ssh:one']));
+    } else {
+      expect(collect).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('rescans local Desktop sessions every 12s even with a healthy JSONL watcher', async () => {
     fake.health = { local: 'active', 'ssh:one': 'active' };
     const localDesktop: SessionRecord = {
@@ -204,7 +222,11 @@ describe('Desktop local-runtime log audit cadence', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(collect).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(12_000);
-    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['local']));
+    if (process.platform === 'win32') {
+      expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['local']));
+    } else {
+      expect(collect).toHaveBeenCalledTimes(1);
+    }
     // Remote sources still use the longer audit when their watchers are healthy.
     expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).not.toContain('ssh:one');
   });

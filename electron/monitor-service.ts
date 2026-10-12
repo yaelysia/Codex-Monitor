@@ -81,10 +81,10 @@ export class MonitorService {
     const modes = this.watchers.status();
     const due = this.lastScan.sources.filter(source =>
       (modes[source.id] !== 'active' ||
-        // Desktop's GUI-owned status logs can change without any JSONL file
-        // event. Audit local Desktop threads every 12s despite a healthy
-        // sessions watcher; leave SSH/WSL scheduling unchanged.
-        (source.kind === 'local' && source.sessions.some(row =>
+        // Desktop's GUI-owned status logs can change independently of
+        // JSONL on Windows, WSL or SSH targets. Audit only sources known to
+        // contain Desktop-owned sessions, regardless of watcher health.
+        (process.platform === 'win32' && source.sessions.some(row =>
           row.clientKind === 'desktop'))) &&
       Date.now() - (this.lastSourceScan.get(source.id) ?? this.lastFullScanAt) >= POLLING_FALLBACK_MS
     ).map(source => source.id);

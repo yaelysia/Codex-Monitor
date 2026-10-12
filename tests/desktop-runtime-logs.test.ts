@@ -156,3 +156,16 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
     expect(map.get(SESSION)?.type).toBe('turn-start-accepted');
   });
 });
+
+describe('remote sessions controlled by the Windows Desktop app', () => {
+  it('matches a Desktop-origin SSH session by its exact UUID, not filesystem path', () => {
+    const remote = row('unknown');
+    remote.sourceId = 'ssh:server';
+    remote.sourceLabel = 'server';
+    remote.key = 'ssh:server:' + SESSION;
+    const events = newestDesktopEvents([parseDesktopLogEvent(accepted(-6), NOW)!]);
+    applyDesktopLogEvidence([remote], events, NOW);
+    expect(remote.status).toBe('working');
+    expect(remote.statusReason).toContain('turn/start');
+  });
+});

@@ -181,7 +181,7 @@ Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Mon
 
 **2026-10-12 新增 Windows Desktop 应用日志旁路：** 除 JSONL 之外，主监控现在会只读读取 Desktop 自己的应用日志，查找成功的 `[AppServerConnection] response_routed method=turn/start errorCode=null conversationId=<uuid>` 和明确的 `[desktop-notifications] show turn-complete` 事件。扫描同时支持 `%LOCALAPPDATA%\Codex\Logs\YYYY\MM\DD` 和 MSIX 包目录中的 `LocalCache\Local\Codex\Logs`。严格按已有本地 Desktop 会话 UUID 关联，忽略 `Received turn/started|completed for unknown conversation` 等错误日志；不会读取日志内容作为聊天文本，也不会导出其它字段。
 
-当 Desktop 日志确认该会话新的 `turn/start` 成功、且没有后续明确结束证据时，在有限时间窗口内显示“可能执行中”。相反，持久化的本轮结束事件如果更晚，仍优先判定为结束；日志不全时不根据静默倒推出完成。对已有本地 Desktop 会话，本地端即使 JSONL watcher 工作正常，也每 **12 秒**审核一次，此外会监听 Desktop 日志目录的写入变更。会话详情的「状态判断依据」会标明是有匹配事件，还是日志缺失、格式不受支持、会话 ID 不匹配。
+当 Desktop 日志确认该会话新的 `turn/start` 成功、且没有后续明确结束证据时，在有限时间窗口内显示“可能执行中”。相反，持久化的本轮结束事件如果更晚，仍优先判定为结束；日志不全时不根据静默倒推出完成。对已识别为 Desktop 来源的本地、WSL 或 SSH 会话，Windows 端即使 JSONL watcher 工作正常，也每 **12 秒**审核一次对应来源；此外会监听 Windows Desktop 日志目录的写入变更。远程会话按准确 UUID 关联，不按项目名或标题猜测。会话详情的「状态判断依据」会标明是有匹配事件，还是日志缺失、格式不受支持、会话 ID 不匹配。
 
 **能力边界：** Desktop 的私有 stdio App Server 仍未向 Monitor 开放可靠的只读状态订阅。本功能不保证捕获后台所有会话，更不保证有 `waitingOnApproval` / `waitingOnUserInput` 的完整实时状态，不能据此称“100% 追踪”。如果 Desktop 应用日志不记载某个轮次、从其它客户端发起任务、仅显示云端远程任务或日志与 JSONL 使用不同的会话 ID，当前仍可能未知。未验证前**不调用** `thread/resume`、`turn/start`、审批回答，也不会启动新服务去冒充 Desktop。
 
