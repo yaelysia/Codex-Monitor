@@ -191,9 +191,9 @@ namespace CodexMonitor {
         return true;
       }, IntPtr.Zero);
       if (windows.Count != 1) {
-        string reason = windows.Count == 0 ? "no_visible_mobaxterm" : "multiple_mobaxterm_windows";
+        string missingReason = windows.Count == 0 ? "no_visible_mobaxterm" : "multiple_mobaxterm_windows";
         Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false," +
-          "\"provider\":\"none\",\"reason\":\"" + reason + "\"}");
+          "\"provider\":\"none\",\"reason\":\"" + missingReason + "\"}");
         return;
       }
       IntPtr hwnd = windows[0];
