@@ -223,11 +223,12 @@ describe('Desktop local-runtime log audit cadence', () => {
     expect(collect).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(12_000);
     if (process.platform === 'win32') {
-      expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['local']));
+      const affected = vi.mocked(collect).mock.calls.at(-1)?.[1];
+      expect(affected).toEqual(new Set(['local']));
+      // Remote sources still use the longer audit when their watchers are healthy.
+      expect(affected?.has('ssh:one')).toBe(false);
     } else {
       expect(collect).toHaveBeenCalledTimes(1);
     }
-    // Remote sources still use the longer audit when their watchers are healthy.
-    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).not.toContain('ssh:one');
   });
 });
