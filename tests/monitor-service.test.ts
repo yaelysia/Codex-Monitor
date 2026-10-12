@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MonitorAlert, ScanResponse, SessionRecord, Settings, SourceResult } from '../src/shared/types';
+import type { MonitorAlert, MonitorState, ScanResponse, SessionRecord, Settings, SourceResult } from '../src/shared/types';
 
 const fake = vi.hoisted(() => ({
   wake: null as null | ((sourceId: string) => void),
