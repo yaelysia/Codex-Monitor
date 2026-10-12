@@ -129,7 +129,7 @@ def titles_from_state(root, ids):
     try:
         conn = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=0.5)
         columns = {row[1] for row in conn.execute('PRAGMA table_info(threads)')}
-        fields = [field for field in ('name', 'title', 'first_user_message', 'preview') if field in columns]
+        fields = [field for field in ('name', 'title', 'first_user_message', 'preview', 'originator') if field in columns]
         if 'id' not in columns or not fields:
             return {}
         values = list(ids)
@@ -153,6 +153,8 @@ def enrich_titles(root, sessions):
     stored = titles_from_state(root, ids)
     for session in sessions:
         row = stored.get(session['id'], {})
+        if session.get('clientKind') in (None, 'unknown'):
+            session['clientKind'] = classify_client_kind(row.get('originator'))
         session['title'] = (
             normalize_title(row.get('name'))
             or indexed.get(session['id'])
@@ -220,6 +222,10 @@ def client_kind_from_header(head):
         prefix = re.split(r'"base_instructions"\s*:', first, maxsplit=1)[0]
         found = re.search(r'"originator"\s*:\s*"([^"]{1,128})"', prefix)
         originator = found.group(1) if found else None
+    return classify_client_kind(originator)
+
+
+def classify_client_kind(originator):
     if not isinstance(originator, str):
         return 'unknown'
     name = originator.strip().lower()
@@ -472,6 +478,8 @@ def details(head, tail, filename, clipped, modified, now):
         status, reason = 'unknown', '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行'
     else:
         status, reason = 'unknown', '没有足够的近期执行生命周期记录'
+    if client_kind == 'desktop' and status == 'unknown':
+        reason += '；Desktop 的实时审批/提问信号可能未持久化，无法仅凭日志确认'
     return {
         'id': session_id,
         'workspace': cwd,

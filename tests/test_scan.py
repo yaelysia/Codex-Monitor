@@ -89,6 +89,20 @@ class TestLinuxCollector(unittest.TestCase):
         self.assertEqual(details['lastUserInputAtSourceMs'], now - 2000)
         self.assertNotIn('PRIVATE', json.dumps(details))
 
+
+    def test_fallback_sqlite_originator_when_rollout_metadata_missing(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'state_5.sqlite'
+            conn = sqlite3.connect(path)
+            conn.execute('CREATE TABLE threads (id TEXT, originator TEXT)')
+            conn.execute('INSERT INTO threads VALUES (?, ?)', ('desktop', 'codex_desktop'))
+            conn.commit()
+            conn.close()
+            sessions = [{'id': 'desktop', 'clientKind': 'unknown', 'title': None}]
+            scanner.enrich_titles(Path(tmp), sessions)
+            self.assertEqual(sessions[0]['clientKind'], 'desktop')
+
     def test_sessions_and_cwd_are_read_without_full_transcript(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / 'sessions' / '2026' / '10' / '10'

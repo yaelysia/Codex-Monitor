@@ -59,3 +59,23 @@ describe('Codex session title resolution', () => {
     ]);
   });
 });
+
+describe('SQLite client originator fallback', () => {
+  it('recovers Desktop originator without overwriting a known CLI identity', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-desktop-originator-'));
+    created.push(root);
+    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'));
+    db.exec('CREATE TABLE threads (id TEXT, name TEXT, originator TEXT)');
+    db.prepare('INSERT INTO threads VALUES (?, ?, ?)').run('desktop-id', 'Desktop 会话', 'codex_desktop');
+    db.prepare('INSERT INTO threads VALUES (?, ?, ?)').run('cli-id', 'CLI 会话', 'codex_cli_rs');
+    db.close();
+    const desktop = session('desktop-id');
+    desktop.clientKind = 'unknown';
+    const cli = session('cli-id');
+    cli.clientKind = 'terminal';
+    await enrichLocalTitles(root, [desktop, cli]);
+    expect(desktop.clientKind).toBe('desktop');
+    expect(cli.clientKind).toBe('terminal');
+    expect(desktop.title).toBe('Desktop 会话');
+  });
+});

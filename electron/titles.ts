@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { SessionRecord } from '../src/shared/types';
+import { classifyClientKind } from '../src/shared/session-origin';
 
 const INDEX_TAIL_BYTES = 2 * 1024 * 1024;
 
@@ -28,7 +29,7 @@ export function namesFromIndex(text: string, ids: Set<string>, clipped = false):
   return names;
 }
 
-type DbTitle = { name?: unknown; title?: unknown; first_user_message?: unknown; preview?: unknown };
+type DbTitle = { name?: unknown; title?: unknown; first_user_message?: unknown; preview?: unknown; originator?: unknown };
 
 async function readIndex(root: string, ids: Set<string>): Promise<Map<string, string>> {
   const file = path.join(root, 'session_index.jsonl');
@@ -54,7 +55,8 @@ async function readStateDb(root: string, ids: Set<string>): Promise<Map<string, 
     db = new DatabaseSync(path.join(root, 'state_5.sqlite'), { readOnly: true });
     const info = db.prepare('PRAGMA table_info(threads)').all() as Array<{ name: string }>;
     const available = new Set(info.map(item => item.name));
-    const fields = ['name', 'title', 'first_user_message', 'preview'].filter(key => available.has(key));
+    const fields = ['name', 'title', 'first_user_message', 'preview', 'originator']
+      .filter(key => available.has(key));
     if (!available.has('id') || !fields.length) return new Map();
     const values = Array.from(ids);
     const results = new Map<string, DbTitle>();
@@ -78,6 +80,11 @@ export async function enrichLocalTitles(root: string, sessions: SessionRecord[])
   const [indexed, stored] = await Promise.all([readIndex(root, ids), readStateDb(root, ids)]);
   for (const session of sessions) {
     const db = stored.get(session.id);
+    // Recent Codex versions persist originator in state_5.sqlite; an older
+    // rollout's clipped or absent session_meta must not hide a Desktop client.
+    if (!session.clientKind || session.clientKind === 'unknown') {
+      session.clientKind = classifyClientKind(db?.originator);
+    }
     session.title =
       normalizeTitle(db?.name) ??
       indexed.get(session.id) ??

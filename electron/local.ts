@@ -120,6 +120,9 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
       }
       const lastInputAt = extractLastUserInputAt(inputTail, inputTailClipped);
       const lastUserInputAgeAtSourceMs = lastInputAt == null ? null : now - lastInputAt;
+      if (clientKind === 'desktop' && state.status === 'unknown') {
+        state.statusReason += '；Desktop 的实时审批/提问信号可能未持久化，无法仅凭日志确认';
+      }
       const record: SessionRecord = { key: `${sourceId}:${id}`, id, sourceId, sourceLabel, workspace,
         ...origin, clientKind, lastUserInputAgeAtSourceMs,
         lastUserInputAtSourceMs: lastInputAt,
