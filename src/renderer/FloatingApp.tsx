@@ -148,11 +148,17 @@ export default function FloatingApp() {
         onClick={() => showTab('running')} title="可能执行中">
         <Icon name="play"/>{running.length > 0 && <span className="rail-badge green">{Math.min(99, running.length)}</span>}
       </button>
-      <button type="button" className={'rail-tab' + (tab === 'alerts' && dock.expanded ? ' selected' : '')}
-        aria-label={'未读提醒 ' + unread.length} aria-pressed={tab === 'alerts' && dock.expanded}
-        onClick={() => showTab('alerts')} title="新提醒与待处理">
-        <Icon name="bell"/>{unread.length > 0 && <span className="rail-badge amber">{Math.min(99, unread.length)}</span>}
-      </button>
+      <div className="rail-alert-shortcut">
+        <button type="button" className={'rail-tab' + (tab === 'alerts' && dock.expanded ? ' selected' : '')}
+          aria-label={'未读提醒 ' + unread.length} aria-pressed={tab === 'alerts' && dock.expanded}
+          onClick={() => showTab('alerts')} title="新提醒与待处理">
+          <Icon name="bell"/>{unread.length > 0 && <span className="rail-badge amber">{Math.min(99, unread.length)}</span>}
+        </button>
+        {unread.length > 0 && <button type="button" className="rail-quick-ack"
+          title={'标记最新提醒已读：' + unread[0]!.title}
+          aria-label={'标记最新提醒已读：' + unread[0]!.title}
+          onClick={() => acknowledge(unread[0]!.id)}><Icon name="check" size={12}/></button>}
+      </div>
       <button type="button" className={'rail-tab' + (tab === 'completed' && dock.expanded ? ' selected' : '')}
         aria-label={'最近完成 ' + completed.length} aria-pressed={tab === 'completed' && dock.expanded}
         onClick={() => showTab('completed')} title="最近完成">

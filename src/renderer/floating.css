@@ -115,3 +115,12 @@ button:focus-visible{outline:2px solid #d3b5fa;outline-offset:-2px}
 }
 .dock-foot button:hover{background:#473756;color:#eee0ff}
 .dock-foot button:first-child{flex:1}
+
+/* Direct one-tap acknowledgement on the collapsed dock, without entering inbox.
+ * The read action is independent of the bell navigation surface. */
+.rail-alert-shortcut{width:34px;height:32px;flex-shrink:0;position:relative;-webkit-app-region:no-drag}
+.rail-alert-shortcut>.rail-tab{width:34px;height:32px}
+.rail-quick-ack{width:17px;height:17px;position:absolute;bottom:-6px;right:-7px;
+  display:grid;place-items:center;padding:0;border:1px solid #705638;border-radius:6px;
+  background:#efcb95;color:#30283b;z-index:2;-webkit-app-region:no-drag}
+.rail-quick-ack:hover,.rail-quick-ack:focus-visible{background:#ffe4b8;color:#1c1721}
