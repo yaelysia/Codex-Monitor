@@ -34,14 +34,37 @@
   "build": {
     "appId": "dev.yaelysia.codex-monitor",
     "productName": "Codex Monitor",
-    "files": ["out/**/*", "package.json"],
-    "extraResources": [
-      { "from": "collector/scan.py", "to": "scan.py" },
-      { "from": "collector/preview.py", "to": "preview.py" },
-      { "from": "collector/watch.py", "to": "watch.py" }
+    "files": [
+      "out/**/*",
+      "package.json"
     ],
-    "directories": { "output": "release" },
-    "win": { "target": "nsis" },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "extraResources": [
+      {
+        "from": "collector/scan.py",
+        "to": "scan.py"
+      },
+      {
+        "from": "collector/preview.py",
+        "to": "preview.py"
+      },
+      {
+        "from": "collector/watch.py",
+        "to": "watch.py"
+      },
+      {
+        "from": "collector/window-tracker.ps1",
+        "to": "window-tracker.ps1"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

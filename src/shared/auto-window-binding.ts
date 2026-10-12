@@ -18,6 +18,10 @@ const HEX_HANDLE = /^0x[0-9a-f]{1,16}$/i;
 export function validForegroundWindow(value: unknown): value is ForegroundWindow {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
+  if (item.app === 'other' && item.hwnd === '0x0' &&
+    item.pid === 0 && item.startedAt === 0) {
+    return typeof item.at === 'number' && Number.isFinite(item.at) && item.at > 0;
+  }
   return typeof item.at === 'number' && Number.isFinite(item.at) && item.at > 0 &&
     typeof item.hwnd === 'string' && HEX_HANDLE.test(item.hwnd) &&
     typeof item.pid === 'number' && Number.isSafeInteger(item.pid) && item.pid > 0 &&
