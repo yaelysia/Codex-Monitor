@@ -66,7 +66,17 @@ export function normalizeForegroundWindow(value: unknown): ForegroundWindow | nu
        item.tabCount < 0 || item.tabCount > 1000)) delete item.tabCount;
   if (item.tabHost !== undefined &&
       !['single', 'multi', 'unknown'].includes(String(item.tabHost))) delete item.tabHost;
-  return validForegroundWindow(item) ? item : null;
+  if (!validForegroundWindow(item)) return null;
+  // Whitelist native metadata explicitly: unknown fields in a tampered
+  // binding file or unexpected native response must never be persisted.
+  return {
+    at: item.at, hwnd: item.hwnd, pid: item.pid,
+    startedAt: item.startedAt, app: item.app,
+    ...(typeof item.tabId === 'string' ? { tabId: item.tabId } : {}),
+    ...(typeof item.tabCount === 'number' ? { tabCount: item.tabCount } : {}),
+    ...(item.tabHost === 'single' || item.tabHost === 'multi' ||
+        item.tabHost === 'unknown' ? { tabHost: item.tabHost } : {}),
+  };
 }
 
 export function validForegroundWindow(value: unknown): value is ForegroundWindow {
