@@ -6,6 +6,7 @@ import { app } from 'electron';
 import type { Settings, SourceResult } from '../src/shared/types';
 import { resolveLocalRoot } from './local';
 
+export type EventChannelMode = 'active' | 'connecting' | 'fallback';
 type SourceWatch = { fingerprint: string; dispose(): void };
 interface WatchSpec {
   id: string;
@@ -45,9 +46,21 @@ export function parseWatcherSignal(line: string): 'ready' | 'change' | 'heartbea
  * Watchers are only attached to Codex's own session directories, never workspaces. */
 export class WatchCoordinator {
   private watches = new Map<string, SourceWatch>();
+  private statuses = new Map<string, EventChannelMode>();
   private stopped = true;
 
-  constructor(private readonly onChange: (sourceId: string) => void) {}
+  constructor(private readonly onChange: (sourceId: string) => void,
+    private readonly onHealth?: () => void) {}
+
+  status(): Record<string, EventChannelMode> {
+    return Object.fromEntries(this.statuses);
+  }
+
+  private statusFor(id: string, mode: EventChannelMode): void {
+    if (this.stopped || this.statuses.get(id) === mode) return;
+    this.statuses.set(id, mode);
+    this.onHealth?.();
+  }
 
   start(): void { this.stopped = false; }
 
@@ -55,6 +68,7 @@ export class WatchCoordinator {
     this.stopped = true;
     for (const watch of this.watches.values()) watch.dispose();
     this.watches.clear();
+    this.statuses.clear();
   }
 
   reconcile(settings: Settings, sources: SourceResult[]): void {
@@ -82,6 +96,7 @@ export class WatchCoordinator {
       if (requested.get(id)?.fingerprint !== existing.fingerprint) {
         existing.dispose();
         this.watches.delete(id);
+        this.statuses.delete(id);
       }
     }
     for (const [id, spec] of requested) {
@@ -106,19 +121,26 @@ export class WatchCoordinator {
             // A rename may be a new date folder; a null filename means rescan safely.
             if (!name || name.endsWith('.jsonl') || kind === 'rename') this.onChange(spec.id);
           });
+        this.statusFor(spec.id, 'active');
         watch.on('error', () => {
           watch?.close();
           watch = null;
+          this.statusFor(spec.id, 'fallback');
           scheduleRetry();
         });
       } catch {
+        this.statusFor(spec.id, 'fallback');
         scheduleRetry();
       }
     };
 
     const scheduleRetry = () => {
       if (!alive || this.stopped || retry) return;
-      retry = setTimeout(() => { retry = null; launch(); }, 30_000);
+      retry = setTimeout(() => {
+        retry = null;
+        this.statusFor(spec.id, 'connecting');
+        launch();
+      }, 30_000);
       retry.unref?.();
     };
     launch();
@@ -137,11 +159,17 @@ export class WatchCoordinator {
     let child: ChildProcessWithoutNullStreams | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let failures = 0;
+    this.statusFor(spec.id, 'connecting');
 
     const scheduleRetry = () => {
       if (!alive || this.stopped || retry) return;
       const delay = Math.min(60_000, 4_000 * (2 ** Math.min(4, failures++)));
-      retry = setTimeout(() => { retry = null; void launch(); }, delay);
+      this.statusFor(spec.id, 'fallback');
+      retry = setTimeout(() => {
+        retry = null;
+        this.statusFor(spec.id, 'connecting');
+        void launch();
+      }, delay);
       retry.unref?.();
     };
 
@@ -164,6 +192,12 @@ export class WatchCoordinator {
       child = proc;
       let buffer = '';
       let ready = false;
+      let lastSignalAt = Date.now();
+      const watchdog = setInterval(() => {
+        // The transient Python stream sends a heartbeat every 25 seconds.
+        if (ready && Date.now() - lastSignalAt > 85_000) proc.kill();
+      }, 30_000);
+      watchdog.unref?.();
       proc.stdout.setEncoding('utf8');
       proc.stdout.on('data', (data: string) => {
         if (!alive || this.stopped) return;
@@ -175,7 +209,12 @@ export class WatchCoordinator {
           const line = buffer.slice(0, pos).trim();
           buffer = buffer.slice(pos + 1);
           const kind = parseWatcherSignal(line);
-          if (kind === 'ready') { ready = true; failures = 0; }
+          if (kind) lastSignalAt = Date.now();
+          if (kind === 'ready') {
+            ready = true;
+            failures = 0;
+            this.statusFor(spec.id, 'active');
+          }
           if (kind === 'change' && ready) this.onChange(spec.id);
         }
       });
@@ -183,6 +222,7 @@ export class WatchCoordinator {
       proc.stderr.resume();
       proc.once('error', () => { /* close handles reconnect or fallback */ });
       proc.once('close', () => {
+        clearInterval(watchdog);
         if (child === proc) child = null;
         if (alive && !this.stopped) scheduleRetry();
       });
