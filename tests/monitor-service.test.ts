@@ -184,3 +184,28 @@ describe('event-driven scan orchestration', () => {
     expect(fake.stopped).toBeGreaterThan(0);
   });
 });
+
+describe('Desktop local-runtime log audit cadence', () => {
+  it('rescans local Desktop sessions every 12s even with a healthy JSONL watcher', async () => {
+    fake.health = { local: 'active', 'ssh:one': 'active' };
+    const localDesktop: SessionRecord = {
+      key: 'local:019a21b0-aaaa-7ccc-8ddd-111122223333',
+      id: '019a21b0-aaaa-7ccc-8ddd-111122223333', sourceId: 'local',
+      sourceLabel: 'Windows', workspace: null, title: 'Desktop',
+      clientKind: 'desktop', isSubagent: false,
+      status: 'unknown', statusReason: 'no durable runtime state',
+      startedAt: null, updatedAt: NOW,
+    };
+    vi.mocked(collect).mockImplementation(async (_settings, selected) =>
+      snapshot(Date.now(), selected ? [source('local', [localDesktop])] :
+        [source('local', [localDesktop]), source('ssh:one', [session('p', 'finished', NOW)])]));
+    service = new MonitorService(() => undefined, () => undefined);
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(collect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['local']));
+    // Remote sources still use the longer audit when their watchers are healthy.
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).not.toContain('ssh:one');
+  });
+});
