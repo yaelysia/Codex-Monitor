@@ -180,7 +180,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     const marker = [typeof row.timestamp === 'string' ? row.timestamp : '',
       typeof payload?.turn_id === 'string' ? payload.turn_id : ''].join('|');
     const token = marker === '|' ? null : marker;
-    const turnId = typeof payload.turn_id === 'string' && payload.turn_id
+    const turnId = typeof payload?.turn_id === 'string' && payload.turn_id
       ? payload.turn_id : null;
     if (START_EVENTS.has(event)) {
       phase = 'started'; activeTurnId = turnId;
