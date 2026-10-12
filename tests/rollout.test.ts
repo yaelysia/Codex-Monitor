@@ -115,3 +115,68 @@ describe('terminal turn status accuracy', () => {
     expect(inferStatus(text, NOW - 1000, NOW).status).toBe('finished');
   });
 });
+
+
+describe('persisted Codex question state inference', () => {
+  const r = (type: string, payload: Record<string, unknown>) =>
+    JSON.stringify({ type, payload });
+  const ask = (id: string) => r('response_item', {
+    type: 'function_call', name: 'request_user_input', call_id: id,
+    arguments: JSON.stringify({ questions: [{ question: '继续部署生产环境吗？' }] }),
+  });
+  const reply = (id: string) => r('response_item', {
+    type: 'function_call_output', call_id: id, output: '{"answers":{"confirm":"yes"}}',
+  });
+  it('recognizes a blocking request even if transient event_msg was not persisted', () => {
+    const state = inferStatus([event('task_started'), ask('call-1')].join('\n'), NOW - 10_000, NOW);
+    expect(state).toMatchObject({
+      status: 'waiting',
+      pendingQuestionToken: 'blocking:call-1',
+      questionText: '继续部署生产环境吗？',
+      waitingToken: 'blocking:call-1',
+      finishedToken: null,
+    });
+  });
+  it('keeps explicit question evidence while ordinary 90-second active inference expires', () => {
+    const status = inferStatus([event('task_started'), ask('call-1')].join('\n'),
+      NOW - 11 * 60_000, NOW);
+    expect(status.status).toBe('waiting');
+    expect(status.statusReason).toMatch(/未匹配回答/);
+  });
+  it('clears pending user question on matching function_call_output', () => {
+    const state = inferStatus([event('task_started'), ask('call-1'), reply('call-1')].join('\n'),
+      NOW - 1000, NOW);
+    expect(state.status).toBe('working');
+    expect(state.pendingQuestionToken).toBeNull();
+    expect(state.waitingToken).toBeNull();
+  });
+  it('uses async question item as an independent pending request without stopping the turn', () => {
+    const state = inferStatus([
+      event('task_started'),
+      r('event_msg', { type: 'item_completed', item: {
+        type: 'AgentMessage', id: 'ask-a', delivery: 'async',
+        questions: [{ title: '哪个分支要发布？' }],
+      } }),
+      r('event_msg', { type: 'turn_complete', turn_id: 'turn-a' }),
+    ].join('\n'), NOW - 1000, NOW);
+    expect(state).toMatchObject({
+      status: 'finished', pendingQuestionToken: 'async:ask-a',
+      questionText: '哪个分支要发布？',
+    });
+    expect(inferStatus([
+      event('task_started'),
+      r('event_msg', { type: 'item_completed', item: {
+        type: 'AgentMessage', id: 'ask-a', delivery: 'async',
+        questions: [{ title: '哪个分支要发布？' }],
+      } }),
+      r('event_msg', { type: 'user_message', message: 'release' }),
+      r('event_msg', { type: 'turn_complete' }),
+    ].join('\n'), NOW - 1000, NOW).pendingQuestionToken).toBeNull();
+  });
+  it('does not assert a weeks-old unmatched tool call is definitely awaiting input', () => {
+    const state = inferStatus([event('task_started'), ask('call-1')].join('\n'),
+      NOW - 8 * 60 * 60_000, NOW);
+    expect(state.pendingQuestionToken).toBeNull();
+    expect(state.status).toBe('unknown');
+  });
+});

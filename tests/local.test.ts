@@ -95,3 +95,21 @@ describe('bounded and safe local file cache', () => {
     expect(localScanCacheStats().misses).toBeGreaterThan(first.misses);
   });
 });
+
+
+describe('local cache keeps answered-question state fresh', () => {
+  it('holds explicit unmatched question evidence within the configured freshness window', () => {
+    const c = new LocalScanCache();
+    const row: SessionRecord = {
+      key: 'local:ask', id: 'ask', sourceId: 'local', sourceLabel: 'Windows',
+      workspace: '/repo', title: 'ask', status: 'waiting', statusReason: 'tool request',
+      waitingToken: 'blocking:q1', pendingQuestionToken: 'blocking:q1',
+      updatedAt: 1_000_000, byteSize: 100, startedAt: null,
+    };
+    c.put('/ask', 1_000_000, 100, row);
+    expect(c.get('/ask', 1_000_000, 100, 1_000_000 + 11 * 60_000)?.status).toBe('waiting');
+    const stale = c.get('/ask', 1_000_000, 100, 1_000_000 + 7 * 60 * 60_000);
+    expect(stale?.status).toBe('unknown');
+    expect(stale?.pendingQuestionToken).toBeNull();
+  });
+});

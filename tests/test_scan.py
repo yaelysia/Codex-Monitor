@@ -240,5 +240,63 @@ class TestLinuxCollector(unittest.TestCase):
 
 
 
+
+    def test_unanswered_blocking_question_from_persisted_function_call(self):
+        now = 1_800_000_000_000
+        ask = {'type': 'response_item', 'payload': {
+            'type': 'function_call', 'name': 'request_user_input', 'call_id': 'call-1',
+            'arguments': json.dumps({'questions': [{'question': '现在继续执行吗？'}]})}}
+        started = {'type': 'event_msg', 'payload': {'type': 'task_started'}}
+        raw = '\n'.join(map(json.dumps, [started, ask]))
+        state = scanner.details('', raw, 'rollout-test.jsonl', False, now - 11 * 60_000, now)
+        self.assertEqual(state['status'], 'waiting')
+        self.assertEqual(state['pendingQuestionToken'], 'blocking:call-1')
+        self.assertEqual(state['questionText'], '现在继续执行吗？')
+        answer = {'type': 'response_item', 'payload': {
+            'type': 'function_call_output', 'call_id': 'call-1', 'output': '{"answers":{}}'}}
+        after = scanner.details('', raw + '\n' + json.dumps(answer),
+                                'rollout-test.jsonl', False, now - 1000, now)
+        self.assertEqual(after['status'], 'working')
+        self.assertIsNone(after['pendingQuestionToken'])
+
+    def test_async_question_is_visible_after_tool_accepts_and_turn_finishes(self):
+        now = 1_800_000_000_000
+        lines = [
+            {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+            {'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {
+                'type': 'AgentMessage', 'id': 'ask-async', 'delivery': 'async',
+                'questions': [{'title': '选择要发布的分支'}]}}},
+            {'type': 'response_item', 'payload': {
+                'type': 'function_call_output', 'call_id': 'ask-async', 'output': '{"accepted":true}'}},
+            {'type': 'event_msg', 'payload': {'type': 'turn_complete', 'turn_id': 'turn-1'}},
+        ]
+        raw = '\n'.join(map(json.dumps, lines))
+        pending = scanner.details('', raw, 'rollout-abc.jsonl', False, now - 1000, now)
+        self.assertEqual(pending['status'], 'finished')
+        self.assertEqual(pending['pendingQuestionToken'], 'async:ask-async')
+        self.assertEqual(pending['questionText'], '选择要发布的分支')
+        lines.append({'type': 'event_msg', 'payload': {
+            'type': 'user_message', 'message': 'main'}})
+        answered = scanner.details('', '\n'.join(map(json.dumps, lines)),
+                                   'rollout-abc.jsonl', False, now - 1000, now)
+        self.assertIsNone(answered['pendingQuestionToken'])
+
+    def test_unrelated_tools_or_stale_question_do_not_fabricate_waiting(self):
+        now = 1_800_000_000_000
+        other = {'type': 'response_item', 'payload': {
+            'type': 'function_call', 'name': 'exec_command', 'call_id': 'cmd-1',
+            'arguments': '{"cmd":"echo request_user_input"}'}}
+        state = scanner.details('', json.dumps(other), 'rollout-abc.jsonl', False, now - 1000, now)
+        self.assertEqual(state['status'], 'unknown')
+        self.assertIsNone(state['pendingQuestionToken'])
+        ask = {'type': 'response_item', 'payload': {
+            'type': 'function_call', 'name': 'request_user_input', 'call_id': 'call-1',
+            'arguments': '{"questions":[{"title":"Continue?"}]}'}}
+        stale = scanner.details('', json.dumps(ask), 'rollout-abc.jsonl', False,
+                                now - 8 * 60 * 60_000, now)
+        self.assertIsNone(stale['pendingQuestionToken'])
+        self.assertEqual(stale['status'], 'unknown')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -227,3 +227,47 @@ describe('subagent completion notification policy', () => {
       .map(item => item.kind)).toEqual(['finished']);
   });
 });
+
+
+describe('new unanswered question alerts', () => {
+  it('emits only a waiting notification for an async question after a finished turn', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW - 1000, { byteSize: 100 })]), NOW);
+    const prompt = row('finished', NOW + 1000, {
+      byteSize: 150, finishedToken: 'turn-1',
+      pendingQuestionToken: 'async:question-a', questionText: '先发布哪个环境？', ageAtSourceMs: 900,
+    });
+    const alerts = tracker.observe(snapshot(NOW + 12000, [prompt]), NOW + 12000);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      kind: 'waiting', questionText: '先发布哪个环境？', sessionKey: prompt.key,
+    });
+    expect(tracker.observe(snapshot(NOW + 24000, [prompt]), NOW + 24000)).toHaveLength(0);
+    tracker.acknowledge(alerts[0]!.id);
+    expect(tracker.getAlerts()[0]?.read).toBe(true);
+    // Unanswered questions do not re-appear as unread after later scans.
+    expect(tracker.observe(snapshot(NOW + 36000, [
+      { ...prompt, updatedAt: NOW + 36000, byteSize: 180 },
+    ]), NOW + 36000)).toHaveLength(0);
+  });
+  it('can notify another question in the same still-running session', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW)]), NOW);
+    const first = row('waiting', NOW + 1000, {
+      pendingQuestionToken: 'blocking:a', waitingToken: 'blocking:a',
+      questionText: 'First?', byteSize: 100,
+    });
+    expect(tracker.observe(snapshot(NOW + 12000, [first]), NOW + 12000)
+      .map(a => a.kind)).toEqual(['waiting']);
+    const second = { ...first, updatedAt: NOW + 14000, byteSize: 120,
+      pendingQuestionToken: 'blocking:b', waitingToken: 'blocking:b', questionText: 'Second?' };
+    expect(tracker.observe(snapshot(NOW + 24000, [second]), NOW + 24000)
+      .map(a => a.kind)).toEqual(['waiting']);
+  });
+  it('does not classify old async questions as fresh alerts on first scan', () => {
+    const tracker = new AlertTracker();
+    expect(tracker.observe(snapshot(NOW, [row('finished', NOW - 60_000, {
+      pendingQuestionToken: 'async:old', questionText: 'Outdated?',
+    })]), NOW)).toEqual([]);
+  });
+});
