@@ -80,7 +80,7 @@ export function applyDesktopLogEvidence(
     // A previously completed turn with no sortable timestamp cannot be safely
     // replaced by an unrelated accepted-start event.
     if (row.status === 'finished' && completionAt === null) continue;
-    if (row.status === 'working') return; // Preserve existing, stronger evidence.
+    if (row.status === 'working') continue; // Preserve existing, stronger evidence.
     row.status = 'working';
     row.finishedToken = null;
     row.statusReason =
