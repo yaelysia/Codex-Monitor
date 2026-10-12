@@ -2,6 +2,7 @@ import type { SessionRecord } from './types';
 
 const ACTIVE_WINDOW_MS = 90_000;
 const WAIT_WINDOW_MS = 10 * 60_000;
+const QUESTION_AGE_LIMIT_MS = 6 * 60 * 60_000;
 const MAX_CACHE_SIZE = 220;
 interface Cached {
   modified: number;
@@ -27,10 +28,17 @@ export class LocalScanCache {
     if (row.status === 'working' && age > ACTIVE_WINDOW_MS) {
       row.status = 'unknown';
       row.statusReason = '最近未写入新日志；无法直接确认是否仍执行中（将检查此前活动证据）';
-    } else if (row.status === 'waiting' && age > WAIT_WINDOW_MS) {
-      row.status = 'unknown';
-      row.waitingToken = null;
-      row.statusReason = '此前存在等待操作事件，但日志已长时间未更新；等待状态无法确认';
+    } else if (row.status === 'waiting') {
+      const limit = row.pendingQuestionToken ? QUESTION_AGE_LIMIT_MS : WAIT_WINDOW_MS;
+      if (age > limit) {
+        row.status = 'unknown';
+        row.waitingToken = null;
+        row.statusReason = '之前记录到待处理请求，但该会话已长时间无日志；无法确认是否仍在等待';
+      }
+    }
+    if (age > QUESTION_AGE_LIMIT_MS) {
+      row.pendingQuestionToken = null;
+      row.questionText = null;
     }
     return row;
   }

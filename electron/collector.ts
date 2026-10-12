@@ -111,6 +111,9 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
       finishedToken: typeof entry.finishedToken === 'string' ? entry.finishedToken : null,
       waitingToken: typeof entry.waitingToken === 'string' ? entry.waitingToken : null,
+      pendingQuestionToken: typeof entry.pendingQuestionToken === 'string' ?
+        entry.pendingQuestionToken.slice(0, 300) : null,
+      questionText: typeof entry.questionText === 'string' ? entry.questionText.slice(0, 160) : null,
       updatedAt: entry.updatedAt,
       byteSize: typeof entry.byteSize === 'number' && Number.isFinite(entry.byteSize) ? entry.byteSize : undefined,
       ageAtSourceMs: typeof entry.ageAtSourceMs === 'number' && Number.isFinite(entry.ageAtSourceMs)

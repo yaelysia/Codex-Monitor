@@ -1,9 +1,11 @@
 import path from 'node:path';
 import type { SessionStatus } from '../src/shared/types';
 import { normalizeTitle } from './titles';
+import { detectPendingQuestionRows } from '../src/shared/question-state';
 
 const ACTIVE_WINDOW_MS = 90_000;
 const WAIT_WINDOW_MS = 10 * 60_000;
+const QUESTION_AGE_LIMIT_MS = 6 * 60 * 60_000;
 const START_EVENTS = new Set(['task_started', 'turn_started']);
 const END_EVENTS = new Set(['task_complete', 'turn_complete']);
 const ABORT_EVENTS = new Set(['turn_aborted']);
@@ -113,13 +115,17 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   statusReason: string;
   finishedToken: string | null;
   waitingToken: string | null;
+  pendingQuestionToken: string | null;
+  questionText: string | null;
 } {
   let phase: 'started' | 'finished' | 'interrupted' | 'failed' | 'unknown' = 'unknown';
   let awaiting = false;
   let finishedToken: string | null = null;
   let waitingToken: string | null = null;
   let checkpointAfterBoundary = false;
-  for (const row of jsonlRows(tail, clippedStart)) {
+  const parsedRows = jsonlRows(tail, clippedStart);
+  const question = detectPendingQuestionRows(parsedRows);
+  for (const row of parsedRows) {
     const payload = object(row.payload);
     if (isCompactionCheckpoint(row, payload)) {
       checkpointAfterBoundary = true;
@@ -149,10 +155,22 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   }
   const age = Math.max(0, now - updatedAt);
   const terminal = phase === 'finished' && !checkpointAfterBoundary;
+  // A durable, unmatched request_user_input function call is stronger evidence
+  // than the absence of transient request/approval event_msg records. Async
+  // questions are notifications, not proof a turn stopped executing.
+  const questionFresh = age <= QUESTION_AGE_LIMIT_MS;
+  const pendingQuestionToken = questionFresh ? question.token : null;
   const tokenFields = {
-    finishedToken: terminal ? finishedToken : null,
-    waitingToken: awaiting ? waitingToken : null,
+    finishedToken: terminal && !question.blocking ? finishedToken : null,
+    waitingToken: question.blocking && pendingQuestionToken ? pendingQuestionToken :
+      awaiting ? waitingToken : null,
+    pendingQuestionToken,
+    questionText: pendingQuestionToken ? question.text : null,
   };
+  if (question.blocking && pendingQuestionToken) {
+    return { ...tokenFields, status: 'waiting',
+      statusReason: '检测到未匹配回答的 Codex 请求用户输入/确认工具调用；可能正在等待用户处理' };
+  }
   if (terminal) {
     return { ...tokenFields, status: 'finished', statusReason: '检测到本轮正常结束事件；不代表客户端已退出' };
   }

@@ -22,6 +22,10 @@ export interface SessionRecord {
   /** Persisted terminal/approval event fingerprint when present; helps dedupe notifications. */
   finishedToken?: string | null;
   waitingToken?: string | null;
+  /** Stable ID for an unanswered persisted question/approval call or async AgentMessage. */
+  pendingQuestionToken?: string | null;
+  /** Optional short user-facing question; never raw tool arguments or model reasoning. */
+  questionText?: string | null;
   updatedAt: number;
   /** File metadata used only for observing activity across scans. */
   byteSize?: number;
@@ -76,6 +80,7 @@ export interface MonitorAlert {
   at: number;
   read: boolean;
   statusReason: string;
+  questionText?: string | null;
 }
 
 export type EventChannelMode = 'active' | 'connecting' | 'fallback';
