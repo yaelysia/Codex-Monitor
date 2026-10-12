@@ -115,13 +115,13 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     else if (RESUME_EVENTS.has(event) && phase === 'started') { awaiting = false; waitingToken = null; }
   }
   const age = Math.max(0, now - updatedAt);
-  if (phase === 'finished') return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'finished', statusReason: '检测到本轮结束事件；不代表客户端已退出' };
+  if (phase === 'finished') return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'finished', statusReason: '检测到本轮结束事件；不代表客户端已退出' };
   if (phase === 'started' && awaiting && age <= WAIT_WINDOW_MS) {
-    return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };
+    return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };
   }
   if (phase === 'started' && age <= ACTIVE_WINDOW_MS) {
-    return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'working', statusReason: '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）' };
+    return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'working', statusReason: '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）' };
   }
-  if (phase === 'started') return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行' };
-  return { finishedToken: phase === 'finished' ? finishedToken : null, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '没有足够的执行生命周期记录' };
+  if (phase === 'started') return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行' };
+  return { finishedToken, waitingToken: awaiting ? waitingToken : null, status: 'unknown', statusReason: '没有足够的执行生命周期记录' };
 }
