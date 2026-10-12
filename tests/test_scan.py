@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from datetime import datetime
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'collector' / 'scan.py'
 spec = importlib.util.spec_from_file_location('codex_monitor_scanner', SCRIPT)
@@ -13,6 +14,22 @@ spec.loader.exec_module(scanner)
 
 
 class TestLinuxCollector(unittest.TestCase):
+    def test_window_evidence_only_reports_client_and_source_clock_age(self):
+        now = int(datetime.fromisoformat('2026-10-12T09:00:02+00:00').timestamp() * 1000)
+        meta = json.dumps({'type': 'session_meta', 'payload': {
+            'id': 'thread-one', 'originator': 'codex-tui', 'source': 'cli'}})
+        tail = json.dumps({'type': 'event_msg', 'timestamp': '2026-10-12T09:00:00Z',
+                           'payload': {'type': 'user_message', 'message': 'PRIVATE CONTENT'}})
+        result = scanner.details(meta, tail, 'rollout-one.jsonl', False, now - 1000, now)
+        self.assertEqual(result['clientKind'], 'terminal')
+        self.assertEqual(result['lastUserInputAgeAtSourceMs'], 2000)
+        self.assertNotIn('PRIVATE CONTENT', json.dumps(result))
+        self.assertEqual(scanner.client_kind_from_header(json.dumps({
+            'type': 'session_meta', 'payload': {'originator': 'Codex Desktop'}})),
+            'desktop')
+        self.assertEqual(scanner.client_kind_from_header(json.dumps({
+            'type': 'session_meta', 'payload': {'source': 'vscode'}})), 'unknown')
+
     def test_sessions_and_cwd_are_read_without_full_transcript(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / 'sessions' / '2026' / '10' / '10'

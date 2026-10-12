@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+from datetime import datetime
 
 INDEX_TAIL_BYTES = 2 * 1024 * 1024
 
@@ -208,6 +209,46 @@ def session_origin_from_header(head):
     return {'isSubagent': bool(parent or source_subagent or thread_subagent or other_root),
             'parentThreadId': parent}
 
+def client_kind_from_header(head):
+    first = head.split('\n', 1)[0].lstrip('\ufeff')
+    if not re.search(r'"type"\s*:\s*"session_meta"', first):
+        return 'unknown'
+    try:
+        meta = json.loads(first).get('payload')
+        originator = meta.get('originator') if isinstance(meta, dict) else None
+    except (ValueError, TypeError, AttributeError):
+        prefix = re.split(r'"base_instructions"\s*:', first, maxsplit=1)[0]
+        found = re.search(r'"originator"\s*:\s*"([^"]{1,128})"', prefix)
+        originator = found.group(1) if found else None
+    if not isinstance(originator, str):
+        return 'unknown'
+    name = originator.strip().lower()
+    if name in ('codex desktop', 'codex_work_desktop'):
+        return 'desktop'
+    if name in ('codex_vscode', 'codex-vscode'):
+        return 'vscode'
+    if name in ('codex-tui', 'codex_cli_rs', 'codex-cli', 'codex_cli'):
+        return 'terminal'
+    return 'unknown'
+
+
+def last_user_input_age_at_source(records, now):
+    latest = None
+    for row in records:
+        payload = row.get('payload')
+        if row.get('type') != 'event_msg' or not isinstance(payload, dict):
+            continue
+        if payload.get('type') != 'user_message' or not isinstance(row.get('timestamp'), str):
+            continue
+        try:
+            at = int(datetime.fromisoformat(row['timestamp'].replace('Z', '+00:00')).timestamp() * 1000)
+            if at > 0 and (latest is None or at > latest):
+                latest = at
+        except (ValueError, OverflowError):
+            pass
+    return None if latest is None else now - latest
+
+
 QUESTION_AGE_LIMIT_MS = 6 * 60 * 60 * 1000
 
 
@@ -306,6 +347,7 @@ def details(head, tail, filename, clipped, modified, now):
     session_id = None
     cwd = None
     origin = session_origin_from_header(head)
+    client_kind = client_kind_from_header(head)
     for row in rows(head):
         if row.get('type') == 'session_meta':
             meta = row.get('payload') or {}
@@ -335,6 +377,7 @@ def details(head, tail, filename, clipped, modified, now):
     checkpoint_after_boundary = False
     parsed_rows = list(rows(tail, clipped))
     question = detect_pending_question_records(parsed_rows)
+    input_age = last_user_input_age_at_source(parsed_rows, now)
     for row in parsed_rows:
         payload = row.get('payload') or {}
         if not isinstance(payload, dict):
@@ -397,6 +440,8 @@ def details(head, tail, filename, clipped, modified, now):
         'workspace': cwd,
         'isSubagent': origin['isSubagent'],
         'parentThreadId': origin['parentThreadId'],
+        'clientKind': client_kind,
+        'lastUserInputAgeAtSourceMs': input_age,
         'title': title_from_head(head),
         'status': status,
         'statusReason': reason,

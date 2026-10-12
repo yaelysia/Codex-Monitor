@@ -104,6 +104,10 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
       workspace: typeof entry.workspace === 'string' ? entry.workspace : null,
       isSubagent: entry.isSubagent === true,
       parentThreadId: typeof entry.parentThreadId === 'string' ? entry.parentThreadId : null,
+      clientKind: entry.clientKind === 'desktop' || entry.clientKind === 'vscode' ||
+        entry.clientKind === 'terminal' ? entry.clientKind : 'unknown',
+      lastUserInputAgeAtSourceMs: typeof entry.lastUserInputAgeAtSourceMs === 'number' &&
+        Number.isFinite(entry.lastUserInputAgeAtSourceMs) ? entry.lastUserInputAgeAtSourceMs : null,
       rolloutPath: typeof entry.rolloutPath === 'string' ? entry.rolloutPath : null,
       title: typeof entry.title === 'string' && entry.title.trim() ? entry.title.slice(0, 181) : null,
       status: status === 'working' || status === 'waiting' || status === 'finished' ||
