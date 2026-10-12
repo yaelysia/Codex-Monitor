@@ -145,31 +145,8 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
   const distros = await listWslDistros();
   const remoteScript = await script().catch(() => '');
   const scans: Promise<SourceResult>[] = [];
-  if (wanted('local')) scans.push(sourceResult('local', 'Windows', 'local', async () => {
-    const rows = await scanLocal(resolveLocalRoot(settings.localRoot));
-    if (process.platform === 'win32') {
-      // Passive Desktop's *own* app log (including MSIX virtualized paths).
-      // No new App Server and no access to private stdio streams.
-      const scan = await inspectDesktopLogSignals().catch(() => ({
-        events: new Map(), logFilesRead: 0, signalCount: 0,
-      }));
-      applyDesktopLogEvidence(rows, scan.events);
-      for (const row of rows) {
-        if (row.clientKind !== 'desktop' || row.isSubagent ||
-            row.status !== 'unknown') continue;
-        const matched = scan.events.has(row.id.toLowerCase());
-        const probeDetail = matched
-          ? '已找到该会话的 Desktop 生命周期日志，但未能据此确认当前运行状态'
-          : scan.logFilesRead === 0
-            ? '未找到可读的 Codex Desktop 应用日志（包括 MSIX 目录）'
-            : scan.signalCount === 0
-              ? 'Desktop 应用日志可读取，但尚未识别到受支持的轮次事件'
-              : 'Desktop 日志含其他会话事件，但未能关联到当前会话 ID';
-        row.statusReason += '；' + probeDetail;
-      }
-    }
-    return rows;
-  }));
+  if (wanted('local')) scans.push(sourceResult('local', 'Windows', 'local',
+    () => scanLocal(resolveLocalRoot(settings.localRoot))));
   for (const distro of distros) {
     const id = `wsl:${distro}`;
     if (!wanted(id)) continue;
@@ -195,6 +172,33 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
   }
   const sources = await Promise.all(scans);
   const scannedAt = Date.now();
+  if (process.platform === 'win32' && sources.some(source =>
+      !source.error && source.sessions.some(row =>
+        row.clientKind === 'desktop' && !row.isSubagent))) {
+    // A Windows Desktop GUI may control local, WSL or SSH Codex sessions.
+    // The GUI-owned log uses the same conversation UUID regardless of where
+    // the task executes. Never infer the source from the log's workspace text.
+    const scan = await inspectDesktopLogSignals().catch(() => ({
+      events: new Map(), logFilesRead: 0, signalCount: 0,
+    }));
+    for (const source of sources) {
+      if (source.error) continue;
+      applyDesktopLogEvidence(source.sessions, scan.events, scannedAt);
+      for (const row of source.sessions) {
+        if (row.clientKind !== 'desktop' || row.isSubagent ||
+            row.status !== 'unknown') continue;
+        const matched = scan.events.has(row.id.toLowerCase());
+        const detail = matched
+          ? '已找到该会话的 Desktop 生命周期日志，但未能据此确认当前运行状态'
+          : scan.logFilesRead === 0
+            ? '未找到可读的 Codex Desktop 应用日志（包括 MSIX 目录）'
+            : scan.signalCount === 0
+              ? 'Desktop 应用日志可读取，但尚未识别到受支持的轮次事件'
+              : 'Desktop 日志含其他会话事件，但未能关联到当前会话 ID';
+        row.statusReason += '；' + detail;
+      }
+    }
+  }
   inferObservedActivity(sources, scannedAt);
   return { sources, scannedAt };
 }
