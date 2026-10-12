@@ -15,6 +15,8 @@ No Codex modifications, hooks, remote daemon, credentials stored in the applicat
 | Status | The latest lifecycle events in bounded JSONL tail data |
 | Last activity | Rollout JSONL file modification time |
 
+**明确结束状态：** `task_complete / turn_complete` 且无错误信息时才算本轮正常完成；`turn_aborted` 标为「本轮已中断」，携带非空错误的结束事件标为「本轮失败」，均不会产生正常完成通知。SSH/WSL 的活动时间判断优先使用执行主机计算的文件年龄，避免 Windows 与远程主机时钟不同步导致执行中错误回退未知。
+
 **Status accuracy:** `本轮已完成` means a `task_complete` / `turn_complete` / `turn_aborted` marker was found, **not** that Codex exited. `可能执行中` means a recent uncompleted turn, observed JSONL growth, a recent persisted compaction checkpoint, or a **bounded continuation of previously observed activity** (up to eight minutes of silence, without resetting that timer on each scan). Both are inferences, not a process-level claim. If the evidence is insufficient or stale, the result is `状态未知`. `可能待处理` would require a logged approval/input event, but Codex normally does not persist these transient events to rollouts; this status needs optional Hooks or a live app-server to be reliable. The app cannot reliably identify all running Codex Desktop/VS Code processes or approvals across independent app servers.
 
 ## Quick start (Windows)
@@ -99,6 +101,8 @@ This is a UI-only change: the scan interval, metadata-only collection, existing 
 - **Ctrl+K** 仍可在主窗口聚焦搜索；关闭主窗口后悬浮窗仍继续监控，反之亦然。
 
 **提醒行为：** Electron 主进程每约 12 秒扫描一次，主窗口和悬浮窗共享结果，避免双重扫描。只在新观察到的状态变化发生时（例如可能运行中 → 本轮完成、或新出现等待证据）生成未读提醒；启动时不会对历史会话补发。重复轮次可根据持久化结束事件的时间与 turn id 去重。操作系统支持的情况下还会发出 Windows 系统通知；若系统禁用了通知，悬浮窗未读徽标仍有效。静音只关闭系统弹窗，不会丢弃悬浮窗收件箱的事件；静音与未读信息在本次应用运行期间保留，重启后不保留。
+
+**子代理通知规则：** 根据 Codex 的 `session_meta` 中 `source.subagent`、`thread_source`、`parent_thread_id`（含旧式数据）识别子代理。它们仍出现在主窗口会话列表和分组页，并有「子代理」标签；默认不会产生“本轮完成”系统通知或铃铛未读提醒，悬浮窗的「最近完成」也只列出主任务。主代理自己的 Turn 完成仍正常通知；子代理的等待操作仍保留原有提醒行为。若来源元数据缺失，不能凭标题或路径猜测它是子代理。
 
 **跨主机完成通知：** 远程服务器的日志 mtime 可能与 Windows 时钟不一致。通知系统优先依据相邻成功扫描观察到的任务结束状态或新结束事件标识；新发现会话、网络恢复后的任务使用源机器自行计算的 `ageAtSourceMs` 检查新鲜程度。SSH/WSL/Windows 共用同一事件去重逻辑；首次扫描不通知历史会话，断线很久后也不会批量弹出旧提醒。已完成的会话继续执行新轮次时，只要持久化了新的结束事件标识，也会再次提醒。
 

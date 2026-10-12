@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { FloatingTab, FloatingWindowState, MonitorState, SessionRecord } from '../shared/types';
+import { recentParentCompletions } from '../shared/monitor-view';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
 const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right' };
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 type IconName = 'play' | 'bell' | 'check' | 'fold' | 'open' | 'close' | 'volume' | 'mute' | 'arrow';
 const paths: Record<IconName, string> = {
@@ -54,7 +54,7 @@ export default function FloatingApp() {
   const sessions = useMemo(() => recentSessions(monitor), [monitor.scan]);
   const running = sessions.filter(s => s.status === 'working');
   const waiting = sessions.filter(s => s.status === 'waiting');
-  const completed = sessions.filter(s => s.status === 'finished' && now - s.updatedAt <= DAY_MS);
+  const completed = recentParentCompletions(sessions, now, monitor.scan?.scannedAt);
   const unread = monitor.alerts.filter(a => !a.read);
   const alerts = [...monitor.alerts].sort((a, b) => b.at - a.at);
   const dataSources = monitor.scan?.sources.filter(s => !s.error).length || 0;
@@ -120,7 +120,8 @@ export default function FloatingApp() {
             onClick={() => openMain(session.key)}>
             <span className="small-dot gray"/>
             <span className="task-info"><strong>{session.title || '未命名会话'}</strong>
-              <small>{session.sourceLabel} · {ageText(session.updatedAt, now)}</small></span>
+              <small>{session.sourceLabel} · {ageText(session.ageAtSourceMs != null && monitor.scan
+                ? monitor.scan.scannedAt - session.ageAtSourceMs : session.updatedAt, now)}</small></span>
             <Icon name="open" size={13}/>
           </button>) : <p className="dock-empty">24 小时内没有已完成的轮次</p>)}
       </div>

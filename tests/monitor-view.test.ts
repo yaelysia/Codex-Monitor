@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { groupByExecutionLocation, workspaceGroupKey } from '../src/shared/grouping';
-import { filterSessions, makeStatusLanes } from '../src/shared/monitor-view';
+import { filterSessions, makeStatusLanes, recentParentCompletions } from '../src/shared/monitor-view';
 import type { SessionRecord } from '../src/shared/types';
 
 const NOW = 1_800_000_000_000;
@@ -75,5 +75,29 @@ describe('explicit terminal statuses on the board', () => {
     ]);
     expect(lanes.find(l => l.id === 'finished')?.sessions).toHaveLength(0);
     expect(lanes.find(l => l.id === 'other')?.sessions.map(s => s.id)).toEqual(['bad', 'abort']);
+  });
+});
+
+
+describe('floating recent completion list policy', () => {
+  it('excludes child completions but keeps their sessions available in the main list', () => {
+    const items = [
+      row('child', 'ssh:one', '/project', NOW, 'finished'),
+      row('root', 'ssh:one', '/project', NOW, 'finished'),
+    ];
+    items[0]!.isSubagent = true;
+    items[0]!.ageAtSourceMs = 1000;
+    items[1]!.isSubagent = false;
+    items[1]!.ageAtSourceMs = 1000;
+    const recent = recentParentCompletions(items, NOW + 12_000, NOW);
+    expect(recent.map(s => s.id)).toEqual(['root']);
+    expect(items.map(s => s.id)).toEqual(['child', 'root']);
+  });
+  it('uses remote age rather than cross-host time when showing recent completion', () => {
+    const row = row('root', 'ssh:server', '/srv/app', NOW - 20 * 60 * 60 * 1000, 'finished');
+    row.ageAtSourceMs = 2000;
+    expect(recentParentCompletions([row], NOW, NOW)).toHaveLength(1);
+    row.ageAtSourceMs = 26 * 60 * 60 * 1000;
+    expect(recentParentCompletions([row], NOW, NOW)).toHaveLength(0);
   });
 });

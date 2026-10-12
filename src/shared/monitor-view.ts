@@ -51,3 +51,18 @@ export function makeStatusLanes(rows: SessionRecord[]): StatusLane[] {
       emptyLabel: '近期没有已结束的会话', sessions: finished },
   ];
 }
+
+
+const RECENT_COMPLETION_MS = 24 * 60 * 60 * 1000;
+
+/** The compact dock only shows user-facing completed turns, never subagent finishes.
+ * Source-relative age also prevents remote clock skew from hiding recent completions. */
+export function recentParentCompletions(rows: SessionRecord[], now: number, scannedAt?: number): SessionRecord[] {
+  return rows.filter(row => {
+    if (row.status !== 'finished' || row.isSubagent === true) return false;
+    const age = typeof row.ageAtSourceMs === 'number' && Number.isFinite(row.ageAtSourceMs) &&
+      scannedAt != null ? row.ageAtSourceMs + Math.max(0, now - scannedAt) :
+      now - row.updatedAt;
+    return age >= -10_000 && age <= RECENT_COMPLETION_MS;
+  });
+}
