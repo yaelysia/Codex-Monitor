@@ -167,22 +167,24 @@ npm run probe:app-server -- --duration 20 --thread-id "真实会话UUID" --show-
 
 运行 `npm run test:probe` 可以在不连接真实账号/会话的前提下，用模拟 App Server 验证 WebSocket/JSON-RPC、状态 flags、批准请求绝不代答等行为。**下一阶段**在独立测试服务上验证 `thread/resume` 的第二客户端订阅、审批请求分发与断线回退后，才考虑可选地接入正式 Monitor。不可用独立进程假装共享所有已有会话。
 
-## 自动返回原窗口（Windows 实验版）
+## 自动返回原窗口与多标签（Windows 实验版）
 
-主窗口「会话详情 → 返回原窗口」、悬浮窗任务条目、Windows 原生通知正文现在优先**激活正在使用的原窗口**。无法可靠关联时，悬浮窗与系统通知仍打开 Monitor 中的会话详情；主窗口显示具体原因。不会创建新终端、新 Codex 会话或调用 App Server resume/approval。
+主窗口详情里的「返回原窗口」、悬浮窗任务点击和 Windows 原生通知点击，优先返回**原来运行 Codex 的窗口**；无法确认时回到 Monitor 会话详情，不创建新终端、新 Codex 会话，也不调用 resume、审批或用户输入。
 
-**默认自动关联，无需先手动绑定：**
+**自动绑定，不要求手动操作：**
 
-1. Monitor 在 Windows 上启动一个仅监听前台变化的临时 PowerShell 子进程（\`collector/window-tracker.ps1\`）；它通过 Win32 \`SetWinEventHook(EVENT_SYSTEM_FOREGROUND)\` 接收事件，而非持续轮询 GUI。
-2. Windows 只向 Monitor 返回时间、窗口句柄、进程 PID/启动时间及**允许的客户端类别**（Desktop、VS Code、终端或其他）。不采集窗口标题、路径、键盘输入、屏幕画面、UI 文本、命令行及凭证。
-3. 本地 Windows / WSL / SSH 会话扫描器只从 Codex rollout 提取 \`session_meta.originator\` 所属类别和最近一条真实 \`user_message\` 的时间，不传送消息正文。远程时间按照远程机器自身的时钟计算年龄，避免 SSH/Windows 时钟不一致。
-4. 仅当**Monitor 已经运行、用户确实在对应前台窗口提交过消息**且事件时间接近时，才关联 \`sourceId + threadId → HWND + PID + 进程启动时间\`；子代理不自动关联。重新激活前会验证该窗口仍然存在且进程身份未变化。绑定仅存于 Monitor 内存，退出后不保留。
+1. `collector/window-tracker.ps1` 通过 `SetWinEventHook` 观察前台窗口、焦点和选择变化，只返回窗口句柄、进程 ID、进程启动时间、时间戳和有限的客户端类别，不采集窗口标题、键盘输入、命令或屏幕内容。
+2. Windows/WSL/SSH 的原有只读 JSONL 扫描只提取客户端 originator 和最近真实用户输入的时间戳（不回传消息正文），结合前台观察记录关联 `sourceId + threadId`。远程扫描根据源机器时钟计算事件年龄，并检查扫描时间区间内是否曾切换其他窗口或标签，避免误认。
+3. Windows Terminal、MobaXterm 等终端宿主在**处于前台**时每约 1.1 秒通过 Windows UI Automation 读取可访问的 `TabItem` 选择状态，另利用焦点和选择事件及时更新。不对所有窗口持续遍历，不读取标签标题。只保存当前会话期间的运行时标签标识（RuntimeId），不保存标签序号或标题。
+4. 跳转先重新校验 HWND、PID、进程启动时间；若自动关联到唯一稳定的 RuntimeId，再通过 UI Automation `SelectionItemPattern.Select` 选择对应标签并验证。它不发送键盘指令、不会按固定序号盲切，也不会在目标标签消失时创建新标签。
 
-**重要限制：** 初次启动 Monitor 之前已经发生的用户输入无法回溯，因此旧会话可能要在原窗口再发送一次消息才能学习关联。Windows Terminal、MobaXterm 和 VS Code 的多标签/多窗格场景，目前只定位**顶层原窗口**，**不保证自动选中原来的标签、远程 SSH 连接或 Codex 对话**。如果识别结果不够可靠则不跳转，不靠文件目录、标题或最新活动窗口猜测。终端/网络传输与远程扫描延迟可能造成漏关联；缺失绝不说明会话没有运行。
+**成功跳转自动标记已读：** 仅在 Windows 明确确认原窗口激活成功、且已关联标签能够成功定位时，将点击开始时该会话**已有**的未读提醒一次性确认。其他会话、期间新到提醒不受影响；跳转失败、标签无法确定、只打开 Monitor 详情时不自动确认。已读不意味着已经回答 Codex 的问题或执行审批，手动「✓」按钮仍然保留。
 
-**关闭功能：** 在启动 Monitor 之前设置 \`$env:CODEX_MONITOR_DISABLE_AUTO_WINDOW_TRACKING = "1"\`，只关闭窗口关联功能，不影响既有 JSONL/inotify 监控或通知。如果 Windows 不允许跨进程激活，窗口不会被强行切换，详情会显示失败原因。
+**重要限制：** Monitor 启动之前的用户输入不能用于自动回溯窗口；旧会话可能需要在原客户端再提交一次新消息。对于多标签宿主，若 UI Automation 不暴露明确选中标签，或者同一窗口出现多个冲突的标签选择记录，最多返回原顶层窗口并保留提醒未读。VS Code 多窗口已有 HWND 级别定位，但扩展的内部对话、集成终端内的多个窗格、MobaXterm 的自绘 SSH 标签和 Windows Terminal 分屏尚不保证精确到每个子页面。不同客户端版本的 UIA 支持仍需要实机验证。
 
-本阶段不修改 Codex 配置、不向终端注入输入、不调用 \`codex resume\`、不向远程主机安装代理。Windows PowerShell 原生桥接在 CI 中执行仅编译检查；**实际窗口切换及 MobaXterm/VS Code/WSL 的关联准确性仍需要真实桌面测试**。
+**临时停用：** 在启动应用前设置 `$env:CODEX_MONITOR_DISABLE_AUTO_WINDOW_TRACKING = "1"`，只关闭自动窗口关联，不影响 JSONL、WSL/SSH 监控或通知。Windows UI Automation 组件不可用时会降级为原来的窗口句柄监听；不会因此修改任何 Codex 配置。
+
+**建议实机测试：** 在同一个 Windows Terminal 或 MobaXterm 窗口打开两个标签，在标签 A 提交一条 Codex 消息，切换到 B，再从 Monitor 点击 A 的「返回原窗口」。如果准确回到 A 并确认激活，A 的已有提醒应自动已读；如果只切回窗口、无法确认标签，应保留未读并给出提示。再测试两个不同的 VS Code 窗口，确认能够返回原窗口而不是另一个同进程窗口。CI 仅验证 Windows 原生代码编译及自动关联/去重模拟逻辑，不等于真实 GUI 测试通过。
 
 ## 问题 / 用户输入待回答提醒
 
