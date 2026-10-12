@@ -76,6 +76,33 @@ The desktop UI combines a workspace browser with a status-first Kanban board:
 
 This is a UI-only change: the scan interval, metadata-only collection, existing WSL/SSH adapters, and conservative status inference are unchanged. No Windows installer is built automatically; the CI pipeline only runs tests and a non-packaging build.
 
+## 屏幕边缘悬浮窗（方案 C）
+
+启动应用时，主窗口和 **始终置顶的 55×276 px 边缘窄栏**会同时出现。悬浮窗不会接管或控制任何 Codex 会话。
+
+- **绿色运行入口**：显示目前被保守推断为可能执行中的会话及数量。
+- **铃铛入口**：新检测到的待处理/完成提醒，未读数量在窄栏上显示；可在面板中逐条标记已读。
+- **完成入口**：最近 24 小时发生过结束事件的会话。
+- 点击任何任务条目会打开/聚焦主窗口并定位对应会话。展开后的面板显示标题、来源和工作空间信息。
+- 点击 C 标识并拖动，可将窗口吸附到屏幕左侧或右侧；展开面板始终朝屏幕内部展开。点击箭头收起到窄栏。
+- 悬浮窗底部可静音系统通知或隐藏窄栏。隐藏后从主窗口右上角的「显示悬浮窗」重新开启。
+- **Ctrl+K** 仍可在主窗口聚焦搜索；关闭主窗口后悬浮窗仍继续监控，反之亦然。
+
+**提醒行为：** Electron 主进程每约 12 秒扫描一次，主窗口和悬浮窗共享结果，避免双重扫描。只在新观察到的状态变化发生时（例如可能运行中 → 本轮完成、或新出现等待证据）生成未读提醒；启动时不会对历史会话补发。重复轮次可根据持久化结束事件的时间与 turn id 去重。操作系统支持的情况下还会发出 Windows 系统通知；若系统禁用了通知，悬浮窗未读徽标仍有效。静音只关闭系统弹窗，不会丢弃悬浮窗收件箱的事件；静音与未读信息在本次应用运行期间保留，重启后不保留。
+
+**准确性边界：** 「完成」是本轮完成，不代表整个 Codex 进程结束。等待提问/审批的部分事件在 Codex 中属于不持久化的实时事件，因此只靠 JSONL 无法在所有 Desktop、VS Code、CLI 会话上可靠检测；未检测到并不代表不在等待。若未来需要准确提醒全部审批/提问，需选择性增加 Hooks 或接入现有 App Server。这里不会把无日志更新的任务误判为待处理。
+
+**开发验证**（Windows PowerShell）：
+
+```powershell
+git switch feat/session-monitor-mvp
+git pull --ff-only
+$env:CODEX_MONITOR_DISABLE_GPU_SANDBOX = "1"  # 仅在已确认 GPU 沙箱兼容故障时启用
+npm run dev
+```
+
+**构建策略：** CI 只运行验证与普通前端构建，**不会自动生成 Windows 安装包**。
+
 ## Views
 
 - **全部会话:** single list with Codex session title (when available), full workspace path, source machine, status, and last activity.
