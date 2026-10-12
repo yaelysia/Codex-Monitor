@@ -82,9 +82,11 @@ export async function discoverDesktopLogFiles(localAppData, now = Date.now(),
       try { entries = await fs.readdir(directory, { withFileTypes: true }); }
       catch { continue; }
       stats.accessibleDateFolders++;
-      for (const entry of entries.slice(0, MAX_ENTRIES_PER_DIRECTORY)) {
-        if (!entry.isFile()) continue;
-        if (!/\.log$/i.test(entry.name)) continue;
+      // Filter file kinds BEFORE bounding the work. A directory containing
+      // hundreds of unrelated files must not hide a valid recent Codex log.
+      const logEntries = entries.filter(entry => entry.isFile() && /\.log$/i.test(entry.name))
+        .slice(0, MAX_ENTRIES_PER_DIRECTORY);
+      for (const entry of logEntries) {
         stats.anyLogFiles++;
         if (!LOG_FILENAME.test(entry.name)) continue;
         stats.matchedNames++;
