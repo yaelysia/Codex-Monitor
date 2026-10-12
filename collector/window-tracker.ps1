@@ -40,6 +40,10 @@ namespace CodexMonitor {
     static readonly WinEvent callback = OnEvent;
     static string lastSignature = null;
     static long lastEmittedAt = 0;
+    static readonly object outputLock = new object();
+    // UI Automation providers are external processes and may hang in FindAll.
+    // Never call them synchronously on the WinEventHook message-loop thread.
+    static int tabProbeInFlight = 0;
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max,
       IntPtr module, WinEvent callback, uint pid, uint thread, uint flags);
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
@@ -120,25 +124,60 @@ namespace CodexMonitor {
         } catch { /* Still emit an unknown transition, never reuse old focus. */ }
       }
       if (periodic && app != "terminal") return;
+      // Immediate HWND sample is the primary reliable input. A slow/malformed
+      // UIA provider must never prevent window evidence for ANY application.
+      WriteSample(app, handle, pid, startedAt, tabHost, null, periodic);
+      if (app != "terminal" || window == IntPtr.Zero ||
+          Interlocked.CompareExchange(ref tabProbeInFlight, 1, 0) != 0) return;
+      IntPtr queried = window;
+      string sourceHandle = handle;
+      uint sourcePid = pid;
+      long sourceStarted = startedAt;
+      string sourceHost = tabHost;
+      // At most one read runs in the background. A permanently blocked provider
+      // loses optional tab metadata but cannot stall native foreground events.
+      bool queued = ThreadPool.QueueUserWorkItem(delegate(object unused) {
+        try {
+          TabProbe.Snapshot tab = TabProbe.Read(queried);
+          IntPtr foreground = GetForegroundWindow();
+          IntPtr root = GetAncestor(foreground, 2);
+          uint currentPid;
+          GetWindowThreadProcessId(queried, out currentPid);
+          if ((foreground == queried || root == queried) &&
+              currentPid == sourcePid && tab != null) {
+            WriteSample("terminal", sourceHandle, sourcePid, sourceStarted,
+              sourceHost, tab, false);
+          }
+        } catch { /* Provider failure cannot affect HWND tracking. */ }
+        finally { Interlocked.Exchange(ref tabProbeInFlight, 0); }
+      });
+      if (!queued) Interlocked.Exchange(ref tabProbeInFlight, 0);
+    }
+
+    static void WriteSample(string app, string handle, uint pid, long startedAt,
+      string tabHost, TabProbe.Snapshot tab, bool periodic) {
       string tabJson = "";
-      if (app == "terminal") {
-        TabProbe.Snapshot tab = TabProbe.Read(window);
+      if (tab != null) {
         if (tab.Id != null) tabJson = ",\"tabId\":\"" + tab.Id + "\"";
         tabJson += ",\"tabCount\":" +
           tab.Count.ToString(CultureInfo.InvariantCulture);
       }
-      long at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-      string signature = handle + "|" + pid + "|" + tabHost + "|" + tabJson;
-      if (!periodic && signature == lastSignature && at - lastEmittedAt < 250) return;
-      lastSignature = signature;
-      lastEmittedAt = at;
-      Console.WriteLine("{\"type\":\"foreground\",\"at\":" +
-        at.ToString(CultureInfo.InvariantCulture) + ",\"app\":\"" + app +
-        "\",\"hwnd\":\"" + handle + "\",\"pid\":" +
-        pid.ToString(CultureInfo.InvariantCulture) + ",\"startedAt\":" +
-        startedAt.ToString(CultureInfo.InvariantCulture) +
-        ",\"tabHost\":\"" + tabHost + "\"" + tabJson + "}");
+      lock (outputLock) {
+        long at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (at < lastEmittedAt) at = lastEmittedAt;
+        string signature = handle + "|" + pid + "|" + tabHost + "|" + tabJson;
+        if (!periodic && signature == lastSignature && at - lastEmittedAt < 250) return;
+        lastSignature = signature;
+        lastEmittedAt = at;
+        Console.WriteLine("{\"type\":\"foreground\",\"at\":" +
+          at.ToString(CultureInfo.InvariantCulture) + ",\"app\":\"" + app +
+          "\",\"hwnd\":\"" + handle + "\",\"pid\":" +
+          pid.ToString(CultureInfo.InvariantCulture) + ",\"startedAt\":" +
+          startedAt.ToString(CultureInfo.InvariantCulture) +
+          ",\"tabHost\":\"" + tabHost + "\"" + tabJson + "}");
+      }
     }
+
     public static void Watch() {
       IntPtr foregroundHook = SetWinEventHook(3, 3, IntPtr.Zero, callback, 0, 0, 0);
       if (foregroundHook == IntPtr.Zero)
