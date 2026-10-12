@@ -3,6 +3,8 @@ import type { FloatingWindowState, MonitorApi, MonitorState } from '../src/share
 
 const api: MonitorApi = {
   getConfig: () => ipcRenderer.invoke('config:get'),
+  getResidentOptions: () => ipcRenderer.invoke('resident:get'),
+  setResidentOptions: options => ipcRenderer.invoke('resident:set', options),
   setConfig: settings => ipcRenderer.invoke('config:set', settings),
   refresh: () => ipcRenderer.invoke('monitor:refresh'),
   getRecentReply: key => ipcRenderer.invoke('monitor:recent-reply', key),

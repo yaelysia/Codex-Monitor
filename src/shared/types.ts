@@ -100,8 +100,16 @@ export interface RecentReplyExcerpt {
   truncated: boolean;
 }
 
+export interface ResidentOptions {
+  keepRunningOnClose: boolean;
+  launchAtLogin: boolean;
+  startupSupported: boolean;
+}
+
 export interface MonitorApi {
   getConfig(): Promise<ConfigResponse>;
+  getResidentOptions(): Promise<ResidentOptions>;
+  setResidentOptions(options: Pick<ResidentOptions, 'keepRunningOnClose' | 'launchAtLogin'>): Promise<ResidentOptions>;
   setConfig(settings: Settings): Promise<ConfigResponse>;
   refresh(): Promise<ScanResponse>;
   copyWorkspace(text: string): Promise<void>;

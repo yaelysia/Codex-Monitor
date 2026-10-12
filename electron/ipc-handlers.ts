@@ -1,4 +1,6 @@
-import { clipboard, ipcMain } from 'electron';
+import { app, clipboard, ipcMain } from 'electron';
+import type { ResidentOptions } from '../src/shared/types';
+import type { ResidentStore } from './resident-store';
 import type { Settings } from '../src/shared/types';
 import { readSettings, writeSettings } from './config';
 import { listWslDistros } from './collector';
@@ -8,7 +10,35 @@ import type { MainWindowController } from './main-window';
 import type { MonitorService } from './monitor-service';
 
 export function registerIpcHandlers(monitor: MonitorService,
-  floating: FloatingWindowController, main: MainWindowController): void {
+  floating: FloatingWindowController, main: MainWindowController,
+  resident: ResidentStore, onPreferencesChanged: () => void): void {
+  const supported = process.platform === 'win32' && app.isPackaged;
+  const options = (): ResidentOptions => ({
+    ...resident.snapshot().preferences,
+    startupSupported: supported,
+  });
+  ipcMain.handle('resident:get', () => options());
+  ipcMain.handle('resident:set', (_event, raw: unknown) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid resident options');
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.keepRunningOnClose !== 'boolean' || typeof obj.launchAtLogin !== 'boolean') {
+      throw new Error('Resident preferences must be booleans');
+    }
+    if (obj.launchAtLogin && !supported) throw new Error('Start with Windows is available only in packaged Windows builds');
+    if (supported) {
+      app.setLoginItemSettings({
+        openAtLogin: obj.launchAtLogin,
+        path: process.execPath,
+        args: ['--background'],
+      });
+    }
+    resident.updatePreferences({
+      keepRunningOnClose: obj.keepRunningOnClose,
+      launchAtLogin: obj.launchAtLogin,
+    });
+    onPreferencesChanged();
+    return options();
+  });
   ipcMain.handle('config:get', async () => ({
     settings: await readSettings(), distros: await listWslDistros(),
   }));
