@@ -54,7 +54,7 @@ describe('Windows foreground watcher recovery', () => {
       expect(children).toHaveLength(1);
       expect(tracker.status(sessionKey).ready).toBe(false);
       children[0]!.stdout.emit('data', Buffer.from(sample(Date.now() - 1000)));
-      expect(tracker.status(sessionKey).message).toContain('重新发送一次消息');
+      expect(tracker.status(sessionKey).message).toContain('再次发送消息');
     } finally { tracker.stop(); }
   });
 
