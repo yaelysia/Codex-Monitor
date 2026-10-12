@@ -94,10 +94,10 @@ describe('floating recent completion list policy', () => {
     expect(items.map(s => s.id)).toEqual(['child', 'root']);
   });
   it('uses remote age rather than cross-host time when showing recent completion', () => {
-    const row = row('root', 'ssh:server', '/srv/app', 'finished', NOW - 20 * 60 * 60 * 1000);
-    row.ageAtSourceMs = 2000;
-    expect(recentParentCompletions([row], NOW, NOW)).toHaveLength(1);
-    row.ageAtSourceMs = 26 * 60 * 60 * 1000;
-    expect(recentParentCompletions([row], NOW, NOW)).toHaveLength(0);
+    const completion = row('root', 'ssh:server', '/srv/app', 'finished', NOW - 20 * 60 * 60 * 1000);
+    completion.ageAtSourceMs = 2000;
+    expect(recentParentCompletions([completion], NOW, NOW)).toHaveLength(1);
+    completion.ageAtSourceMs = 26 * 60 * 60 * 1000;
+    expect(recentParentCompletions([completion], NOW, NOW)).toHaveLength(0);
   });
 });
