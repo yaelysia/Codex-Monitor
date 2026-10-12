@@ -125,12 +125,17 @@ async function sourceResult(id: string, label: string, kind: SourceKind, scan: (
   catch (error) { return { id, label, kind, sessions: [], error: error instanceof Error ? error.message : String(error) }; }
 }
 
-export async function refresh(settings: Settings): Promise<ScanResponse> {
+/** Passing sourceIds scans only the changed host; empty/omitted means all hosts. */
+export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string>): Promise<ScanResponse> {
+  const wanted = (id: string): boolean => !sourceIds || sourceIds.has(id);
   const distros = await listWslDistros();
   const remoteScript = await script().catch(() => '');
-  const scans: Promise<SourceResult>[] = [sourceResult('local', 'Windows', 'local', () => scanLocal(resolveLocalRoot(settings.localRoot)))];
+  const scans: Promise<SourceResult>[] = [];
+  if (wanted('local')) scans.push(sourceResult('local', 'Windows', 'local',
+    () => scanLocal(resolveLocalRoot(settings.localRoot))));
   for (const distro of distros) {
     const id = `wsl:${distro}`;
+    if (!wanted(id)) continue;
     const label = `${distro} · WSL`;
     scans.push(sourceResult(id, label, 'wsl', async () => {
       if (!remoteScript) throw new Error('Collector script not found');
@@ -140,6 +145,7 @@ export async function refresh(settings: Settings): Promise<ScanResponse> {
   }
   for (const host of settings.remotes) {
     const id = `ssh:${host.id}`;
+    if (!wanted(id)) continue;
     const label = `${host.alias} · SSH`;
     scans.push(sourceResult(id, label, 'ssh', async () => {
       if (!remoteScript) throw new Error('Collector script not found');
