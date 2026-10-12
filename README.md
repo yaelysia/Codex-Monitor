@@ -178,6 +178,8 @@ npm run probe:app-server -- --duration 20 --thread-id "真实会话UUID" --show-
 3. Windows Terminal、MobaXterm 等终端宿主在**处于前台**时每约 1.1 秒通过 Windows UI Automation 读取可访问的 `TabItem` 选择状态，另利用焦点和选择事件及时更新。不对所有窗口持续遍历，不读取标签标题。只保存当前会话期间的运行时标签标识（RuntimeId），不保存标签序号或标题。
 4. 跳转先重新校验 HWND、PID、进程启动时间；若自动关联到唯一稳定的 RuntimeId，再通过 UI Automation `SelectionItemPattern.Select` 选择对应标签并验证。它不发送键盘指令、不会按固定序号盲切，也不会在目标标签消失时创建新标签。
 
+**窗口尺寸保持不变：** 原窗口若处于最大化、普通窗口或非最小化的全屏状态，只调用 `SetForegroundWindow`，绝不再无条件执行 `SW_RESTORE`，因此不会因跳转而取消最大化或改变窗口尺寸。对于已最小化的窗口，才调用 `ShowWindow` 将其显示；如果 Windows 记录了「最小化前为最大化」状态，则恢复到最大化。Windows CI 的 `-Mode verify` 会检查这一状态选择策略，但真实全屏、跨桌面、多显示器的 GUI 行为仍需要实机回归。
+
 **成功跳转自动标记已读：** 仅在 Windows 明确确认原窗口激活成功、且已关联标签能够成功定位时，将点击开始时该会话**已有**的未读提醒一次性确认。其他会话、期间新到提醒不受影响；跳转失败、标签无法确定、只打开 Monitor 详情时不自动确认。已读不意味着已经回答 Codex 的问题或执行审批，手动「✓」按钮仍然保留。
 
 **重要限制：** Monitor 启动之前的用户输入不能用于自动回溯窗口；旧会话可能需要在原客户端再提交一次新消息。对于多标签宿主，若 UI Automation 不暴露明确选中标签，或者同一窗口出现多个冲突的标签选择记录，最多返回原顶层窗口并保留提醒未读。VS Code 多窗口已有 HWND 级别定位，但扩展的内部对话、集成终端内的多个窗格、MobaXterm 的自绘 SSH 标签和 Windows Terminal 分屏尚不保证精确到每个子页面。不同客户端版本的 UIA 支持仍需要实机验证。

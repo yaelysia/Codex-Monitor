@@ -25,6 +25,16 @@ namespace CodexMonitor {
       public IntPtr wParam, lParam; public uint time;
       public Point point; public uint lPrivate;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    struct Rect {
+      public int left, top, right, bottom;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct WindowPlacement {
+      public int length, flags, showCmd;
+      public Point min, max;
+      public Rect normal, device;
+    }
     delegate void WinEvent(IntPtr hook, uint kind, IntPtr hwnd, int obj, int child,
       uint thread, uint time);
     static readonly WinEvent callback = OnEvent;
@@ -42,6 +52,10 @@ namespace CodexMonitor {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool GetWindowPlacement(
+      IntPtr hwnd, ref WindowPlacement placement);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hwnd, int cmd);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] static extern UIntPtr SetTimer(IntPtr hwnd, UIntPtr timerId,
@@ -152,6 +166,21 @@ namespace CodexMonitor {
         UnhookWinEvent(foregroundHook);
       }
     }
+    // A foreground switch must NEVER restore a visible maximized or fullscreen
+    // window: SW_RESTORE (9) would shrink it to its normal window size.
+    // Only explicitly restore a minimized window, respecting its max-restore flag.
+    static int FocusShowCommand(bool minimized, bool restoreMaximized) {
+      return !minimized ? 0 : (restoreMaximized ? 3 : 9);
+    }
+
+    // Non-interactive Windows CI regression for the show-state policy.
+    public static bool VerifyFocusShowCommands() {
+      return FocusShowCommand(false, false) == 0 &&
+        FocusShowCommand(false, true) == 0 &&
+        FocusShowCommand(true, false) == 9 &&
+        FocusShowCommand(true, true) == 3;
+    }
+
     public static string Focus(string hex, int expectedPid, long startedAt, string tabId) {
       try {
         if (!hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
@@ -168,7 +197,16 @@ namespace CodexMonitor {
           if (Start(p) != startedAt || App(p.ProcessName) == "other")
             return "{\"ok\":false,\"reason\":\"process_changed\"}";
         }
-        ShowWindow(hwnd, 9);
+        if (IsIconic(hwnd)) {
+          WindowPlacement placement = new WindowPlacement();
+          placement.length = Marshal.SizeOf(typeof(WindowPlacement));
+          bool restoreMaximized =
+            (GetWindowPlacement(hwnd, ref placement) && (placement.flags & 2) != 0) ||
+            IsZoomed(hwnd);
+          // A minimized window must be shown before it can become foreground.
+          // A visible window of ANY size is left exactly as it is.
+          ShowWindow(hwnd, FocusShowCommand(true, restoreMaximized));
+        }
         SetForegroundWindow(hwnd);
         Thread.Sleep(160);
         IntPtr now = GetForegroundWindow();
@@ -213,6 +251,10 @@ namespace CodexMonitor {
     exit 2
 }
 if ($Mode -eq 'verify') {
+    if (-not [CodexMonitor.WindowProbe]::VerifyFocusShowCommands()) {
+        Write-Output '{"ok":false,"reason":"focus_show_policy_failed"}'
+        exit 3
+    }
     Write-Output '{"ok":true}'
 } elseif ($Mode -eq 'focus') {
     [CodexMonitor.WindowProbe]::Focus($WindowHandle, $TargetPid, $ProcessStart, $TabId)
