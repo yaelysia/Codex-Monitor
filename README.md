@@ -17,7 +17,7 @@ No Codex modifications, hooks, remote daemon, credentials stored in the applicat
 
 **明确结束状态：** `task_complete / turn_complete` 且无错误信息时才算本轮正常完成；`turn_aborted` 标为「本轮已中断」，携带非空错误的结束事件标为「本轮失败」，均不会产生正常完成通知。SSH/WSL 的活动时间判断优先使用执行主机计算的文件年龄，避免 Windows 与远程主机时钟不同步导致执行中错误回退未知。
 
-**Status accuracy:** `本轮已完成` means a `task_complete` / `turn_complete` / `turn_aborted` marker was found, **not** that Codex exited. `可能执行中` means a recent uncompleted turn, observed JSONL growth, a recent persisted compaction checkpoint, or a **bounded continuation of previously observed activity** (up to eight minutes of silence, without resetting that timer on each scan). Both are inferences, not a process-level claim. If the evidence is insufficient or stale, the result is `状态未知`. `可能待处理` would require a logged approval/input event, but Codex normally does not persist these transient events to rollouts; this status needs optional Hooks or a live app-server to be reliable. The app cannot reliably identify all running Codex Desktop/VS Code processes or approvals across independent app servers.
+**Status accuracy:** `本轮已完成` means a successful `task_complete` / `turn_complete` marker, **not** that Codex exited. Aborted or error-bearing terminal events are separate states. `可能执行中` means a recent uncompleted turn, observed JSONL growth, a recent persisted compaction checkpoint, or a **bounded continuation of previously observed activity** (up to eight minutes of silence, without resetting that timer on each scan). Both are inferences, not a process-level claim. If the evidence is insufficient or stale, the result is `状态未知`. `可能待处理` would require a logged approval/input event, but Codex normally does not persist these transient events to rollouts; this status needs optional Hooks or a live app-server to be reliable. The app cannot reliably identify all running Codex Desktop/VS Code processes or approvals across independent app servers.
 
 ## Quick start (Windows)
 
@@ -88,6 +88,19 @@ This is a UI-only change: the scan interval, metadata-only collection, existing 
 - 只显示**已保存到 JSONL 的助手回复**；正在生成但还没有落盘的文字不会被实时流式展示。预览可能属于此前一轮，而非正在执行的这轮。
 - IPC 只能通过已扫描会话 ID 选择目标，文件地址始终限制在对应机器的 `CODEX_HOME/sessions` 下，读取过程不修改 Codex 数据。
 
+## 常驻体验与性能优化
+
+Codex Monitor 已支持 Windows 系统托盘和单实例后台运行：关闭主窗口默认只是关闭该界面以释放 UI 资源，**监控、事件通道、悬浮窗与通知继续运行**。托盘可重新打开主窗口、切换悬浮窗、静音系统弹窗或选择「完全退出」停止监控。主窗口右上角「常驻设置」可取消后台运行，或在**正式打包的 Windows 版本**中选择开机自动启动；开发模式不会修改开机项。开机启动默认关闭。
+
+主窗口的大小与位置、悬浮窗左/右屏幕边缘、显示器、纵向位置、展开和隐藏状态会保存在本机 `resident-state.json`，下次启动恢复。显示器移除或分辨率变化时自动调整到可见范围。该文件不包含对话文本、会话日志或 SSH 密钥。
+
+性能策略如下：
+
+- **本地 JSONL 元数据缓存**：文件大小和 mtime 均未变化时复用最近扫描的解析结果，最多保留 220 条小型元数据；不缓存完整日志、工具输出。缓存的执行中、待处理状态仍按原时间阈值过期，不会把停止写入的任务无限视为运行中。会话标题继续实时从 SQLite/索引查询。
+- **按连接状态自适应兜底**：Windows / WSL / SSH 的事件通道正常工作时约每 60 秒全量审计一次；事件通道断线、正在重连或仅支持轮询的机器每约 12 秒补漏。任何文件事件仍按原有 400ms 合并及最短 3 秒单源扫描规则更新。
+- **后台资源**：关闭主窗口时释放该 BrowserWindow；后台只保留托盘、必要的悬浮窗与监控服务。多次启动会唤醒原实例，不再重复创建监听通道、SSH 连接与系统通知。
+
+这套优化不承诺固定 CPU / 内存占用；实际收益取决于会话数量、事件通道健康度和 SSH 网络状况。首次运行与配置改变时仍需完整扫描。
 ## 事件驱动通知（第一阶段）
 
 Codex Monitor 现在采用 **事件触发的单源扫描 + 每 12 秒全量轮询兜底**，仍使用现有状态机和通知去重逻辑：

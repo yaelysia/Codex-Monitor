@@ -5,6 +5,24 @@ import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from
 import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
 
 type View = 'board' | 'sessions' | 'locations';
+
+type StoredViewPreferences = { view: View; recentOnly: boolean; filter: SessionStatus | 'all' };
+const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
+function readViewPreferences(): StoredViewPreferences {
+  const fallback: StoredViewPreferences = { view: 'board', recentOnly: true, filter: 'all' };
+  try {
+    if (typeof localStorage === 'undefined') return fallback;
+    const row = JSON.parse(localStorage.getItem(VIEW_PREFERENCES_KEY) || 'null');
+    if (!row || typeof row !== 'object') return fallback;
+    const validView = row.view === 'board' || row.view === 'sessions' || row.view === 'locations';
+    const validFilter = ['all', 'working', 'waiting', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
+    return { view: validView ? row.view : 'board',
+      recentOnly: typeof row.recentOnly === 'boolean' ? row.recentOnly : true,
+      filter: validFilter ? row.filter : 'all' };
+  } catch { return fallback; }
+}
+
+
 type GlyphName = 'grid' | 'list' | 'folder' | 'monitor' | 'server' | 'search' | 'refresh' | 'settings' |
   'copy' | 'clock' | 'check' | 'alert' | 'close' | 'chevron-right' | 'chevron-down' | 'chevron-left' | 'activity' | 'sliders';
 
@@ -226,9 +244,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<SessionStatus | 'all'>('all');
-  const [recentOnly, setRecentOnly] = useState(true);
-  const [view, setView] = useState<View>('board');
+  const [filter, setFilter] = useState<SessionStatus | 'all'>(() => readViewPreferences().filter);
+  const [recentOnly, setRecentOnly] = useState(() => readViewPreferences().recentOnly);
+  const [view, setView] = useState<View>(() => readViewPreferences().view);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [expandedSources, setExpandedSources] = useState<string[]>([]);
@@ -321,6 +339,11 @@ export default function App() {
       clearInterval(clock);
     };
   }, [refresh]);
+  useEffect(() => {
+    try { localStorage.setItem(VIEW_PREFERENCES_KEY, JSON.stringify({ view, filter, recentOnly })); }
+    catch { /* storage permission or quota: viewing and monitoring still work */ }
+  }, [view, filter, recentOnly]);
+
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setDetailOpen(false);

@@ -137,8 +137,10 @@ describe('event-driven scan orchestration', () => {
     expect(vi.mocked(collect).mock.calls[1]?.[1]).toEqual(new Set(['ssh:one']));
     await vi.advanceTimersByTimeAsync(11_500);
     expect(vi.mocked(collect).mock.calls.length).toBeGreaterThanOrEqual(3);
+    // SSH was refreshed by its filesystem event 11.5 seconds ago, so only
+    // the local fallback source is due at this 12-second tick.
     expect(vi.mocked(collect).mock.calls.at(-1)?.[1])
-      .toEqual(new Set(['local', 'ssh:one']));
+      .toEqual(new Set(['local']));
   });
 
   it('limits healthy watch-connected hosts to a 60-second safety audit', async () => {
