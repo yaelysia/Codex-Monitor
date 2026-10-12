@@ -37,6 +37,19 @@ jobs:
           if ($parsed.type -ne 'foreground' -or -not $parsed.at -or -not $parsed.hwnd) {
             throw "Native observer foreground shape invalid"
           }
+      - name: Check read-only MobaXterm tab diagnostic output shape
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $result = @(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode inspect-tabs)
+          if ($LASTEXITCODE -ne 0) { throw "MobaXterm tab inspection failed" }
+          $item = $result | Where-Object { $_ -match '"type":"tab-probe"' } | Select-Object -First 1
+          if (-not $item) { throw "Missing tab probe summary" }
+          $parsed = $item | ConvertFrom-Json
+          if ($parsed.type -ne 'tab-probe' -or $parsed.count -lt 0 -or
+              $parsed.provider -notin @('msaa', 'uia', 'none')) {
+            throw "Unexpected native tab probe fields"
+          }
       - run: npm run typecheck
       - run: npm run build
       - run: python -m unittest discover -s tests -p 'test_*.py'
