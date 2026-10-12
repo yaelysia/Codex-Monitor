@@ -31,7 +31,7 @@ describe('conservative status inference', () => {
   });
   it('recognizes task and turn aliases for finished turns', () => {
     expect(inferStatus(`${event('turn_started')}\n${event('turn_complete')}`, NOW - 1_000_000, NOW).status).toBe('finished');
-    expect(inferStatus(`${event('task_started')}\n${event('turn_aborted')}`, NOW - 2_000, NOW).status).toBe('finished');
+    expect(inferStatus(`${event('task_started')}\n${event('turn_aborted')}`, NOW - 2_000, NOW).status).toBe('interrupted');
   });
   it('recognizes explicit permission requests and their resumption', () => {
     expect(inferStatus(`${event('task_started')}\n${event('request_user_input')}`, NOW - 20_000, NOW).status).toBe('waiting');
@@ -86,5 +86,32 @@ describe('compaction checkpoint interpretation', () => {
     const status = inferStatus(tail, NOW - 5000, NOW);
     expect(status.status).toBe('working');
     expect(status.finishedToken).toBeNull();
+  });
+});
+
+
+describe('terminal turn status accuracy', () => {
+  it('does not claim an interrupted turn completed normally', () => {
+    const tail = [
+      { type: 'event_msg', payload: { type: 'task_started' } },
+      { type: 'event_msg', payload: { type: 'turn_aborted', turn_id: 't1', reason: 'interrupted' } },
+    ].map(JSON.stringify).join('\n');
+    const result = inferStatus(tail, NOW - 1000, NOW);
+    expect(result.status).toBe('interrupted');
+    expect(result.finishedToken).toBeNull();
+  });
+  it('detects a completed turn with a non-null error as a failure instead of success', () => {
+    const text = JSON.stringify({ type: 'event_msg', payload: {
+      type: 'turn_complete', turn_id: 'turn2', error: { message: 'tool failed' },
+    } });
+    const result = inferStatus(text, NOW - 1000, NOW);
+    expect(result.status).toBe('failed');
+    expect(result.finishedToken).toBeNull();
+  });
+  it('does not mistake a completion with error:null for a failure', () => {
+    const text = JSON.stringify({ type: 'event_msg', payload: {
+      type: 'turn_complete', turn_id: 'turn3', error: null,
+    } });
+    expect(inferStatus(text, NOW - 1000, NOW).status).toBe('finished');
   });
 });

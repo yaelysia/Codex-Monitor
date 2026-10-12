@@ -32,18 +32,25 @@ export class SessionActivityTracker {
         const bytes = session.byteSize ?? -1;
         const reset = !!previous &&
           (session.updatedAt < previous.modifiedAt || (bytes >= 0 && previous.bytes >= 0 && bytes < previous.bytes));
+        // SSH and WSL file timestamps belong to their own machine's clock.
+        // Use the source-relative age to evaluate freshness, then translate
+        // observed evidence onto the local clock for bounded silence grace.
+        const age = typeof session.ageAtSourceMs === 'number' &&
+          Number.isFinite(session.ageAtSourceMs)
+          ? session.ageAtSourceMs : now - session.updatedAt;
+        const positiveEvidenceAt = now - Math.max(0, age);
         const growth = !!previous && !reset && bytes > previous.bytes && previous.bytes >= 0 &&
-          session.updatedAt >= previous.modifiedAt &&
-          now - session.updatedAt >= -10_000 && now - session.updatedAt <= GROWTH_WINDOW_MS;
+          session.updatedAt >= previous.modifiedAt && age >= -10_000 && age <= GROWTH_WINDOW_MS;
         const recentActivity = session.status === 'working' &&
-          now - session.updatedAt >= -10_000 && now - session.updatedAt <= DIRECT_ACTIVITY_WINDOW_MS;
+          age >= -10_000 && age <= DIRECT_ACTIVITY_WINDOW_MS;
         let evidenceAt = !reset ? (previous?.evidenceAt ?? 0) : 0;
 
-        if (session.status === 'finished' || session.status === 'waiting') {
+        if (session.status === 'finished' || session.status === 'waiting' ||
+          session.status === 'interrupted' || session.status === 'failed') {
           // Explicit completion/approval evidence always overrides any retained activity.
           evidenceAt = 0;
         } else if (recentActivity || growth) {
-          evidenceAt = Math.max(evidenceAt, session.updatedAt);
+          evidenceAt = Math.max(evidenceAt, positiveEvidenceAt);
         }
 
         if (session.status === 'unknown') {

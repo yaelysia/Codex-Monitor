@@ -22,7 +22,8 @@ RECENT_MS = 5 * 60_000
 MAX_DISCOVERED = 10000
 MAX_RETURNED = 200
 START = {'task_started', 'turn_started'}
-END = {'task_complete', 'turn_complete', 'turn_aborted'}
+END = {'task_complete', 'turn_complete'}
+ABORT = {'turn_aborted'}
 WAIT = {'exec_approval_request', 'apply_patch_approval_request', 'request_user_input', 'request_permissions', 'elicitation_request'}
 RESUME = {'exec_command_begin', 'patch_apply_begin', 'agent_message', 'agent_reasoning'}
 COMPACT_RESPONSES = {'compaction', 'context_compaction', 'contextCompaction'}
@@ -179,12 +180,9 @@ def classify_session_origin(meta):
                       isinstance(tid, str) and tid and session_id != tid)
     is_child = (bool(parent) or bool(different_root) or
                 meta.get('thread_source', meta.get('threadSource')) == 'subagent' or
-                source in ('subagent', 'subAgent') if isinstance(source, str) else False)
-    # Subagent source can also be an object; keep it separate from the string check.
-    if isinstance(source, dict) and ('subagent' in source or 'subAgent' in source):
-        is_child = True
-    if parent or different_root or meta.get('thread_source', meta.get('threadSource')) == 'subagent':
-        is_child = True
+                (isinstance(source, str) and source in ('subagent', 'subAgent')) or
+                (isinstance(source, dict) and
+                 ('subagent' in source or 'subAgent' in source)))
     return {'isSubagent': bool(is_child), 'parentThreadId': parent}
 
 
@@ -261,7 +259,12 @@ def details(head, tail, filename, clipped, modified, now):
                 phase, awaiting, waiting_token = 'started', False, None
                 finished_token, checkpoint_after_boundary = None, False
             elif event in END:
-                phase, awaiting, finished_token, waiting_token = 'finished', False, marker, None
+                phase = 'failed' if payload.get('error') is not None else 'finished'
+                awaiting, finished_token, waiting_token = (
+                    False, marker if phase == 'finished' else None, None)
+                checkpoint_after_boundary = False
+            elif event in ABORT:
+                phase, awaiting, finished_token, waiting_token = 'interrupted', False, None, None
                 checkpoint_after_boundary = False
             elif event in WAIT and phase == 'started':
                 awaiting, waiting_token = True, marker
@@ -271,7 +274,11 @@ def details(head, tail, filename, clipped, modified, now):
     age = max(0, now - modified)
     terminal = phase == 'finished' and not checkpoint_after_boundary
     if terminal:
-        status, reason = 'finished', '检测到本轮结束事件；不代表客户端已退出'
+        status, reason = 'finished', '检测到本轮正常结束事件；不代表客户端已退出'
+    elif phase == 'interrupted' and not checkpoint_after_boundary:
+        status, reason = 'interrupted', '检测到 Codex 本轮中断事件，不能视为任务完成'
+    elif phase == 'failed' and not checkpoint_after_boundary:
+        status, reason = 'failed', '检测到本轮结束事件携带错误信息，不能视为正常完成'
     elif phase == 'started' and awaiting and age <= 600000:
         status, reason = 'waiting', '日志存在等待用户操作事件（推断）'
     elif phase == 'started' and age <= 90000:

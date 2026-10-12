@@ -440,3 +440,11 @@ button svg { flex-shrink: 0; }
 .child-badge{display:inline-block;vertical-align:middle;margin-left:7px;padding:2px 6px;border-radius:5px;border:1px solid #544a65;color:#b3a1c5;background:#332b42;font-size:10px;font-weight:500;white-space:nowrap}
 .task-source .child-badge{padding:0;border:0;background:none;margin-left:3px;font-size:10px;color:#a99bbd}
 .source-tag.child-detail{color:#c8b2dd;border-color:#5b486a;background:#352944}
+
+/* Explicit abnormal end states must not masquerade as task completion. */
+.status-pill.status-interrupted{color:#e8bf92;border-color:#795843;background:#3c302a}
+.status-pill.status-failed{color:#efa8a8;border-color:#794955;background:#3f2932}
+.task-card.status-interrupted{border-color:#705845;background:#352b2b}
+.task-card.status-failed{border-color:#754755;background:#362630}
+.workspace-session-indicator.status-interrupted{background:#d5af84}
+.workspace-session-indicator.status-failed{background:#e497a3}

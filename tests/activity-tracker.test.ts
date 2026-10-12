@@ -103,3 +103,37 @@ describe('compaction / long-operation activity continuity', () => {
     expect(alerts.observe(scan(NOW + 168_000, [finished]), NOW + 168_000)).toHaveLength(0);
   });
 });
+
+
+describe('source-relative activity freshness', () => {
+  it.each([9 * 60_000, -11 * 60_000])('keeps remote active evidence despite %d ms clock skew', offset => {
+    const tracker = new SessionActivityTracker();
+    const first = record('working', NOW + offset, 100);
+    first.ageAtSourceMs = 1000;
+    tracker.annotate(sources([first]), NOW);
+    expect(first.status).toBe('working');
+    const quiet = record('unknown', NOW + offset, 100);
+    quiet.ageAtSourceMs = 150_000;
+    tracker.annotate(sources([quiet]), NOW + 150_000);
+    expect(quiet.status).toBe('working');
+    expect(quiet.statusReason).toContain('上下文压缩');
+    const expired = record('unknown', NOW + offset, 100);
+    expired.ageAtSourceMs = SILENCE_GRACE_MS + 9000;
+    tracker.annotate(sources([expired]), NOW + SILENCE_GRACE_MS + 9000);
+    expect(expired.status).toBe('unknown');
+  });
+
+  it('clears active evidence for explicit failure or interruption', () => {
+    const tracker = new SessionActivityTracker();
+    tracker.annotate(sources([record('working', NOW)]), NOW);
+    tracker.annotate(sources([record('interrupted', NOW + 10_000)]), NOW + 10_000);
+    const afterAbort = record('unknown', NOW + 10_000);
+    tracker.annotate(sources([afterAbort]), NOW + 20_000);
+    expect(afterAbort.status).toBe('unknown');
+    tracker.annotate(sources([record('working', NOW + 30_000)]), NOW + 30_000);
+    tracker.annotate(sources([record('failed', NOW + 40_000)]), NOW + 40_000);
+    const afterFailure = record('unknown', NOW + 40_000);
+    tracker.annotate(sources([afterFailure]), NOW + 50_000);
+    expect(afterFailure.status).toBe('unknown');
+  });
+});

@@ -38,13 +38,15 @@ export function makeStatusLanes(rows: SessionRecord[]): StatusLane[] {
   const working = rows.filter(row => row.status === 'working');
   const pending = rows.filter(row => row.status === 'waiting');
   const unknown = rows.filter(row => row.status === 'unknown');
+  const interrupted = rows.filter(row => row.status === 'interrupted');
+  const failed = rows.filter(row => row.status === 'failed');
   const finished = rows.filter(row => row.status === 'finished');
 
   return [
     { id: 'working', label: '可能执行中', description: '近期有持续活动证据 · 推断',
       emptyLabel: '当前没有可确认的活动会话', sessions: working },
-    { id: 'other', label: '状态待确认', description: '待处理与未知状态分别标记',
-      emptyLabel: '没有等待或未知状态的会话', sessions: [...pending, ...unknown] },
+    { id: 'other', label: '状态待确认', description: '待处理、中断、失败与未知状态分别标记',
+      emptyLabel: '没有等待、异常或未知状态的会话', sessions: [...pending, ...failed, ...interrupted, ...unknown] },
     { id: 'finished', label: '最近完成', description: '已检测到本轮结束事件',
       emptyLabel: '近期没有已结束的会话', sessions: finished },
   ];

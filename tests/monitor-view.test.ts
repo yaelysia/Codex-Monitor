@@ -61,3 +61,19 @@ describe('hybrid workspace + status dashboard', () => {
     expect(lanes[1]?.description).toMatch(/分别标记/);
   });
 });
+
+
+describe('explicit terminal statuses on the board', () => {
+  it('keeps failures/interruption in the abnormal lane rather than recent successful completions', () => {
+    const lanes = makeStatusLanes([
+      { id: 'abort', key: 'local:abort', sourceId: 'local', sourceLabel: 'Windows',
+        workspace: '/code', title: 'Aborted', status: 'interrupted', statusReason: 'cancelled',
+        updatedAt: NOW, startedAt: null },
+      { id: 'bad', key: 'local:bad', sourceId: 'local', sourceLabel: 'Windows',
+        workspace: '/code', title: 'Failed', status: 'failed', statusReason: 'error',
+        updatedAt: NOW, startedAt: null },
+    ]);
+    expect(lanes.find(l => l.id === 'finished')?.sessions).toHaveLength(0);
+    expect(lanes.find(l => l.id === 'other')?.sessions.map(s => s.id)).toEqual(['bad', 'abort']);
+  });
+});

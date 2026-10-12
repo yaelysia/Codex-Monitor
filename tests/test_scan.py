@@ -220,5 +220,25 @@ class TestLinuxCollector(unittest.TestCase):
 
 
 
+    def test_aborted_and_failed_turns_do_not_count_as_normal_completion(self):
+        now = 1_800_000_000_000
+        for event, fields, expected in (
+            ('turn_aborted', {'reason': 'interrupted'}, 'interrupted'),
+            ('turn_complete', {'error': {'message': 'tool failure'}}, 'failed'),
+            ('turn_complete', {'error': None}, 'finished'),
+        ):
+            with self.subTest(event=event, expected=expected):
+                rows = [
+                    {'type': 'event_msg', 'payload': {'type': 'task_started'}},
+                    {'type': 'event_msg', 'payload': {'type': event, **fields}},
+                ]
+                state = scanner.details('', '\n'.join(map(json.dumps, rows)),
+                                        'rollout-abc.jsonl', False, now - 1000, now)
+                self.assertEqual(state['status'], expected)
+                if expected != 'finished':
+                    self.assertIsNone(state['finishedToken'])
+
+
+
 if __name__ == '__main__':
     unittest.main()

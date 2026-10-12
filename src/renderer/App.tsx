@@ -12,6 +12,8 @@ const STATUS: Record<SessionStatus, { text: string; className: string; short: st
   working: { text: '可能执行中', className: 'working', short: '执行中 · 推断' },
   waiting: { text: '可能待处理', className: 'waiting', short: '待处理 · 推断' },
   finished: { text: '本轮已完成', className: 'finished', short: '本轮完成' },
+  interrupted: { text: '本轮已中断', className: 'interrupted', short: '已中断' },
+  failed: { text: '本轮失败', className: 'failed', short: '失败' },
   unknown: { text: '状态未知', className: 'unknown', short: '状态未知' },
 };
 const REFRESH_MS = 12_000;
@@ -498,7 +500,7 @@ export default function App() {
 
         <div className="filterbar">
           <div className="filter-tabs" role="group" aria-label="运行状态筛选">
-            {([['all', '全部'], ['working', '可能执行中'], ['waiting', '待处理'], ['finished', '本轮完成'], ['unknown', '未知']] as const)
+            {([['all', '全部'], ['working', '可能执行中'], ['waiting', '待处理'], ['finished', '本轮完成'], ['interrupted', '中断'], ['failed', '失败'], ['unknown', '未知']] as const)
               .map(([id, label]) => <button type="button" key={id} className={filter === id ? 'active' : ''}
                 aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
           </div>

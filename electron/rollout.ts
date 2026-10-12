@@ -5,7 +5,8 @@ import { normalizeTitle } from './titles';
 const ACTIVE_WINDOW_MS = 90_000;
 const WAIT_WINDOW_MS = 10 * 60_000;
 const START_EVENTS = new Set(['task_started', 'turn_started']);
-const END_EVENTS = new Set(['task_complete', 'turn_complete', 'turn_aborted']);
+const END_EVENTS = new Set(['task_complete', 'turn_complete']);
+const ABORT_EVENTS = new Set(['turn_aborted']);
 const WAIT_EVENTS = new Set([
   'exec_approval_request',
   'apply_patch_approval_request',
@@ -113,7 +114,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   finishedToken: string | null;
   waitingToken: string | null;
 } {
-  let phase: 'started' | 'finished' | 'unknown' = 'unknown';
+  let phase: 'started' | 'finished' | 'interrupted' | 'failed' | 'unknown' = 'unknown';
   let awaiting = false;
   let finishedToken: string | null = null;
   let waitingToken: string | null = null;
@@ -136,8 +137,12 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
       phase = 'started'; awaiting = false; waitingToken = null;
       finishedToken = null; checkpointAfterBoundary = false;
     } else if (END_EVENTS.has(event)) {
-      phase = 'finished'; awaiting = false; finishedToken = token; waitingToken = null;
-      checkpointAfterBoundary = false;
+      phase = payload?.error == null ? 'finished' : 'failed';
+      awaiting = false; finishedToken = phase === 'finished' ? token : null;
+      waitingToken = null; checkpointAfterBoundary = false;
+    } else if (ABORT_EVENTS.has(event)) {
+      phase = 'interrupted'; awaiting = false; finishedToken = null;
+      waitingToken = null; checkpointAfterBoundary = false;
     }
     else if (WAIT_EVENTS.has(event) && phase === 'started') { awaiting = true; waitingToken = token; }
     else if (RESUME_EVENTS.has(event) && phase === 'started') { awaiting = false; waitingToken = null; }
@@ -149,7 +154,13 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     waitingToken: awaiting ? waitingToken : null,
   };
   if (terminal) {
-    return { ...tokenFields, status: 'finished', statusReason: '检测到本轮结束事件；不代表客户端已退出' };
+    return { ...tokenFields, status: 'finished', statusReason: '检测到本轮正常结束事件；不代表客户端已退出' };
+  }
+  if (phase === 'interrupted' && !checkpointAfterBoundary) {
+    return { ...tokenFields, status: 'interrupted', statusReason: '检测到 Codex 本轮中断事件，不能视为任务完成' };
+  }
+  if (phase === 'failed' && !checkpointAfterBoundary) {
+    return { ...tokenFields, status: 'failed', statusReason: '检测到本轮结束事件携带错误信息，不能视为正常完成' };
   }
   if (phase === 'started' && awaiting && age <= WAIT_WINDOW_MS) {
     return { ...tokenFields, status: 'waiting', statusReason: '日志存在等待用户操作事件（推断）' };

@@ -1,4 +1,4 @@
-export type SessionStatus = 'working' | 'waiting' | 'finished' | 'unknown';
+export type SessionStatus = 'working' | 'waiting' | 'finished' | 'interrupted' | 'failed' | 'unknown';
 export type SourceKind = 'local' | 'wsl' | 'ssh';
 
 export interface SessionRecord {
