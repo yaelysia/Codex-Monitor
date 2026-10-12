@@ -283,6 +283,7 @@ def scan(root, now=None, limit=MAX_RETURNED):
                     handle.seek(max(0, size - length))
                     expanded = handle.read(length).decode('utf-8', errors='replace')
                     item = details(head, expanded, file.name, size > length, modified, now)
+            item['rolloutPath'] = file.relative_to(base).as_posix()
             item['byteSize'] = size
             if item['id'] not in seen:
                 seen.add(item['id'])

@@ -8,6 +8,8 @@ export interface SessionRecord {
   sourceId: string;
   sourceLabel: string;
   workspace: string | null;
+  /** Read-only relative locator under CODEX_HOME/sessions, not an absolute disk path. */
+  rolloutPath?: string | null;
   /** Codex's user-facing thread name or title, with a first-user-message fallback. */
   title: string | null;
   status: SessionStatus;
@@ -82,11 +84,19 @@ export interface FloatingWindowState {
   side: FloatingSide;
 }
 
+export interface RecentReplyExcerpt {
+  text: string | null;
+  phase: 'final_answer' | 'commentary' | 'partial_answer' | 'unspecified' | null;
+  timestamp: string | null;
+  truncated: boolean;
+}
+
 export interface MonitorApi {
   getConfig(): Promise<ConfigResponse>;
   setConfig(settings: Settings): Promise<ConfigResponse>;
   refresh(): Promise<ScanResponse>;
   copyWorkspace(text: string): Promise<void>;
+  getRecentReply(sessionKey: string): Promise<RecentReplyExcerpt>;
   getMonitorState(): Promise<MonitorState>;
   onMonitorState(listener: (state: MonitorState) => void): () => void;
   acknowledgeAlert(id: string): Promise<MonitorState>;
