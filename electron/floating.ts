@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { BrowserWindow, screen } from 'electron';
-import { dockWindowBounds, type SavedDock, type WorkArea } from '../src/shared/window-geometry';
+import { dockWindowBounds, findSavedDockDisplay, normalizeDockOpacity,
+  type SavedDock, type WorkArea } from '../src/shared/window-geometry';
 import type { FloatingWindowState } from '../src/shared/types';
 
 const HEIGHT = 276;
@@ -19,7 +20,7 @@ export class FloatingWindowController {
 
   state(): FloatingWindowState {
     return { visible: this.win?.isVisible() ?? false, expanded: this.dock.expanded,
-      side: this.dock.side };
+      side: this.dock.side, opacity: this.dock.opacity };
   }
 
   get browserWindow(): BrowserWindow | null { return this.win; }
@@ -52,17 +53,49 @@ export class FloatingWindowController {
     return this.state();
   }
 
+  /** Apply without creating or showing the floating window. Values persist when hidden. */
+  setOpacity(opacity: number): FloatingWindowState {
+    this.dock.opacity = normalizeDockOpacity(opacity);
+    if (this.win && !this.win.isDestroyed()) this.win.setOpacity(this.dock.opacity);
+    this.persist();
+    return this.state();
+  }
+
+  /** Recover a missing/off-screen dock even if the old display is unplugged. */
+  resetPosition(): FloatingWindowState {
+    const primary = screen.getPrimaryDisplay();
+    this.dock.side = 'right';
+    this.dock.offsetY = 92;
+    this.rememberDisplay(primary);
+    if (this.win && !this.win.isDestroyed()) this.place(this.bounds(primary));
+    this.persist();
+    return this.state();
+  }
+
   /** Re-clamp after a monitor is disconnected or its workArea changes. */
   reposition(): void {
-    if (!this.win || this.win.isDestroyed()) return;
-    this.place(this.bounds(this.display()));
+    const display = this.display();
+    const previous = this.dock.offsetY;
+    this.rememberDisplay(display);
+    if (this.win && !this.win.isDestroyed()) this.place(this.bounds(display));
+    if (previous !== this.dock.offsetY || this.win) this.persist();
   }
 
   allowQuit(): void { this.quitting = true; }
 
   private display(): Electron.Display {
-    return screen.getAllDisplays().find(display => display.id === this.dock.displayId)
-      ?? screen.getPrimaryDisplay();
+    const displays = screen.getAllDisplays();
+    const areas: WorkArea[] = displays.map(display => ({ ...display.workArea, id: display.id }));
+    const saved = findSavedDockDisplay(this.dock, areas);
+    return displays.find(display => display.id === saved?.id) ?? screen.getPrimaryDisplay();
+  }
+
+  private rememberDisplay(display: Electron.Display): void {
+    this.dock.displayId = display.id;
+    this.dock.displayX = display.workArea.x;
+    this.dock.displayY = display.workArea.y;
+    this.dock.offsetY = Math.max(0, Math.min(this.dock.offsetY,
+      Math.max(0, display.workArea.height - HEIGHT)));
   }
 
   private bounds(display: Electron.Display): Electron.Rectangle {
@@ -71,8 +104,10 @@ export class FloatingWindowController {
   }
 
   private create(): void {
+    const display = this.display();
+    this.rememberDisplay(display);
     const win = new BrowserWindow({
-      ...this.bounds(this.display()), frame: false, transparent: true,
+      ...this.bounds(display), frame: false, transparent: true,
       backgroundColor: '#00000000', hasShadow: false,
       alwaysOnTop: true, skipTaskbar: true, resizable: false,
       minimizable: false, maximizable: false, fullscreenable: false,
@@ -83,6 +118,7 @@ export class FloatingWindowController {
       },
     });
     this.win = win;
+    win.setOpacity(this.dock.opacity);
     win.setAlwaysOnTop(true, 'floating');
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', event => event.preventDefault());
@@ -111,7 +147,7 @@ export class FloatingWindowController {
     const display = screen.getDisplayMatching(before);
     const area = display.workArea;
     this.dock.side = before.x + before.width / 2 < area.x + area.width / 2 ? 'left' : 'right';
-    this.dock.displayId = display.id;
+    this.rememberDisplay(display);
     this.dock.offsetY = Math.min(Math.max(0, before.y - area.y), Math.max(0, area.height - HEIGHT));
     const target = this.bounds(display);
     if (before.x !== target.x || before.y !== target.y || before.width !== target.width) {
