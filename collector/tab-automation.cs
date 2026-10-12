@@ -1,8 +1,7 @@
-using System;
-using System.Text;
-using System.Windows.Automation;
-
 namespace CodexMonitor {
+  using System;
+  using System.Text;
+  using System.Windows.Automation;
   // Never reads tab labels, terminal content, process command lines or file paths.
   // Runtime IDs identify UIA objects only while the original GUI window survives.
   public static class TabProbe {
