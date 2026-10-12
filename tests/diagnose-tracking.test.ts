@@ -50,6 +50,12 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
     const obj = JSON.parse(output.stdout);
     expect(obj.desktop).toMatchObject({
       filesExamined: 1, threadScoped: true,
+      discovery: {
+        reason: 'readable_log_files',
+        roots: expect.arrayContaining([expect.objectContaining({
+          kind: 'standard', exists: true, recentCandidates: 1,
+        })]),
+      },
       events: { acceptedStart: 1, turnCompleteNotice: 1, failedStart: 0, unknownConversation: 0 },
     });
     expect(output.stdout).not.toMatch(/PRIVATE_SECRET|PRIVATE_TEXT|conversationId|01a09f3b/);
@@ -70,5 +76,56 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
     expect(bad.status).toBe(1);
     expect(bad.stdout).toBe('');
     expect(bad.stderr).not.toContain(root);
+  });
+});
+
+describe('Desktop zero-file diagnostic must identify the failing discovery stage', () => {
+  it('reports a missing root rather than claiming no Desktop runtime activity', () => {
+    const root = tmp();
+    const output = run(root, '--no-moba');
+    expect(output.status, output.stderr).toBe(0);
+    const data = JSON.parse(output.stdout);
+    expect(data.desktop.filesExamined).toBe(0);
+    expect(data.desktop.discovery.reason).toBe('no_known_log_root');
+    expect(data.desktop.discovery.roots[0]).toMatchObject({
+      kind: 'standard', exists: false, accessibleDateFolders: 0,
+    });
+    expect(output.stdout).not.toContain(root);
+  });
+
+  it('distinguishes unsupported first-party filename from a missing directory', () => {
+    const root = tmp();
+    const date = new Date();
+    const folder = path.join(root, 'Codex', 'Logs',
+      String(date.getFullYear()), String(date.getMonth()+1).padStart(2,'0'),
+      String(date.getDate()).padStart(2,'0'));
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'renamed-codex.log'), 'private token do not leak');
+    const output = run(root, '--no-moba');
+    expect(output.status, output.stderr).toBe(0);
+    const data = JSON.parse(output.stdout);
+    expect(data.desktop.discovery.reason).toBe('log_filename_not_matched');
+    expect(data.desktop.discovery.roots[0]).toMatchObject({
+      kind: 'standard', exists: true, anyLogFiles: 1, matchedNames: 0,
+    });
+    expect(output.stdout).not.toContain('renamed-codex');
+    expect(output.stdout).not.toContain('private token');
+  });
+
+  it('finds a Store package even when many unrelated package folders precede it', () => {
+    const root = tmp();
+    const packages = path.join(root, 'Packages');
+    for (let i=0; i<160; i++)
+      fs.mkdirSync(path.join(packages, 'OtherApp_' + i), {recursive:true});
+    write(root, [
+      new Date().toISOString() + ' info [AppServerConnection] response_routed ' +
+      'method=turn/start conversationId=' + uuid + ' errorCode=null',
+    ], true);
+    const output = run(root, '--no-moba');
+    expect(output.status, output.stderr).toBe(0);
+    const data = JSON.parse(output.stdout);
+    expect(data.desktop.events.acceptedStart).toBe(1);
+    expect(data.desktop.discovery.roots.some((r: {kind:string;recentCandidates:number}) =>
+      r.kind === 'msix' && r.recentCandidates === 1)).toBe(true);
   });
 });

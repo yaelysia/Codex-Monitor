@@ -110,6 +110,8 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
     expect(fs.readdirSync(root)).toHaveLength(0);
     expect(await inspectDesktopLogSignals(NOW, root)).toMatchObject({
       logFilesRead: 0, signalCount: 0,
+      discovery: { validLocalAppData: true, existingRootCount: 0,
+        recentCandidateCount: 0 },
     });
   });
 
