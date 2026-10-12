@@ -122,6 +122,41 @@ npm run dev
 
 **准确性边界：** 本阶段监听的是 *日志文件变化事件*，不是 Codex 尚未持久化的审批/提问、推理或 App Server 原生事件。它通常能比定时扫描更快发现新落盘的完成标记，但无法保证毫秒级通知，也无法检测所有客户端的等待提问事件。下一阶段才考虑对可用 Codex App Server 进行可选的原生事件订阅。
 
+## Codex App Server 原生事件探索（只读探测原型）
+
+该工具是**独立命令行实验**，不会改变当前 Monitor 的窗口、通知或会话采集行为，也不会调用 Codex 的模型、自动启动 App Server 或接管原有会话。
+
+第一步验证的是真实会话是否位于**同一个已经运行的共享 App Server**：
+
+```powershell
+npm install
+npm run probe:app-server -- --duration 20 --poll-ms 2000 --max-threads 15
+```
+
+默认只尝试连接 `CODEX_HOME/app-server-control/app-server-control.sock`（若未设置 `CODEX_HOME`，使用用户目录的 `.codex`）。服务器不存在或没有打开共享控制套接字时，会显示 `no_existing_control_socket`，**绝不启动一个新 Codex 进程冒充成功**。
+
+也可以明确指定已存在的地址：
+
+```powershell
+npm run probe:app-server -- --socket "C:\Users\YourUser\.codex\app-server-control\app-server-control.sock"
+npm run probe:app-server -- --ws ws://127.0.0.1:17891/
+```
+
+以上端点必须是你已经确认的服务。对于已有 SSH 主机上的共享 Unix 套接字，可先使用本机 OpenSSH 建立**仅回环访问**的转发，然后通过 `--ws ws://127.0.0.1:17891/` 读取；不要把无鉴权的 WebSocket 直接暴露到公网或局域网：
+
+```powershell
+# 在单独的 PowerShell 窗口保持转发，替换为真实 SSH 主机别名及 Linux HOME：
+ssh -N -L 127.0.0.1:17891:/home/user/.codex/app-server-control/app-server-control.sock my-ssh-host
+```
+
+支持 `--duration 0`（只做一次查询）、`--show-ids`（输出完整会话 ID，用于和 Monitor 比对）、`--json`（只包含状态/事件类型的 JSONL 诊断输出）。默认仅显示截短的会话 ID、`activeFlags`、是否子代理及事件类型；**不打印完整对话、目录路径、提问正文、工具输出、访问令牌和推理内容**。
+
+本工具严格将客户端请求限制为 `initialize`、`thread/loaded/list`、`thread/read(includeTurns:false)`，不发送 `thread/resume`、`turn/start`、`thread/unsubscribe` 或任何审批回答。遇到服务端发来的审批/提问请求时只记录其类型，**不会向 Codex 发送回答或批准**。不进行实时会话订阅，因此原型通过周期性只读快照检验 `waitingOnUserInput` / `waitingOnApproval` 等原生状态；收到恰好对本连接可见的事件时记录有限的事件类型。
+
+**如何判断结果：** 显示 `connected` 只说明连接到一个现有 App Server；`loadedCount > 0` 只能说明**这个服务**管理这些会话，并不代表所有 VS Code、Desktop 或独立 CLI 进程均可见。只有通过 `--show-ids` 将已加载会话的真实 ID 与你的 Codex 会话对应起来，才能验证覆盖范围。没有匹配会话时，继续保留 JSONL 监控即可，不必改动正在执行的 Codex。
+
+运行 `npm run test:probe` 可以在不连接真实账号/会话的前提下，用模拟 App Server 验证 WebSocket/JSON-RPC、状态 flags、批准请求绝不代答等行为。**下一阶段**在独立测试服务上验证 `thread/resume` 的第二客户端订阅、审批请求分发与断线回退后，才考虑可选地接入正式 Monitor。不可用独立进程假装共享所有已有会话。
+
 ## 问题 / 用户输入待回答提醒
 
 Codex Monitor 现在除既有生命周期事件外，还解析**已持久化的提问证据**：
