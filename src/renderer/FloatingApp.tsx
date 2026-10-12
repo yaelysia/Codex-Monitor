@@ -65,10 +65,13 @@ export default function FloatingApp() {
 
   function showTab(target: FloatingTab) {
     setTab(target);
-    void window.monitorApi.setFloatingExpanded(true).then(setDock).catch(console.error);
+    // The native main process broadcasts the authoritative dock state.
+    // Do not apply a possibly stale IPC response after a fast outside click
+    // has already collapsed the popup via BrowserWindow.blur.
+    void window.monitorApi.setFloatingExpanded(true).catch(console.error);
   }
   function collapse() {
-    void window.monitorApi.setFloatingExpanded(!dock.expanded).then(setDock).catch(console.error);
+    void window.monitorApi.setFloatingExpanded(!dock.expanded).catch(console.error);
   }
   function openMain(key?: string) {
     void window.monitorApi.showMainWindow(key).catch(console.error);
