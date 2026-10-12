@@ -20,6 +20,8 @@ export class MonitorService {
   private pendingSources = new Set<string>();
   private lastEventScan = new Map<string, number>();
   private needsFullScan = false;
+  private lastFullScanAt = 0;
+  private scanningFull = false;
   private running = false;
 
   constructor(
@@ -99,15 +101,17 @@ export class MonitorService {
   refresh(force = false, sourceIds?: ReadonlySet<string>): Promise<ScanResponse> {
     if (this.inFlight) {
       if (sourceIds) for (const id of sourceIds) this.pendingSources.add(id);
-      else if (force) this.needsFullScan = true;
+      else if (!this.scanningFull && (force ||
+        Date.now() - this.lastFullScanAt >= MIN_FULL_SCAN_GAP_MS)) this.needsFullScan = true;
       return this.inFlight;
     }
     const partial = !!sourceIds?.size && !!this.lastScan;
     if (!partial && !force && this.lastScan &&
-      Date.now() - this.lastScan.scannedAt < MIN_FULL_SCAN_GAP_MS) {
+      Date.now() - this.lastFullScanAt < MIN_FULL_SCAN_GAP_MS) {
       return Promise.resolve(this.lastScan);
     }
 
+    this.scanningFull = !partial;
     const task = (async () => {
       const settings = await readSettings();
       const delta = await collect(settings, partial ? sourceIds : undefined);
@@ -128,6 +132,7 @@ export class MonitorService {
         };
       } else {
         this.lastScan = delta;
+        this.lastFullScanAt = delta.scannedAt;
         this.watchers.reconcile(settings, delta.sources);
       }
       this.onChange(this.state());
@@ -138,6 +143,7 @@ export class MonitorService {
     this.inFlight = task;
     void task.finally(() => {
       if (this.inFlight === task) this.inFlight = null;
+      this.scanningFull = false;
       if (!this.running) return;
       if (this.needsFullScan) {
         this.needsFullScan = false;
