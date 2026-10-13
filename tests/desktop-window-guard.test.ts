@@ -8,7 +8,7 @@ import { openDesktopUrlKeepingGeometry } from '../electron/desktop-window-guard'
 
 class GuardChild extends EventEmitter {
   stdout = new EventEmitter();
-  stdin = { end: vi.fn() };
+  stdin = { end: vi.fn(), on: vi.fn() };
   kills = 0;
   kill() { this.kills++; this.emit('exit', 0); return true; }
   ready(observed = 1) {
