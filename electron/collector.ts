@@ -201,6 +201,12 @@ export async function projectDesktopRuntime(
       const sessions = source.sessions.map(session => ({ ...session }));
       applyDesktopLogEvidence(sessions, evidence, now);
       for (const row of sessions) {
+        // An exact GUI-owned UUID hit is evidence that Desktop, rather than
+        // the recorded session creator, currently owns this thread.
+        if (!row.isSubagent && evidence.has(row.id.toLowerCase()))
+          row.desktopRuntimeObserved = true;
+      }
+      for (const row of sessions) {
         if (row.isSubagent || row.status !== 'unknown' ||
             (row.clientKind !== 'desktop' && !evidence.has(row.id.toLowerCase()))) continue;
         const detected = evidence.has(row.id.toLowerCase());

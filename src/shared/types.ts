@@ -11,6 +11,10 @@ export interface SessionRecord {
   workspace: string | null;
   /** Client identified by session_meta.originator, not window title or cwd. */
   clientKind?: SessionClientKind;
+  /** A GUI-owned Codex Desktop lifecycle event matched this exact thread UUID.
+   * Unlike clientKind, this identifies the observed running client, not creator.
+   */
+  desktopRuntimeObserved?: boolean;
   /** User input age according to source machine clock; may be absent. */
   lastUserInputAgeAtSourceMs?: number | null;
   /** Stable event timestamp in source clock, used only to deduplicate binding attempts. */
@@ -131,7 +135,7 @@ export interface OriginalWindowStatus {
 }
 
 export type OriginalWindowFocusResult = {
-  state: 'focused' | 'partial' | 'unbound' | 'unavailable' | 'stale' | 'blocked';
+  state: 'focused' | 'opened' | 'partial' | 'unbound' | 'unavailable' | 'stale' | 'blocked';
   message: string;
 };
 

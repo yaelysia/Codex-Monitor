@@ -1,9 +1,10 @@
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { AutoWindowResolver, normalizeForegroundWindow } from '../src/shared/auto-window-binding';
 import { WindowBindingStore } from './window-bindings-store';
-import type { OriginalWindowFocusResult, OriginalWindowStatus, ScanResponse } from '../src/shared/types';
+import type { OriginalWindowFocusResult, OriginalWindowStatus, ScanResponse, SessionRecord } from '../src/shared/types';
+import { desktopThreadUrl } from '../src/shared/desktop-navigation';
 
 const MAX_LINE_BYTES = 4096;
 const SCRIPT_TIMEOUT_MS = 8_000;
@@ -168,9 +169,13 @@ export class AutoWindowTracker {
     this.bindingStore?.update(this.resolver.savedBindings());
   }
 
-  status(sessionKey: string): OriginalWindowStatus {
+  status(sessionKey: string, session?: SessionRecord): OriginalWindowStatus {
     if (this.platform !== 'win32') return {
       ready: false, message: '原窗口自动定位仅支持 Windows Monitor',
+    };
+    if (desktopThreadUrl(session)) return {
+      ready: true, host: 'desktop',
+      message: '可通过 Codex Desktop 官方会话链接打开，免窗口绑定（要求系统注册 codex:// 协议）',
     };
     if (process.env.CODEX_MONITOR_DISABLE_AUTO_WINDOW_TRACKING === '1') return {
       ready: false, message: '原窗口自动定位已通过环境变量停用',
@@ -199,8 +204,28 @@ export class AutoWindowTracker {
     };
   }
 
-  async focusOriginalWindow(sessionKey: string): Promise<OriginalWindowFocusResult> {
-    const info = this.status(sessionKey);
+  async focusOriginalWindow(sessionKey: string, session?: SessionRecord): Promise<OriginalWindowFocusResult> {
+    const url = this.platform === 'win32' ? desktopThreadUrl(session) : null;
+    if (url) {
+      try {
+        // Upstream Codex CLI/TUI uses this exact deep-link route to open an
+        // EXISTING Desktop thread. OS protocol activation may bring another
+        // existing app window forward; no HWND, window size or task is modified.
+        await shell.openExternal(url);
+        return {
+          state: 'opened',
+          message: '已通过 Codex Desktop 官方会话链接请求打开该对话；实际显示取决于客户端协议处理',
+        };
+      } catch {
+        // If the OS has no codex:// handler, retain the native HWND fallback
+        // for Desktop sessions that happened to be bound previously.
+        if (!this.resolver.get(sessionKey)) return {
+          state: 'unavailable',
+          message: '无法调用 codex:// 会话链接；请确认 Codex Desktop 已安装并注册协议',
+        };
+      }
+    }
+    const info = this.status(sessionKey, url ? undefined : session);
     if (!info.ready) return {
       state: this.watching ? 'unbound' : 'unavailable', message: info.message,
     };

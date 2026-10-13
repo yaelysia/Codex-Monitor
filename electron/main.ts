@@ -57,7 +57,9 @@ if (firstInstance) {
         // The notification itself acknowledged only its own alert on click.
         // A partial result means the original window IS foreground; do not
         // immediately cover it with Monitor merely because the tab is unknown.
-        void windowTracker.focusOriginalWindow(key).then(result => {
+        const record = monitor.state().scan?.sources.flatMap(source => source.sessions)
+          .find(session => session.key === key);
+        void windowTracker.focusOriginalWindow(key, record).then(result => {
           if (!windowWasActivated(result)) mainWindow?.show(key);
         }).catch(() => mainWindow?.show(key));
       }, id => { monitor?.acknowledge(id); }),

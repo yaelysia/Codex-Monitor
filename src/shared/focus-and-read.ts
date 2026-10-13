@@ -13,6 +13,6 @@ export async function focusAndRead(
   const ids = alerts.filter(alert => alert.sessionKey === sessionKey && !alert.read)
     .map(alert => alert.id);
   const outcome = await focus();
-  if (outcome.state === 'focused' && ids.length) acknowledge(ids);
+  if ((outcome.state === 'focused' || outcome.state === 'opened') && ids.length) acknowledge(ids);
   return outcome;
 }

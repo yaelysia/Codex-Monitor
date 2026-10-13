@@ -60,15 +60,19 @@ export function registerIpcHandlers(monitor: MonitorService,
     typeof value === 'string' && value.length <= 300 &&
     monitor.state().scan?.sources.some(source =>
       source.sessions.some(session => session.key === value)) ? value : null;
+  const sessionFor = (key: string | null) => key
+    ? monitor.state().scan?.sources.flatMap(source => source.sessions)
+      .find(session => session.key === key) : undefined;
   ipcMain.handle('monitor:original-window-status', (_event, raw: unknown) => {
     const key = existingSessionKey(raw);
-    return key ? originalWindow.status(key) :
+    return key ? originalWindow.status(key, sessionFor(key)) :
       { ready: false, message: '当前会话不存在或已从监控范围移除' };
   });
   ipcMain.handle('monitor:focus-original-window', (_event, raw: unknown) => {
     const key = existingSessionKey(raw);
     return key ? focusAndRead(key, monitor.state().alerts,
-      () => originalWindow.focusOriginalWindow(key), ids => monitor.acknowledgeMany(ids)) :
+      () => originalWindow.focusOriginalWindow(key, sessionFor(key)),
+      ids => monitor.acknowledgeMany(ids)) :
       { state: 'unbound', message: '当前会话不存在或已从监控范围移除' };
   });
   ipcMain.handle('monitor:ack-alert', (_event, id: unknown) => {
