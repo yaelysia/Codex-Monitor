@@ -221,54 +221,90 @@ namespace CodexMonitor {
         ",\"nativeTabLikeChildren\":" + msaa.NativeTabLikeChildren.ToString(CultureInfo.InvariantCulture) +
         "}";
     }
+    // Metadata-only classification: never return titles, HWNDs, PIDs or paths.
+    // A rejected large window may be the actual MobaXterm GUI in some builds.
+    // The read-only diagnostic may inspect it, but cannot select/focus it.
+    private static string MobaWindowPolicy(IntPtr hwnd, int index, bool hasRect,
+      bool unowned, bool toolWindow, int width, int height, bool accepted) {
+      string geometry = !hasRect ? "unavailable" :
+        width >= 300 && height >= 200 ? "large" : "small";
+      return "{\"index\":" + index.ToString(CultureInfo.InvariantCulture) +
+        ",\"mainCandidate\":" + (accepted ? "true" : "false") +
+        ",\"hasOwner\":" + (unowned ? "false" : "true") +
+        ",\"toolWindow\":" + (toolWindow ? "true" : "false") +
+        ",\"geometry\":\"" + geometry + "\"" +
+        ",\"minimized\":" + (IsIconic(hwnd) ? "true" : "false") +
+        "}";
+    }
     public static void InspectTabs() {
+      const int MAX_DIAGNOSTIC_WINDOWS = 6;
+      const int MAX_REJECTED_PROBES = 2;
       var candidates = new List<IntPtr>();
       var allVisible = new List<IntPtr>();
+      var policies = new List<string>();
+      var rejectedProbes = new List<IntPtr>();
       EnumWindows(delegate(IntPtr hwnd, IntPtr unused) {
         if (!IsWindowVisible(hwnd) || !MobaTabProbe.IsMobaWindow(hwnd)) return true;
         allVisible.Add(hwnd);
         Rect bounds;
-        if (!GetWindowRect(hwnd, out bounds)) return true;
+        bool hasRect = GetWindowRect(hwnd, out bounds);
+        int width = hasRect ? bounds.right - bounds.left : 0;
+        int height = hasRect ? bounds.bottom - bounds.top : 0;
         bool unowned = GetWindow(hwnd, 4) == IntPtr.Zero;
-        int exStyle = GetWindowLong(hwnd, -20);
-        if (MainCandidatePolicy(unowned, exStyle, bounds.right - bounds.left,
-          bounds.bottom - bounds.top)) candidates.Add(hwnd);
+        bool toolWindow = (GetWindowLong(hwnd, -20) & 0x80) != 0;
+        bool accepted = hasRect &&
+          MainCandidatePolicy(unowned, toolWindow ? 0x80 : 0, width, height);
+        if (allVisible.Count <= MAX_DIAGNOSTIC_WINDOWS)
+          policies.Add(MobaWindowPolicy(hwnd, allVisible.Count, hasRect,
+            unowned, toolWindow, width, height, accepted));
+        if (accepted) candidates.Add(hwnd);
+        else if (hasRect && width >= 300 && height >= 200 &&
+          rejectedProbes.Count < MAX_REJECTED_PROBES)
+          rejectedProbes.Add(hwnd);
         return true;
       }, IntPtr.Zero);
+      string visible = String.Join(",", policies.ToArray());
       if (candidates.Count == 0) {
+        // A strict geometry/ownership policy can filter a legitimate GUI.
+        // Safely inspect up to two large rejected windows without activating
+        // any of them; identities are still NOT valid navigation bindings.
+        var rejected = new List<string>();
+        for (int n = 0; n < rejectedProbes.Count; n++)
+          rejected.Add(DescribeMobaTabs(rejectedProbes[n], n + 1));
         string reason = allVisible.Count == 0 ? "no_visible_mobaxterm" :
           "no_visible_main_mobaxterm_window";
         Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false," +
           "\"provider\":\"none\",\"reason\":\"" + reason +
           "\",\"visibleProcessWindows\":" + allVisible.Count.ToString(CultureInfo.InvariantCulture) +
-          ",\"mainCandidates\":0,\"candidates\":[]}");
+          ",\"mainCandidates\":0,\"visibleWindows\":[" + visible +
+          "],\"rejectedProbes\":[" + String.Join(",", rejected.ToArray()) +
+          "],\"candidates\":[]}");
         return;
       }
       // With several genuine main windows, inspect each safely rather than
-      // reporting empty tab metrics. Never select a window just by its index.
-      const int MAX_DIAGNOSTIC_WINDOWS = 6;
+      // reporting empty tab metrics. Never select a window by index.
       var details = new List<string>();
       int identifiedCount = 0;
-      for (int i = 0; i < candidates.Count && i < MAX_DIAGNOSTIC_WINDOWS; i++) {
-        string item = DescribeMobaTabs(candidates[i], i + 1);
+      for (int n = 0; n < candidates.Count && n < MAX_DIAGNOSTIC_WINDOWS; n++) {
+        string item = DescribeMobaTabs(candidates[n], n + 1);
         details.Add(item);
         if (item.Contains("\"identified\":true")) identifiedCount++;
       }
       bool unique = candidates.Count == 1;
       string summary = details.Count == 1 ? details[0] : null;
       if (unique && summary != null) {
-        // Preserve flat fields used by previous diagnostics, add candidate
-        // counts and a structured per-window read-only evidence summary.
         Console.WriteLine("{\"type\":\"tab-probe\"," + summary.Substring(1, summary.Length - 2) +
           ",\"visibleProcessWindows\":" + allVisible.Count.ToString(CultureInfo.InvariantCulture) +
-          ",\"mainCandidates\":1,\"candidates\":[" + summary + "]}");
+          ",\"mainCandidates\":1,\"visibleWindows\":[" + visible +
+          "],\"rejectedProbes\":[],\"candidates\":[" + summary + "]}");
       } else {
         Console.WriteLine("{\"type\":\"tab-probe\",\"count\":0,\"identified\":false," +
           "\"provider\":\"none\",\"reason\":\"multiple_main_mobaxterm_windows\"," +
           "\"visibleProcessWindows\":" + allVisible.Count.ToString(CultureInfo.InvariantCulture) +
           ",\"mainCandidates\":" + candidates.Count.ToString(CultureInfo.InvariantCulture) +
           ",\"selectableCandidates\":" + identifiedCount.ToString(CultureInfo.InvariantCulture) +
-          ",\"candidates\":[" + String.Join(",", details.ToArray()) + "]}");
+          ",\"visibleWindows\":[" + visible +
+          "],\"rejectedProbes\":[],\"candidates\":[" + String.Join(",", details.ToArray()) + "]}");
       }
     }
 

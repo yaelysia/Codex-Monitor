@@ -14,6 +14,7 @@ const execAsync = promisify(execFile);
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const MAX_TAIL = 320 * 1024;
 const MAX_TOTAL = 3 * 1024 * 1024;
+const RECENT_LOG_MS = 5 * 60_000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export function options(args) {
@@ -64,6 +65,15 @@ async function inspectLogs(root, now, target, seenEvents = new Set()) {
   // Useful when the GUI changes its log line format between versions.
   const markerHints = { appServerConnection: 0, responseRouted: 0,
     turnStart: 0, turnComplete: 0, conversationId: 0 };
+  // Syntax-only hints in the last five minutes. Do NOT turn these into
+  // session states; arbitrary log messages and untrusted text can contain
+  // event-like words.
+  const recentMarkerHints = {
+    logLines: 0, appServerConnection: 0, responseRouted: 0,
+    turnStart: 0, turnStartedNotification: 0, turnCompletedNotification: 0,
+    turnCompleteNotice: 0, conversationId: 0,
+  };
+  let truncatedTails = 0;
   let scannedFiles = 0;
   let byteBudget = MAX_TOTAL;
   for (const file of files.slice(0, 12)) {
@@ -72,6 +82,7 @@ async function inspectLogs(root, now, target, seenEvents = new Set()) {
     let handle;
     try {
       handle = await fs.open(file.path, 'r');
+      if (size < file.size) truncatedTails++;
       const buffer = Buffer.alloc(size);
       const {bytesRead} = await handle.read(buffer, 0, size, file.size-size);
       byteBudget -= bytesRead;
@@ -88,6 +99,23 @@ async function inspectLogs(root, now, target, seenEvents = new Set()) {
           if (line.includes('turn/completed') || line.includes('show turn-complete'))
             markerHints.turnComplete++;
           if (line.includes('conversationId=')) markerHints.conversationId++;
+        }
+        const prefix = /^(\S+)\s+(?:info|warning|error)\s+\[/.exec(line);
+        const lineAt = prefix ? Date.parse(prefix[1]) : NaN;
+        if (line.length <= 10_000 && Number.isFinite(lineAt) &&
+            lineAt <= now + 5000 && now - lineAt >= 0 &&
+            now - lineAt <= RECENT_LOG_MS) {
+          recentMarkerHints.logLines++;
+          if (line.includes('[AppServerConnection]')) {
+            recentMarkerHints.appServerConnection++;
+            if (/\bresponse_routed\b/.test(line)) recentMarkerHints.responseRouted++;
+          }
+          if (/\bturn\/start\b/.test(line)) recentMarkerHints.turnStart++;
+          if (/\bturn\/started\b/.test(line)) recentMarkerHints.turnStartedNotification++;
+          if (/\bturn\/completed\b/.test(line)) recentMarkerHints.turnCompletedNotification++;
+          if (line.includes('[desktop-notifications]') && line.includes('show turn-complete'))
+            recentMarkerHints.turnCompleteNotice++;
+          if (line.includes('conversationId=')) recentMarkerHints.conversationId++;
         }
         const event = candidate(line, now, target);
         if (!event) continue;
@@ -113,8 +141,14 @@ async function inspectLogs(root, now, target, seenEvents = new Set()) {
     scannedFiles === 0 ? 'log_files_unreadable' : 'readable_log_files';
   return {
     filesExamined: scannedFiles, candidatesFound: files.length,
-    discovery: { reason, roots: discovered.roots },
+    discovery: { reason, roots: discovered.roots,
+      newestCandidateWriteAgeSeconds: files.length
+        ? Math.max(0, Math.round((now - files[0].mtimeMs) / 1000)) : null,
+      candidateFilesNotRead: Math.max(0, files.length - scannedFiles),
+      truncatedTails,
+    },
     markerHints,
+    recentMarkerHints,
     events: counts,
     latestStartAgeSeconds: latest.acceptedStart == null
       ? null : Math.max(0, Math.round((now-latest.acceptedStart)/1000)),
@@ -133,7 +167,7 @@ async function inspectMoba() {
     const { stdout } = await execAsync('powershell.exe', [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', command, '-Mode', 'inspect-tabs',
-    ], { timeout: 15_000, maxBuffer: 4096, windowsHide: true });
+    ], { timeout: 15_000, maxBuffer: 8192, windowsHide: true });
     const lines = stdout.split(/\r?\n/);
     const data = lines.map(line => { try { return JSON.parse(line); } catch { return null; } })
       .find(obj => obj?.type === 'tab-probe');
@@ -157,12 +191,28 @@ async function inspectMoba() {
         nativeTabLikeChildren: number('nativeTabLikeChildren'),
       };
     };
+    const bool = value => value === true;
+    const windowPolicy = entry => ({
+      index: Number.isInteger(entry.index) && entry.index >= 1 && entry.index <= 6 ? entry.index : 0,
+      mainCandidate: bool(entry.mainCandidate),
+      hasOwner: bool(entry.hasOwner),
+      toolWindow: bool(entry.toolWindow),
+      geometry: ['large', 'small', 'unavailable'].includes(entry.geometry)
+        ? entry.geometry : 'unavailable',
+      minimized: bool(entry.minimized),
+    });
     return {
       available: true,
       ...sanitized(data),
       visibleProcessWindows: allowed('visibleProcessWindows'),
       mainCandidates: allowed('mainCandidates'),
       selectableCandidates: allowed('selectableCandidates'),
+      visibleWindows: Array.isArray(data.visibleWindows)
+        ? data.visibleWindows.slice(0, 6).filter(e => e && typeof e === 'object')
+          .map(windowPolicy) : [],
+      rejectedProbes: Array.isArray(data.rejectedProbes)
+        ? data.rejectedProbes.slice(0, 2).filter(e => e && typeof e === 'object')
+          .map(sanitized) : [],
       candidates: Array.isArray(data.candidates)
         ? data.candidates.slice(0, 6).filter(e => e && typeof e === 'object')
           .map(sanitized) : [],

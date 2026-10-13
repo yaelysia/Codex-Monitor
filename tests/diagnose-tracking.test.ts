@@ -61,9 +61,18 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
         appServerConnection: 2, responseRouted: 2,
         turnStart: 3, turnComplete: 1, conversationId: 4,
       },
+      recentMarkerHints: {
+        logLines: 4, appServerConnection: 2, responseRouted: 2,
+        turnStart: 3, turnStartedNotification: 1,
+        turnCompletedNotification: 0, turnCompleteNotice: 1, conversationId: 4,
+      },
     });
     expect(output.stdout).not.toMatch(/PRIVATE_SECRET|PRIVATE_TEXT|conversationId=|01a09f3b/);
     expect(output.stdout).not.toContain(root);
+    expect(obj.desktop.discovery).toMatchObject({
+      candidateFilesNotRead: 0, truncatedTails: 0,
+      newestCandidateWriteAgeSeconds: expect.any(Number),
+    });
   });
 
   it('keeps a start that arrives after the first poll and counts it only once', async () => {
