@@ -233,7 +233,11 @@ describe('long running Desktop log rotation continuity', () => {
     const task = row('unknown');
     applyDesktopLogEvidence([task], finished, NOW + 18 * 60_000);
     expect(task.status).toBe('unknown');
-    expect(memory.observe(new Map(), NOW + 25 * 60 * 60_000)).toEqual(new Map());
+    // The bounded long-turn ordering cache now lasts 72 hours, so an older
+    // completion still suppresses historical starts through that window.
+    expect(memory.observe(new Map(), NOW + 25 * 60 * 60_000).get(SESSION)?.type)
+      .toBe('turn-displayed-complete');
+    expect(memory.observe(new Map(), NOW + 73 * 60 * 60_000)).toEqual(new Map());
   });
 });
 
