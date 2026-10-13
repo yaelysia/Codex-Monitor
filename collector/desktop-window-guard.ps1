@@ -85,8 +85,10 @@ namespace CodexMonitor {
     private static List<Entry> Capture() {
       var result = new List<Entry>();
       EnumWindows(delegate(IntPtr hwnd, IntPtr ignored) {
-        if (result.Count >= 16 || !IsWindowVisible(hwnd) || IsIconic(hwnd) ||
-            GetWindow(hwnd, 4) != IntPtr.Zero) return true;
+        // Some packaged Desktop builds expose an owned main HWND. Do not
+        // exclude those: exact Codex process identity, visible size and the
+        // post-link foreground identity guard still prevent wrong-window edits.
+        if (result.Count >= 16 || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return true;
         Rect bounds;
         if (!GetWindowRect(hwnd, out bounds) ||
             bounds.Right - bounds.Left < 300 || bounds.Bottom - bounds.Top < 200) return true;
