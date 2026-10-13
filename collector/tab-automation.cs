@@ -45,14 +45,7 @@ namespace CodexMonitor {
       try {
         selection = element.GetCurrentPattern(SelectionItemPattern.Pattern)
           as SelectionItemPattern;
-        if (selection != null && selection.Current.IsSelected) return true;
-      } catch { /* TabItem might provide legacy accessibility only. */ }
-      try {
-        // Native Windows tabs may implement LegacyIAccessible state even when
-        // SelectionItemPattern is absent. STATE_SYSTEM_SELECTED is bit 0x2.
-        LegacyIAccessiblePattern legacy = element.GetCurrentPattern(
-          LegacyIAccessiblePattern.Pattern) as LegacyIAccessiblePattern;
-        return legacy != null && (legacy.Current.State & 0x2) != 0;
+        return selection != null && selection.Current.IsSelected;
       } catch { return false; }
     }
 
@@ -130,20 +123,10 @@ namespace CodexMonitor {
         System.Threading.Thread.Sleep(120);
         if (SelectedUiaToken(hwnd, id)) return true;
 
-        // Windows UIA LegacyIAccessiblePattern.DoDefaultAction is the same
-        // page-tab click exposed through MSAA. It is a last-resort fallback
-        // for the target's exact runtime ID, never generic keyboard cycling.
+        // Managed UIAutomationClient 2.0 lacks the LegacyIAccessiblePattern
+        // class. MobaTabProbe handles real native MSAA separately. For a UIA
+        // runtime-ID target, only attempt the standard managed InvokePattern.
         if (!MobaTabProbe.IsMobaWindow(hwnd)) return false;
-        try {
-          LegacyIAccessiblePattern legacy = target.GetCurrentPattern(
-            LegacyIAccessiblePattern.Pattern) as LegacyIAccessiblePattern;
-          if (legacy != null) {
-            legacy.DoDefaultAction();
-            System.Threading.Thread.Sleep(120);
-          }
-        } catch { /* Provider may not implement a usable legacy action. */ }
-        if (SelectedUiaToken(hwnd, id)) return true;
-
         try {
           InvokePattern invoke = target.GetCurrentPattern(
             InvokePattern.Pattern) as InvokePattern;
