@@ -200,17 +200,23 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
  */
 export async function projectDesktopRuntime(
   snapshot: ScanResponse, now = Date.now(),
+  dependencies: {
+    platform?: NodeJS.Platform;
+    inspect?: typeof inspectDesktopLogSignals;
+    cache?: DesktopLogEventCache;
+  } = {},
 ): Promise<ScanResponse> {
-  if (process.platform !== 'win32' || !snapshot.sources.some(src =>
+  if ((dependencies.platform ?? process.platform) !== 'win32' || !snapshot.sources.some(src =>
       !src.error && src.sessions.some(s => !s.isSubagent))) return snapshot;
-  const inspected = await inspectDesktopLogSignals(now).catch(() => ({
+  const inspected = await (dependencies.inspect ?? inspectDesktopLogSignals)(now).catch(() => ({
     events: new Map(), logFilesRead: 0, signalCount: 0,
     discovery: null,
   }));
-  const evidence = desktopLogCache.observe(inspected.events, now);
+  const eventCache = dependencies.cache ?? desktopLogCache;
+  const evidence = eventCache.observe(inspected.events, now);
   // Prevent a Monitor restart from losing an already observed accepted start
   // after Codex Desktop's verbose log rotates the original line away.
-  desktopEvidenceStore?.update(desktopLogCache.snapshot(now));
+  if (!dependencies.cache) desktopEvidenceStore?.update(eventCache.snapshot(now));
   return {
     ...snapshot,
     sources: snapshot.sources.map(source => {
@@ -221,8 +227,12 @@ export async function projectDesktopRuntime(
       for (const row of sessions) {
         // An exact GUI-owned UUID hit is evidence that Desktop, rather than
         // the recorded session creator, currently owns this thread.
-        if (!row.isSubagent && evidence.has(row.id.toLowerCase()))
-          row.desktopRuntimeObserved = true;
+        // Only a still-active GUI-owned turn is a CURRENT Desktop runtime.
+        // A historical Desktop completion must not hijack an unrelated CLI
+        // session's "return to window" link.
+        const current = evidence.get(row.id.toLowerCase());
+        if (!row.isSubagent && current?.type === 'turn-start-accepted' &&
+            row.status === 'working') row.desktopRuntimeObserved = true;
       }
       for (const row of sessions) {
         if (row.isSubagent || row.status !== 'unknown' ||

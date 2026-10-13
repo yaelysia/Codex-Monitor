@@ -22,7 +22,8 @@ function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): bool
       const old = left.sessions[j]!, fresh = right.sessions[j]!;
       if (old.key !== fresh.key || old.status !== fresh.status ||
           old.statusReason !== fresh.statusReason ||
-          old.finishedToken !== fresh.finishedToken) return true;
+          old.finishedToken !== fresh.finishedToken ||
+          old.desktopRuntimeObserved !== fresh.desktopRuntimeObserved) return true;
     }
   }
   return false;

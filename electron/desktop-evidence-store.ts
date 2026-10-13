@@ -10,7 +10,6 @@ const MAX_RECORDS = 200;
  */
 export class DesktopEvidenceStore {
   private readonly file: string;
-  private pending: DesktopLogEvent[] = [];
   private lastJSON = '';
   private timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -38,7 +37,6 @@ export class DesktopEvidenceStore {
     const json = JSON.stringify({ version: 1, events: next });
     if (json === this.lastJSON) return;
     this.lastJSON = json;
-    this.pending = next;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), 800);
     this.timer.unref?.();

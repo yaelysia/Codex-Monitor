@@ -169,8 +169,14 @@ export class DesktopLogEventCache {
 
   observe(events: ReadonlyMap<string, DesktopLogEvent>, now = Date.now()): Map<string, DesktopLogEvent> {
     for (const [threadId, event] of events) {
-      if (!parseSavedDesktopEvent(event, now) && (event.at <= 0 ||
-          event.at > now + 5000 || now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS)) continue;
+      // Live events may be older than the short restored-event TTL. They
+      // still need valid structure, provenance type and a bounded 24h age.
+      if (!UUID.test(threadId) ||
+          (event.type !== 'turn-start-accepted' && event.type !== 'turn-displayed-complete') ||
+          !Number.isSafeInteger(event.at) || event.at <= 0 ||
+          event.at > now + 5000 || now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS ||
+          (event.type === 'turn-displayed-complete' &&
+            (!event.turnId || !UUID.test(event.turnId)))) continue;
       const prior = this.latest.get(threadId);
       if (!prior || event.at > prior.at ||
           (event.at === prior.at && event.type === 'turn-displayed-complete')) {
