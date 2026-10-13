@@ -123,6 +123,22 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
     });
   });
 
+  it('recovers a 20-hour uncompleted GUI start on first Monitor scan', async () => {
+    const root = temp();
+    write(root, [accepted(-20 * 3600)]);
+    // Cold boot reads the historical first-party event without any in-memory
+    // cache or file growth while the monitor was stopped.
+    const events = await readDesktopLogSignals(NOW, root);
+    const start = events.get(SESSION);
+    expect(start).toMatchObject({ type: 'turn-start-accepted',
+      at: NOW - 20 * 60 * 60_000 });
+    const longTurn = row('unknown');
+    longTurn.updatedAt = NOW - 20 * 60 * 60_000;
+    applyDesktopLogEvidence([longTurn], events, NOW);
+    expect(longTurn.status).toBe('working');
+    expect(longTurn.statusReason).toContain('未实时确认');
+  });
+
   it('reads the actual local Desktop app log instead of a separate app server', async () => {
     const root = temp();
     write(root, [accepted(-30), completed(-10), accepted(-5, OTHER)]);
