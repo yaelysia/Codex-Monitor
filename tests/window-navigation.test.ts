@@ -3,7 +3,7 @@ import { windowWasActivated } from '../src/shared/window-navigation';
 import type { OriginalWindowFocusResult } from '../src/shared/types';
 
 describe('original window focus results', () => {
-  it.each(['focused', 'partial'] as const)(
+  it.each(['focused', 'opened', 'partial'] as const)(
     'leaves the original window in the foreground after %s', state => {
       const result: OriginalWindowFocusResult = { state, message: 'observed' };
       expect(windowWasActivated(result)).toBe(true);

@@ -47,3 +47,15 @@ describe('acknowledge only on successful original-window navigation', () => {
     expect(acknowledge).not.toHaveBeenCalled();
   });
 });
+
+describe('official Desktop protocol acknowledgement semantics', () => {
+  it('acknowledges an explicit user navigation handled by the OS protocol', async () => {
+    const acknowledge = vi.fn();
+    const result: OriginalWindowFocusResult = {
+      state: 'opened', message: 'Handed off to installed Codex Desktop',
+    };
+    expect(await focusAndRead('s', [entry('a', 's')], async () => result, acknowledge))
+      .toEqual(result);
+    expect(acknowledge).toHaveBeenCalledExactlyOnceWith(['a']);
+  });
+});

@@ -3,11 +3,14 @@ import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ScanResponse } from '../src/shared/types';
+import type { ScanResponse, SessionRecord } from '../src/shared/types';
 
-const fake = vi.hoisted(() => ({ spawn: vi.fn(), execFile: vi.fn() }));
+const fake = vi.hoisted(() => ({
+  spawn: vi.fn(), execFile: vi.fn(), openExternal: vi.fn(),
+}));
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => 'C:\\Codex-Monitor' },
+  shell: { openExternal: fake.openExternal },
 }));
 vi.mock('node:child_process', () => ({
   spawn: fake.spawn,
@@ -38,6 +41,9 @@ beforeEach(() => {
   vi.setSystemTime(Date.parse('2026-10-12T08:00:00Z'));
   children.length = 0;
   fake.spawn.mockReset();
+  fake.execFile.mockReset();
+  fake.openExternal.mockReset();
+  fake.openExternal.mockResolvedValue(undefined);
   fake.spawn.mockImplementation(() => {
     const child = new NativeChild();
     children.push(child);
@@ -182,5 +188,72 @@ describe('original-window persistent bindings across Monitor restarts', () => {
       const next = JSON.parse(fs.readFileSync(path.join(storage, 'window-bindings.json'), 'utf8'));
       expect(next.bindings).toHaveLength(0);
     } finally { fs.rmSync(storage, { recursive: true, force: true }); }
+  });
+});
+
+describe('Desktop official deep-link navigation', () => {
+  const desktop = (overrides: Partial<SessionRecord> = {}): SessionRecord => ({
+    id: sessionKey.slice('local:'.length), key: sessionKey,
+    sourceId: 'local', sourceLabel: 'Windows', workspace: null,
+    title: 'Desktop task', status: 'working', statusReason: 'native',
+    clientKind: 'desktop', updatedAt: Date.now(), startedAt: null,
+    ...overrides,
+  });
+
+  it('opens the exact Desktop thread without waiting for an HWND binding', async () => {
+    const tracker = new AutoWindowTracker('win32');
+    expect(tracker.status(sessionKey).ready).toBe(false);
+    expect(tracker.status(sessionKey, desktop())).toMatchObject({
+      ready: true, host: 'desktop',
+    });
+    const result = await tracker.focusOriginalWindow(sessionKey, desktop());
+    expect(result.state).toBe('opened');
+    expect(fake.openExternal).toHaveBeenCalledExactlyOnceWith(
+      'codex://threads/019a1020-0000-7000-8000-111122223333');
+    expect(fake.execFile).not.toHaveBeenCalled();
+  });
+
+  it('handles a CLI-originated thread resumed in Desktop without hijacking a normal CLI task', async () => {
+    const tracker = new AutoWindowTracker('win32');
+    const cli = desktop({ clientKind: 'terminal' });
+    expect(tracker.status(sessionKey, cli).ready).toBe(false);
+    await tracker.focusOriginalWindow(sessionKey, { ...cli, desktopRuntimeObserved: true });
+    expect(fake.openExternal).toHaveBeenCalledTimes(1);
+    expect(tracker.status(sessionKey, { ...cli, desktopRuntimeObserved: true })).toMatchObject({
+      ready: true, host: 'desktop',
+    });
+  });
+
+  it('reports an unregistered Desktop protocol instead of guessing a window', async () => {
+    const tracker = new AutoWindowTracker('win32');
+    fake.openExternal.mockRejectedValueOnce(new Error('protocol not registered'));
+    const result = await tracker.focusOriginalWindow(sessionKey, desktop());
+    expect(result.state).toBe('unavailable');
+    expect(result.message).toContain('codex://');
+    expect(fake.execFile).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a previously verified HWND if protocol invocation fails', async () => {
+    const tracker = new AutoWindowTracker('win32');
+    const at = Date.now();
+    tracker.start();
+    try {
+      children.at(-1)!.stdout.emit('data', Buffer.from(JSON.stringify({
+        type: 'foreground', at: at - 1000, hwnd: '0x1357', pid: 1357,
+        startedAt: 1000, app: 'desktop',
+      }) + '\n'));
+      const s: ScanResponse = { scannedAt: at, sources: [{
+        id: 'local', kind: 'local', label: 'Windows', error: null,
+        sessions: [{ ...desktop(), lastUserInputAgeAtSourceMs: 200 }],
+      }] };
+      tracker.observeScan(s);
+      expect(tracker.status(sessionKey).ready).toBe(true);
+      fake.openExternal.mockRejectedValueOnce(new Error('protocol missing'));
+      fake.execFile.mockImplementationOnce((_cmd, _args, _opts, cb) => {
+        cb(null, '{"ok":true,"tabFocused":false}\n', '');
+      });
+      expect((await tracker.focusOriginalWindow(sessionKey, desktop())).state).toBe('focused');
+      expect(fake.execFile).toHaveBeenCalledTimes(1);
+    } finally { tracker.stop(); }
   });
 });
