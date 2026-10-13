@@ -18,8 +18,9 @@ function write(root: string, entries: string[], msix = false) {
     String(date.getMonth() + 1).padStart(2, '0'),
     String(date.getDate()).padStart(2, '0'));
   fs.mkdirSync(folder, { recursive: true });
-  fs.writeFileSync(path.join(folder, 'codex-desktop-fixture-1234-t0-i1.log'),
-    entries.join('\n') + '\n');
+  const file = path.join(folder, 'codex-desktop-fixture-1234-t0-i1.log');
+  fs.writeFileSync(file, entries.join('\n') + '\n');
+  return file;
 }
 function run(root: string, ...args: string[]) {
   return spawnSync(process.execPath, [script, ...args], {
@@ -77,7 +78,7 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
 
   it('keeps a start that arrives after the first poll and counts it only once', async () => {
     const root = tmp();
-    write(root, ['initial diagnostic noise']);
+    const file = write(root, ['initial diagnostic noise']);
     const child = spawn(process.execPath, [script, '--duration', '1', '--no-moba'], {
       cwd: path.resolve('.'), env: { ...process.env, LOCALAPPDATA: root, NODE_NO_WARNINGS: '1' },
     });
@@ -93,8 +94,11 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
     });
     // Simulate Desktop accepting a turn during the observation interval.
     await new Promise(resolve => setTimeout(resolve, 600));
-    write(root, [new Date().toISOString() + ' info [AppServerConnection] response_routed ' +
-      'conversationId=' + uuid + ' method=turn/start errorCode=null']);
+    // 650 KiB of later verbose logs push turn/start far outside the old
+    // 320-KiB tail, but an append cursor must still observe it.
+    fs.appendFileSync(file, new Date().toISOString() + ' info [AppServerConnection] response_routed ' +
+      'conversationId=' + uuid + ' method=turn/start errorCode=null\n' +
+      new Date().toISOString() + ' info [noise] ' + 'x'.repeat(650_000) + '\n');
     const exit = await ended;
     expect(exit, stderr).toBe(0);
     const summary = JSON.parse(stdout).desktop;

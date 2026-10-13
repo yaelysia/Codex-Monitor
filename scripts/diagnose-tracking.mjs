@@ -3,17 +3,15 @@
  * No session transcript, terminal contents, account data, tab captions or raw
  * log lines are printed. Not a real-time App Server subscription.
  */
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { discoverDesktopLogFiles } from './desktop-log-discovery.mjs';
+import { DesktopLogFollower } from './desktop-log-follower.mjs';
 
 const execAsync = promisify(execFile);
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
-const MAX_TAIL = 320 * 1024;
-const MAX_TOTAL = 3 * 1024 * 1024;
 const RECENT_LOG_MS = 5 * 60_000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -56,7 +54,7 @@ function candidate(line, now, target) {
   return { at, type, id };
 }
 
-async function inspectLogs(root, now, target, seenEvents = new Set()) {
+async function inspectLogs(root, now, target, seenEvents, follower) {
   const discovered = await discoverDesktopLogFiles(root, now);
   const files = discovered.files;
   const counts = { acceptedStart: 0, failedStart: 0, turnCompleteNotice: 0, unknownConversation: 0 };
@@ -73,25 +71,7 @@ async function inspectLogs(root, now, target, seenEvents = new Set()) {
     turnStart: 0, turnStartedNotification: 0, turnCompletedNotification: 0,
     turnCompleteNotice: 0, conversationId: 0,
   };
-  let truncatedTails = 0;
-  let scannedFiles = 0;
-  let byteBudget = MAX_TOTAL;
-  for (const file of files.slice(0, 12)) {
-    if (byteBudget <= 0) break;
-    const size = Math.min(file.size, MAX_TAIL, byteBudget);
-    let handle;
-    try {
-      handle = await fs.open(file.path, 'r');
-      if (size < file.size) truncatedTails++;
-      const buffer = Buffer.alloc(size);
-      const {bytesRead} = await handle.read(buffer, 0, size, file.size-size);
-      byteBudget -= bytesRead;
-      scannedFiles++;
-      const chunk = buffer.subarray(0, bytesRead).toString('utf8');
-      const lines = chunk.split(/\r?\n/);
-      if (size < file.size) lines.shift();
-      if (!chunk.endsWith('\n')) lines.pop();
-      for (const line of lines) {
+  const followed = await follower.scan(files, line => {
         if (line.length <= 10_000) {
           if (line.includes('[AppServerConnection]')) markerHints.appServerConnection++;
           if (line.includes('response_routed')) markerHints.responseRouted++;
@@ -127,9 +107,9 @@ async function inspectLogs(root, now, target, seenEvents = new Set()) {
         counts[event.type]++;
         if (event.type in latest)
           latest[event.type] = Math.max(latest[event.type] ?? 0, event.at);
-      }
-    } catch {} finally { await handle?.close().catch(()=>{}); }
-  }
+  });
+  const scannedFiles = followed.trackedFiles;
+  const truncatedTails = followed.truncatedTails;
   const exists = discovered.roots.filter(root => root.exists).length;
   const logNames = discovered.roots.reduce((count, root) => count + root.matchedNames, 0);
   const anyLogs = discovered.roots.reduce((count, root) => count + root.anyLogFiles, 0);
@@ -146,6 +126,7 @@ async function inspectLogs(root, now, target, seenEvents = new Set()) {
         ? Math.max(0, Math.round((now - files[0].mtimeMs) / 1000)) : null,
       candidateFilesNotRead: Math.max(0, files.length - scannedFiles),
       truncatedTails,
+      unreadBacklogFiles: followed.backlogFiles,
     },
     markerHints,
     recentMarkerHints,
@@ -232,13 +213,24 @@ async function run(args) {
   // Report unique lifecycle events observed across the ENTIRE duration, not
   // only the last log tail. Otherwise rotating logs can hide a captured start.
   const seenEvents = new Set();
+  const follower = new DesktopLogFollower();
+  const markerTotals = {};
+  const recentTotals = {};
+  let maxTruncatedTails = 0;
+  let maxUnreadBacklogFiles = 0;
   const totals = { acceptedStart: 0, failedStart: 0, turnCompleteNotice: 0, unknownConversation: 0 };
   let latestStartAt = null;
   let latestCompleteAt = null;
   while (true) {
     const sampledAt = Date.now();
-    logSummary = await inspectLogs(localAppData, sampledAt, opts.threadId, seenEvents);
+    logSummary = await inspectLogs(localAppData, sampledAt, opts.threadId, seenEvents, follower);
     for (const name of Object.keys(totals)) totals[name] += logSummary.events[name];
+    for (const [name, value] of Object.entries(logSummary.markerHints))
+      markerTotals[name] = (markerTotals[name] ?? 0) + value;
+    for (const [name, value] of Object.entries(logSummary.recentMarkerHints))
+      recentTotals[name] = (recentTotals[name] ?? 0) + value;
+    maxTruncatedTails = Math.max(maxTruncatedTails, logSummary.discovery.truncatedTails);
+    maxUnreadBacklogFiles = Math.max(maxUnreadBacklogFiles, logSummary.discovery.unreadBacklogFiles);
     if (logSummary.latestStartAgeSeconds !== null) {
       const at = sampledAt - logSummary.latestStartAgeSeconds * 1000;
       latestStartAt = Math.max(latestStartAt ?? 0, at);
@@ -252,6 +244,10 @@ async function run(args) {
     // Always include the closing boundary, even when the sleep reaches stopAt.
   }
   logSummary.events = totals;
+  logSummary.markerHints = markerTotals;
+  logSummary.recentMarkerHints = recentTotals;
+  logSummary.discovery.truncatedTails = maxTruncatedTails;
+  logSummary.discovery.unreadBacklogFiles = maxUnreadBacklogFiles;
   logSummary.latestStartAgeSeconds = latestStartAt === null ? null :
     Math.max(0, Math.round((Date.now() - latestStartAt) / 1000));
   logSummary.latestCompleteAgeSeconds = latestCompleteAt === null ? null :

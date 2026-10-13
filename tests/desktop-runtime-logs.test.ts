@@ -163,6 +163,39 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
   });
 });
 
+describe('incremental Desktop log follow under heavy output', () => {
+  it('captures a start overwritten in the moving tail by 650 KiB of later messages', async () => {
+    const root = temp();
+    const file = write(root, [time(-10) + ' info [noise] initial']);
+    const initial = await inspectDesktopLogSignals(NOW, root);
+    expect(initial.events.has(SESSION)).toBe(false);
+    fs.appendFileSync(file, accepted(1) + '\n' +
+      time(2) + ' info [noise] ' + 'x'.repeat(650_000) + '\n');
+    fs.utimesSync(file, new Date(NOW + 3000), new Date(NOW + 3000));
+    const subsequent = await inspectDesktopLogSignals(NOW + 4000, root);
+    expect(subsequent.events.get(SESSION)?.type).toBe('turn-start-accepted');
+    expect(subsequent.signalCount).toBe(1);
+    // Reading later unchanged data does not fabricate new lifecycle events.
+    const unchanged = await inspectDesktopLogSignals(NOW + 5000, root);
+    expect(unchanged.events.has(SESSION)).toBe(false);
+  });
+
+  it('examines more than twelve simultaneous Desktop log files', async () => {
+    const root = temp();
+    const path0 = write(root, [accepted(-5)]);
+    const folder = path.dirname(path0);
+    for (let i = 0; i < 19; i++) {
+      const file = path.join(folder, 'codex-desktop-extra-' + i + '.log');
+      fs.writeFileSync(file, time(-3) + ' info [noise] heartbeat\n');
+      fs.utimesSync(file, new Date(NOW + i + 100), new Date(NOW + i + 100));
+    }
+    const summary = await inspectDesktopLogSignals(NOW + 1000, root);
+    expect(summary.discovery.recentCandidateCount).toBe(20);
+    expect(summary.logFilesRead).toBeGreaterThanOrEqual(20);
+    expect(summary.events.get(SESSION)?.type).toBe('turn-start-accepted');
+  });
+});
+
 describe('remote sessions controlled by the Windows Desktop app', () => {
   it('matches a Desktop-origin SSH session by its exact UUID, not filesystem path', () => {
     const remote = row('unknown');

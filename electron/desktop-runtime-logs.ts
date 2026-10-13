@@ -1,11 +1,9 @@
-import fs from 'node:fs/promises';
 import { desktopLogRoots, discoverDesktopLogFiles } from '../scripts/desktop-log-discovery.mjs';
+import { DesktopLogFollower } from '../scripts/desktop-log-follower.mjs';
 import { parseDesktopLogEvent, newestDesktopEvents,
   type DesktopLogEvent } from '../src/shared/desktop-log-status';
 
-const MAX_LOG_FILES = 12;
-const MAX_FILE_TAIL = 320 * 1024;
-const MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+const liveFollower = new DesktopLogFollower();
 
 /** Shared discovery for the Monitor and the support CLI; no duplicate
  * hard-coded date/package heuristics that silently disagree on real Windows.
@@ -26,14 +24,17 @@ export interface DesktopLogSummary {
     readableDayFolders: number;
     matchingLogNames: number;
     recentCandidateCount: number;
+    unreadBacklogFiles?: number;
   };
 }
 
-/** Reads only a bounded recent tail of first-party Codex Desktop log files,
- * after shared metadata-only discovery. Never returns any raw log line.
+/** Bootstrap each log's recent tail, then read appended COMPLETE lines across
+ * polls. A fast-growing log cannot silently push turn/start outside a fixed
+ * tail between four-second audits. Only validated lifecycle IDs are retained.
  */
 export async function inspectDesktopLogSignals(now = Date.now(),
-  localAppData = process.env.LOCALAPPDATA ?? ''): Promise<DesktopLogSummary> {
+  localAppData = process.env.LOCALAPPDATA ?? '',
+  follower: DesktopLogFollower = liveFollower): Promise<DesktopLogSummary> {
   const found = await discoverDesktopLogFiles(localAppData, now);
   const coverage = {
     validLocalAppData: found.validLocalAppData,
@@ -44,35 +45,21 @@ export async function inspectDesktopLogSignals(now = Date.now(),
     recentCandidateCount: found.files.length,
   };
   const events: DesktopLogEvent[] = [];
-  let filesRead = 0;
-  let budget = MAX_TOTAL_BYTES;
-  for (const item of found.files.slice(0, MAX_LOG_FILES)) {
-    if (budget <= 0) break;
-    const length = Math.min(budget, item.size, MAX_FILE_TAIL);
-    let handle: fs.FileHandle | null = null;
-    try {
-      handle = await fs.open(item.path, 'r');
-      const buffer = Buffer.alloc(length);
-      const { bytesRead } = await handle.read(buffer, 0, length, item.size - length);
-      if (!bytesRead) continue;
-      filesRead++;
-      budget -= bytesRead;
-      const chunk = buffer.subarray(0, bytesRead).toString('utf8');
-      const lines = chunk.split(/\r?\n/);
-      if (length < item.size) lines.shift();
-      if (!chunk.endsWith('\n')) lines.pop();
-      for (const line of lines) {
-        const event = parseDesktopLogEvent(line, now);
-        if (event) events.push(event);
-      }
-    } catch { /* Desktop may rotate or lock log files while writing. */ }
-    finally { await handle?.close().catch(() => {}); }
-  }
-  return { events: newestDesktopEvents(events),
-    logFilesRead: filesRead, signalCount: events.length, discovery: coverage };
+  const tracked = await follower.scan(found.files, line => {
+    const event = parseDesktopLogEvent(line, now);
+    if (event) events.push(event);
+  });
+  return {
+    events: newestDesktopEvents(events),
+    // Followed files remain readable even when they have not grown this tick.
+    logFilesRead: tracked.trackedFiles,
+    signalCount: events.length,
+    discovery: { ...coverage, unreadBacklogFiles: tracked.backlogFiles },
+  };
 }
 
 export async function readDesktopLogSignals(now = Date.now(),
   localAppData = process.env.LOCALAPPDATA ?? ''): Promise<Map<string, DesktopLogEvent>> {
-  return (await inspectDesktopLogSignals(now, localAppData)).events;
+  // Standalone one-shot readers must not consume the Monitor's live cursor.
+  return (await inspectDesktopLogSignals(now, localAppData, new DesktopLogFollower())).events;
 }
