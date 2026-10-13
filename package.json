@@ -58,6 +58,10 @@
         "to": "window-tracker.ps1"
       },
       {
+        "from": "collector/desktop-window-guard.ps1",
+        "to": "desktop-window-guard.ps1"
+      },
+      {
         "from": "collector/tab-automation.cs",
         "to": "tab-automation.cs"
       },

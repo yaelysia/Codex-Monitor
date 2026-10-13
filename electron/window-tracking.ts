@@ -5,6 +5,7 @@ import { AutoWindowResolver, normalizeForegroundWindow } from '../src/shared/aut
 import { WindowBindingStore } from './window-bindings-store';
 import type { OriginalWindowFocusResult, OriginalWindowStatus, ScanResponse, SessionRecord } from '../src/shared/types';
 import { desktopThreadUrl } from '../src/shared/desktop-navigation';
+import { openDesktopUrlKeepingGeometry } from './desktop-window-guard';
 
 const MAX_LINE_BYTES = 4096;
 const SCRIPT_TIMEOUT_MS = 8_000;
@@ -33,6 +34,12 @@ export class AutoWindowTracker {
     return app.isPackaged
       ? path.join(process.resourcesPath, 'window-tracker.ps1')
       : path.join(app.getAppPath(), 'collector', 'window-tracker.ps1');
+  }
+
+  private desktopGuardPath(): string {
+    return app.isPackaged
+      ? path.join(process.resourcesPath, 'desktop-window-guard.ps1')
+      : path.join(app.getAppPath(), 'collector', 'desktop-window-guard.ps1');
   }
 
   start(): void {
@@ -208,10 +215,11 @@ export class AutoWindowTracker {
     const url = this.platform === 'win32' ? desktopThreadUrl(session) : null;
     if (url) {
       try {
-        // Upstream Codex CLI/TUI uses this exact deep-link route to open an
-        // EXISTING Desktop thread. OS protocol activation may bring another
-        // existing app window forward; no HWND, window size or task is modified.
-        await shell.openExternal(url);
+        // Keep the official protocol route so the correct existing thread
+        // opens, but guard the originally maximized/normal Codex HWND from
+        // accidental window restoration during Windows protocol activation.
+        await openDesktopUrlKeepingGeometry(url, this.desktopGuardPath(),
+          target => shell.openExternal(target));
         return {
           state: 'opened',
           message: '已通过 Codex Desktop 官方会话链接请求打开该对话；实际显示取决于客户端协议处理',

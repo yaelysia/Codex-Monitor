@@ -25,6 +25,9 @@ jobs:
       - name: Compile Windows window observer without desktop interaction
         if: runner.os == 'Windows'
         run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode verify
+      - name: Compile Desktop window-state guard without interacting with any GUI
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/desktop-window-guard.ps1 -Mode verify
       - name: Smoke-test Windows foreground output without driving any GUI
         if: runner.os == 'Windows'
         shell: pwsh

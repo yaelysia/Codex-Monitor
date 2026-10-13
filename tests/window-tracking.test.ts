@@ -16,6 +16,10 @@ vi.mock('node:child_process', () => ({
   spawn: fake.spawn,
   execFile: fake.execFile,
 }));
+vi.mock('../electron/desktop-window-guard', () => ({
+  openDesktopUrlKeepingGeometry: vi.fn(async (url: string, _script: string,
+    open: (url: string) => Promise<void>) => open(url)),
+}));
 
 import { AutoWindowTracker } from '../electron/window-tracking';
 
