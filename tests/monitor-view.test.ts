@@ -46,6 +46,16 @@ describe('hybrid workspace + status dashboard', () => {
     }, NOW).map(item => item.id)).toEqual(['a', 'c']);
   });
 
+  it('keeps explicitly possible-running long tasks visible despite an old file timestamp', () => {
+    const rows = [
+      row('old-running', 'local', '/repo', 'working', NOW - 10 * 24 * 60 * 60_000),
+      row('old-unknown', 'local', '/repo', 'unknown', NOW - 10 * 24 * 60 * 60_000),
+    ];
+    expect(filterSessions(rows, {
+      query: '', status: 'all', recentOnly: true, sourceId: null, workspaceId: null,
+    }, NOW).map(x => x.id)).toEqual(['old-running']);
+  });
+
   it('places actual waiting ahead of unknown without claiming unknown needs approval', () => {
     const lanes = makeStatusLanes([
       row('unknown', 'local', '/repo', 'unknown'),

@@ -23,7 +23,10 @@ const LAST_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export function filterSessions(rows: SessionRecord[], options: ViewFilter, now: number): SessionRecord[] {
   const query = options.query.trim().toLocaleLowerCase();
   return rows.filter(row => {
-    if (options.recentOnly && now - row.updatedAt > LAST_WEEK_MS) return false;
+    // A legitimately running long turn may not write a rollout for days.
+    // "Recent only" must not hide its execution row solely by file mtime.
+    if (options.recentOnly && row.status !== 'working' &&
+        now - row.updatedAt > LAST_WEEK_MS) return false;
     if (options.status !== 'all' && row.status !== options.status) return false;
     if (options.sourceId && row.sourceId !== options.sourceId) return false;
     if (options.workspaceId && workspaceGroupKey(row.sourceId, row.workspace) !== options.workspaceId) return false;
