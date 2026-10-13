@@ -13,6 +13,7 @@ import { DesktopLogFollower } from './desktop-log-follower.mjs';
 const execAsync = promisify(execFile);
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const RECENT_LOG_MS = 5 * 60_000;
+const LONG_TURN_HISTORY_MS = 72 * 60 * 60_000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 export function options(args) {
@@ -39,7 +40,7 @@ function candidate(line, now, target) {
   if (line.length > 10_000) return null;
   const timeMatch = /^(\S+)\s+(info|warning|error)\s+/.exec(line);
   const at = timeMatch ? Date.parse(timeMatch[1]) : NaN;
-  if (!Number.isFinite(at) || now - at > 86400_000 || at > now + 5000) return null;
+  if (!Number.isFinite(at) || now - at > LONG_TURN_HISTORY_MS || at > now + 5000) return null;
   const id = /\bconversationId=([0-9a-f-]{36})(?=\s|$)/i.exec(line)?.[1]?.toLowerCase();
   if (!id || !UUID.test(id) || (target && id !== target)) return null;
   let type;

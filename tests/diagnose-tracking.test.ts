@@ -109,6 +109,19 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
     expect(stdout).not.toContain(root);
   });
 
+  it('counts a 30-hour prior accepted start for long-running legacy threads', () => {
+    const root = tmp();
+    write(root, [new Date(Date.now() - 30 * 60 * 60_000).toISOString() +
+      ' info [AppServerConnection] response_routed conversationId=' + uuid +
+      ' method=turn/start errorCode=null']);
+    const result = run(root, '--no-moba', '--thread-id', uuid);
+    expect(result.status, result.stderr).toBe(0);
+    const data = JSON.parse(result.stdout).desktop;
+    expect(data.events.acceptedStart).toBe(1);
+    expect(data.latestStartAgeSeconds).toBeGreaterThan(29 * 3600);
+    expect(result.stdout).not.toContain(uuid);
+  });
+
   it('detects MSIX log directory and safely rejects unsupported arguments', () => {
     const root = tmp();
     const now = new Date().toISOString();
