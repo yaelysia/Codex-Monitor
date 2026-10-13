@@ -7,6 +7,7 @@ import { resolveLocalRoot, scanLocal } from './local';
 import { SessionActivityTracker } from '../src/shared/activity-tracker';
 import { inspectDesktopLogSignals } from './desktop-runtime-logs';
 import { applyDesktopLogEvidence, DesktopLogEventCache } from '../src/shared/desktop-log-status';
+import { DesktopEvidenceStore } from './desktop-evidence-store';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
 const MAX_STDOUT = 5 * 1024 * 1024;
@@ -22,6 +23,19 @@ export function isInternalWslDistro(name: string): boolean {
 // outside our bounded scan window. Keep the observation transient and tentative.
 const activityTracker = new SessionActivityTracker();
 const desktopLogCache = new DesktopLogEventCache();
+let desktopEvidenceStore: DesktopEvidenceStore | null = null;
+
+/** Run once after Electron's app.whenReady(), before the first scan. */
+export function configureDesktopEvidenceStorage(directory: string, now = Date.now()): void {
+  if (process.platform !== 'win32' || desktopEvidenceStore) return;
+  const store = new DesktopEvidenceStore(directory);
+  desktopLogCache.restore(store.load(), now);
+  desktopEvidenceStore = store;
+}
+
+export function flushDesktopEvidenceStorage(): void {
+  desktopEvidenceStore?.flush();
+}
 
 /** One shared activity timeline across Windows, WSL and SSH, without changing the file adapters. */
 export function inferObservedActivity(sources: SourceResult[], now: number): void {
@@ -194,12 +208,16 @@ export async function projectDesktopRuntime(
     discovery: null,
   }));
   const evidence = desktopLogCache.observe(inspected.events, now);
+  // Prevent a Monitor restart from losing an already observed accepted start
+  // after Codex Desktop's verbose log rotates the original line away.
+  desktopEvidenceStore?.update(desktopLogCache.snapshot(now));
   return {
     ...snapshot,
     sources: snapshot.sources.map(source => {
       if (source.error) return source;
       const sessions = source.sessions.map(session => ({ ...session }));
-      applyDesktopLogEvidence(sessions, evidence, now);
+      applyDesktopLogEvidence(sessions, evidence, now,
+        source.capturedAt ?? snapshot.scannedAt);
       for (const row of sessions) {
         // An exact GUI-owned UUID hit is evidence that Desktop, rather than
         // the recorded session creator, currently owns this thread.

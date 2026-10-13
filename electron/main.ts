@@ -8,6 +8,7 @@ import { registerIpcHandlers } from './ipc-handlers';
 import { ResidentStore } from './resident-store';
 import { TrayController } from './tray';
 import { AutoWindowTracker } from './window-tracking';
+import { configureDesktopEvidenceStorage, flushDesktopEvidenceStorage } from './collector';
 import { windowWasActivated } from '../src/shared/window-navigation';
 
 if (process.platform === 'win32' && process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX === '1') {
@@ -48,6 +49,7 @@ if (firstInstance) {
       saved.dock,
       state => resident?.updateDock(state),
     );
+    configureDesktopEvidenceStorage(app.getPath('userData'));
     windowTracker = new AutoWindowTracker(process.platform, app.getPath('userData'));
     windowTracker.start();
     monitor = new MonitorService(
@@ -85,6 +87,7 @@ app.on('window-all-closed', () => { /* intentional: fully quit from tray */ });
 app.on('before-quit', () => {
   monitor?.stop();
   windowTracker?.stop();
+  flushDesktopEvidenceStorage();
   floating?.allowQuit();
   resident?.flush();
   tray?.destroy();
