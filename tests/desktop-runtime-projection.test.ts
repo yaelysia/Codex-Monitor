@@ -108,6 +108,24 @@ describe('end-to-end Desktop runtime evidence projection', () => {
     });
   });
 
+  it('does not attribute an independently working CLI turn to an expired Desktop start', async () => {
+    const original = thread({
+      status: 'working', clientKind: 'terminal', statusReason: 'CLI rollout turn-started',
+    });
+    // The cache intentionally keeps 24h of ordering history, but GUI ownership
+    // expires after 45m even when the filesystem already says "working".
+    const oldStart = event('turn-start-accepted', NOW - 50 * 60_000);
+    const state = await projectDesktopRuntime(snapshot(original), NOW, {
+      platform: 'win32', cache: new DesktopLogEventCache(),
+      inspect: inspect(oldStart),
+    });
+    expect(state.sources[0]!.sessions[0]).toMatchObject({
+      status: 'working', statusReason: 'CLI rollout turn-started',
+      clientKind: 'terminal',
+    });
+    expect(state.sources[0]!.sessions[0]!.desktopRuntimeObserved).toBeUndefined();
+  });
+
   it('keeps original working-state evidence but still reports active GUI ownership', async () => {
     const state = await projectDesktopRuntime(snapshot(thread({
       status: 'working', statusReason: 'rollout turn-started',

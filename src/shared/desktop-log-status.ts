@@ -64,6 +64,17 @@ function finishedAt(token: string | null | undefined): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
+/** Bound GUI ownership to the same active-evidence window as status projection.
+ * Older starts remain in the event cache for ordering, but cannot claim ownership
+ * of a newer CLI/VS Code turn that is independently still working.
+ */
+export function isActiveDesktopStart(
+  event: DesktopLogEvent | null | undefined, now = Date.now(),
+): event is DesktopLogEvent & { type: 'turn-start-accepted' } {
+  return event?.type === 'turn-start-accepted' &&
+    now - event.at >= -5000 && now - event.at <= DESKTOP_ACTIVE_EVIDENCE_MS;
+}
+
 /** Supplement local Desktop metadata with explicit GUI-owned turn/start events.
  * Never override waiting, failing, or aborted turns; a durable completion after
  * start wins. Never announce "definitely running" from this auxiliary source.
@@ -82,8 +93,7 @@ export function applyDesktopLogEvidence(
     // evidence regardless of the original clientKind.
     if (row.isSubagent) continue;
     const event = latest.get(row.id.toLowerCase());
-    if (!event || event.type !== 'turn-start-accepted' ||
-        now - event.at < -5000 || now - event.at > DESKTOP_ACTIVE_EVIDENCE_MS) continue;
+    if (!isActiveDesktopStart(event, now)) continue;
     if (row.status === 'waiting' || row.status === 'failed' || row.status === 'interrupted' ||
         row.pendingQuestionToken) continue;
     const completionAt = finishedAt(row.finishedToken);

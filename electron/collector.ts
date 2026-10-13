@@ -6,7 +6,7 @@ import type { ScanResponse, SessionRecord, Settings, SourceKind, SourceResult } 
 import { resolveLocalRoot, scanLocal } from './local';
 import { SessionActivityTracker } from '../src/shared/activity-tracker';
 import { inspectDesktopLogSignals } from './desktop-runtime-logs';
-import { applyDesktopLogEvidence, DesktopLogEventCache } from '../src/shared/desktop-log-status';
+import { applyDesktopLogEvidence, DesktopLogEventCache, isActiveDesktopStart } from '../src/shared/desktop-log-status';
 import { DesktopEvidenceStore } from './desktop-evidence-store';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
@@ -231,7 +231,7 @@ export async function projectDesktopRuntime(
         // A historical Desktop completion must not hijack an unrelated CLI
         // session's "return to window" link.
         const current = evidence.get(row.id.toLowerCase());
-        if (!row.isSubagent && current?.type === 'turn-start-accepted' &&
+        if (!row.isSubagent && isActiveDesktopStart(current, now) &&
             row.status === 'working') row.desktopRuntimeObserved = true;
       }
       for (const row of sessions) {
