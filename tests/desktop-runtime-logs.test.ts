@@ -55,7 +55,8 @@ describe('strict Windows Desktop lifecycle evidence', () => {
     expect(parseDesktopLogEvent(time(-5) + ' info [other] ' + accepted(-5), NOW)).toBeNull();
     expect(parseDesktopLogEvent(time(-5) + ' error [electron-message-handler] ' +
       'Received turn/started for unknown conversation conversationId=' + SESSION, NOW)).toBeNull();
-    expect(parseDesktopLogEvent(accepted(-24 * 3600 - 5), NOW)).toBeNull();
+    expect(parseDesktopLogEvent(accepted(-30 * 3600), NOW)?.type).toBe('turn-start-accepted');
+    expect(parseDesktopLogEvent(accepted(-73 * 3600), NOW)).toBeNull();
     expect(parseDesktopLogEvent(accepted(30), NOW)).toBeNull();
   });
 
@@ -100,8 +101,12 @@ describe('strict Windows Desktop lifecycle evidence', () => {
     const stable = row('unknown');
     applyDesktopLogEvidence([stable], completedEvent, NOW);
     expect(stable.status).toBe('unknown');
+    const longTurn = row('unknown');
+    applyDesktopLogEvidence([longTurn], event, NOW + 50 * 60_000);
+    expect(longTurn.status).toBe('working');
+    expect(longTurn.statusReason).toContain('未实时确认');
     const stale = row('unknown');
-    applyDesktopLogEvidence([stale], event, NOW + 50 * 60_000);
+    applyDesktopLogEvidence([stale], event, NOW + 73 * 60 * 60_000);
     expect(stale.status).toBe('unknown');
   });
 });
@@ -281,6 +286,19 @@ describe('persisted Desktop lifecycle evidence normalization', () => {
     expect(task.status).toBe('working');
   });
 
+  it('restores an uncompleted 20-hour start without fabricating a new timestamp', () => {
+    const first = new DesktopLogEventCache();
+    first.observe(newestDesktopEvents([parseDesktopLogEvent(accepted(-20 * 3600), NOW)!]), NOW);
+    const saved = first.snapshot(NOW);
+    expect(saved).toHaveLength(1);
+    const restored = new DesktopLogEventCache();
+    restored.restore(saved, NOW + 1000);
+    const visible = row('unknown');
+    applyDesktopLogEvidence([visible], restored.observe(new Map(), NOW + 1000), NOW + 1000);
+    expect(visible.status).toBe('working');
+    expect(visible.statusReason).toContain('未实时确认');
+  });
+
   it('prefers a later completion after restart and will not revive stale work', () => {
     const restarted = new DesktopLogEventCache();
     restarted.restore([{ threadId: SESSION, at: NOW - 30_000,
@@ -297,7 +315,7 @@ describe('persisted Desktop lifecycle evidence normalization', () => {
   it('rejects injected, expired, future and unscoped saved event fields', () => {
     const cache = new DesktopLogEventCache();
     cache.restore([
-      { threadId: SESSION, at: NOW - 46 * 60_000, type: 'turn-start-accepted' },
+      { threadId: SESSION, at: NOW - 73 * 60 * 60_000, type: 'turn-start-accepted' },
       { threadId: SESSION, at: NOW + 20_000, type: 'turn-start-accepted' },
       { threadId: '../prompt', at: NOW, type: 'turn-start-accepted' },
       { threadId: SESSION, at: NOW, type: 'turn-displayed-complete' },

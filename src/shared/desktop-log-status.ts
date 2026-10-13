@@ -6,11 +6,17 @@ export type DesktopLogEvent = {
   type: 'turn-start-accepted' | 'turn-displayed-complete';
   turnId?: string;
 };
-export const DESKTOP_LOG_EVENT_MAX_AGE_MS = 24 * 60 * 60_000;
+// A turn may keep running for many hours without further Desktop lifecycle
+// messages. Retain its trusted start/end ordering for up to three days; never
+// treat age alone as a completion signal.
+export const DESKTOP_LOG_EVENT_MAX_AGE_MS = 72 * 60 * 60_000;
+// Only recent starts establish CURRENT Desktop ownership for deep links.
 const DESKTOP_ACTIVE_EVIDENCE_MS = 45 * 60_000;
 const FILE_FINISH_SAFETY_MS = 2_000;
 const MAX_PERSISTED_EVENTS = 200;
-const MAX_PERSISTED_AGE_MS = DESKTOP_ACTIVE_EVIDENCE_MS;
+// Restore older, still-unmatched starts after a Monitor restart; otherwise a
+// running long turn disappears simply because the monitor was restarted.
+const MAX_PERSISTED_AGE_MS = DESKTOP_LOG_EVENT_MAX_AGE_MS;
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,9}Z\s+info\s+\[AppServerConnection\]\s+response_routed\b/;
 const END = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,9}Z\s+info\s+\[electron-message-handler\]\s+\[desktop-notifications\]\s+show turn-complete\b/;
@@ -75,9 +81,11 @@ export function isActiveDesktopStart(
     now - event.at >= -5000 && now - event.at <= DESKTOP_ACTIVE_EVIDENCE_MS;
 }
 
-/** Supplement local Desktop metadata with explicit GUI-owned turn/start events.
- * Never override waiting, failing, or aborted turns; a durable completion after
- * start wins. Never announce "definitely running" from this auxiliary source.
+/** Supplement local Desktop metadata with exact GUI-owned turn/start events.
+ * A start older than 45 minutes is an explicitly UNVERIFIED long turn: expose
+ * it as "possibly running" until the bounded 72-hour evidence horizon, not as
+ * current Desktop ownership. Never override explicit waiting, failure, abort or
+ * a newer durable completion, and never claim definitive runtime state.
  */
 export function applyDesktopLogEvidence(
   rows: SessionRecord[], latest: ReadonlyMap<string, DesktopLogEvent>, now = Date.now(),
@@ -93,7 +101,8 @@ export function applyDesktopLogEvidence(
     // evidence regardless of the original clientKind.
     if (row.isSubagent) continue;
     const event = latest.get(row.id.toLowerCase());
-    if (!isActiveDesktopStart(event, now)) continue;
+    if (!event || event.type !== 'turn-start-accepted' ||
+        now - event.at < -5000 || now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS) continue;
     if (row.status === 'waiting' || row.status === 'failed' || row.status === 'interrupted' ||
         row.pendingQuestionToken) continue;
     const completionAt = finishedAt(row.finishedToken);
@@ -114,8 +123,9 @@ export function applyDesktopLogEvidence(
     if (row.status === 'working') continue; // Preserve existing, stronger evidence.
     row.status = 'working';
     row.finishedToken = null;
-    row.statusReason =
-      'Codex Desktop 自身日志确认本会话 turn/start 已被接受，尚未观察到匹配的结束信号；可能执行中（非实时订阅）';
+    row.statusReason = isActiveDesktopStart(event, now)
+      ? 'Codex Desktop 自身日志确认本会话 turn/start 已被接受，尚未观察到匹配的结束信号；可能执行中（非实时订阅）'
+      : 'Codex Desktop 曾确认本会话 turn/start，但已超过实时启动证据窗口，尚未发现可靠结束事件；长期任务可能仍执行中（未实时确认）';
   }
 }
 
@@ -140,9 +150,9 @@ export function parseSavedDesktopEvent(value: unknown, now = Date.now()): Deskto
     ...(row.type === 'turn-displayed-complete' ? { turnId: (row.turnId as string).toLowerCase() } : {}) };
 }
 
-/** Keep only lifecycle evidence (no log bodies). Persisted events intentionally
- * have a shorter lifetime than in-memory history because absent completion
- * may only mean the app was closed before we could observe it.
+/** Keep only lifecycle evidence (no log bodies). Retain long-turn ordering
+ * across Monitor restarts, while projection explicitly labels stale starts
+ * as unverified and allows any newer completion to take precedence.
  */
 export class DesktopLogEventCache {
   private latest = new Map<string, DesktopLogEvent>();

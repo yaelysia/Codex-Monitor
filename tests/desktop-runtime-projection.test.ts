@@ -108,11 +108,39 @@ describe('end-to-end Desktop runtime evidence projection', () => {
     });
   });
 
-  it('does not attribute an independently working CLI turn to an expired Desktop start', async () => {
+  it('recovers a 20-hour GUI turn while labeling stale status as unverified', async () => {
+    const longStart = event('turn-start-accepted', NOW - 20 * 60 * 60_000);
+    const raw = snapshot(thread({ status: 'unknown', ageAtSourceMs: 20 * 60 * 60_000 }));
+    const cache = new DesktopLogEventCache();
+    cache.restore([longStart], NOW);
+    const result = await projectDesktopRuntime(raw, NOW, {
+      platform: 'win32', cache, inspect: inspect(null),
+    });
+    const row = result.sources[0]!.sessions[0]!;
+    expect(row.status).toBe('working');
+    expect(row.statusReason).toContain('未实时确认');
+    expect(row.desktopRuntimeObserved).toBeUndefined();
+    expect(raw.sources[0]!.sessions[0]!.status).toBe('unknown');
+  });
+
+  it('never overrides a completed turn with an older persisted Desktop start', async () => {
+    const longStart = event('turn-start-accepted', NOW - 20 * 60 * 60_000);
+    const raw = snapshot(thread({
+      status: 'finished', finishedToken: new Date(NOW - 19 * 60 * 60_000).toISOString() + '|' + TURN,
+    }));
+    const result = await projectDesktopRuntime(raw, NOW, {
+      platform: 'win32', cache: new DesktopLogEventCache(),
+      inspect: inspect(longStart),
+    });
+    expect(result.sources[0]!.sessions[0]!.status).toBe('finished');
+    expect(result.sources[0]!.sessions[0]!.desktopRuntimeObserved).toBeUndefined();
+  });
+
+  it('keeps a CLI-owned active turn separate from 50-minute-old Desktop provenance', async () => {
     const original = thread({
       status: 'working', clientKind: 'terminal', statusReason: 'CLI rollout turn-started',
     });
-    // The cache intentionally keeps 24h of ordering history, but GUI ownership
+    // The cache keeps 72h of ordering history, but GUI ownership
     // expires after 45m even when the filesystem already says "working".
     const oldStart = event('turn-start-accepted', NOW - 50 * 60_000);
     const state = await projectDesktopRuntime(snapshot(original), NOW, {
