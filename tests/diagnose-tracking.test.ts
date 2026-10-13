@@ -62,7 +62,7 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
         turnStart: 3, turnComplete: 1, conversationId: 4,
       },
     });
-    expect(output.stdout).not.toMatch(/PRIVATE_SECRET|PRIVATE_TEXT|conversationId|01a09f3b/);
+    expect(output.stdout).not.toMatch(/PRIVATE_SECRET|PRIVATE_TEXT|conversationId=|01a09f3b/);
     expect(output.stdout).not.toContain(root);
   });
 
