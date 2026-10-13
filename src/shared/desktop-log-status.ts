@@ -8,6 +8,9 @@ export type DesktopLogEvent = {
 };
 export const DESKTOP_LOG_EVENT_MAX_AGE_MS = 24 * 60 * 60_000;
 const DESKTOP_ACTIVE_EVIDENCE_MS = 45 * 60_000;
+const FILE_FINISH_SAFETY_MS = 2_000;
+const MAX_PERSISTED_EVENTS = 200;
+const MAX_PERSISTED_AGE_MS = DESKTOP_ACTIVE_EVIDENCE_MS;
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,9}Z\s+info\s+\[AppServerConnection\]\s+response_routed\b/;
 const END = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,9}Z\s+info\s+\[electron-message-handler\]\s+\[desktop-notifications\]\s+show turn-complete\b/;
@@ -67,6 +70,10 @@ function finishedAt(token: string | null | undefined): number | null {
  */
 export function applyDesktopLogEvidence(
   rows: SessionRecord[], latest: ReadonlyMap<string, DesktopLogEvent>, now = Date.now(),
+  /** When the rollout source was last actually scanned; for SSH/WSL this lets
+   * source-relative age be compared with Windows native event timestamps.
+   */
+  sourceObservedAt = now,
 ): void {
   for (const row of rows) {
     // The recorded originator identifies who CREATED the thread, not who is
@@ -81,9 +88,19 @@ export function applyDesktopLogEvidence(
         row.pendingQuestionToken) continue;
     const completionAt = finishedAt(row.finishedToken);
     if (completionAt !== null && completionAt >= event.at - 2000) continue;
-    // A previously completed turn with no sortable timestamp cannot be safely
-    // replaced by an unrelated accepted-start event.
-    if (row.status === 'finished' && completionAt === null) continue;
+    // Older (sometimes truncated) rollout JSONL has turn_complete with NO
+    // usable event timestamp. Only reopen its finished status if the precise
+    // Desktop turn/start is definitely newer than the file's last write.
+    // Preserve UNKNOWN for ambiguous ordering or clock drift.
+    if (row.status === 'finished' && completionAt === null) {
+      const age = row.ageAtSourceMs;
+      const ageValid = typeof age === 'number' && Number.isFinite(age) && age >= 0;
+      const modifiedAt = ageValid ? sourceObservedAt - age :
+        row.sourceId === 'local' && Number.isFinite(row.updatedAt)
+          ? row.updatedAt : null;
+      if (modifiedAt === null || !Number.isFinite(modifiedAt) ||
+          modifiedAt >= event.at - FILE_FINISH_SAFETY_MS) continue;
+    }
     if (row.status === 'working') continue; // Preserve existing, stronger evidence.
     row.status = 'working';
     row.finishedToken = null;
@@ -97,21 +114,70 @@ export function applyDesktopLogEvidence(
  * previously parsed (threadId, lifecycle, time) evidence, so a turn/start
  * is not lost when that original log line rotates out of the bounded tail.
  */
+/** Normalize externally stored metadata before accepting it into the
+ * transient event cache. Never trust a sidecar field as a path/command.
+ */
+export function parseSavedDesktopEvent(value: unknown, now = Date.now()): DesktopLogEvent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.threadId !== 'string' || !UUID.test(row.threadId) ||
+      typeof row.at !== 'number' || !Number.isSafeInteger(row.at) || row.at <= 0 ||
+      row.at > now + 5000 || now - row.at > MAX_PERSISTED_AGE_MS ||
+      (row.type !== 'turn-start-accepted' && row.type !== 'turn-displayed-complete')) return null;
+  if (row.type === 'turn-displayed-complete' &&
+      (typeof row.turnId !== 'string' || !UUID.test(row.turnId))) return null;
+  return { threadId: row.threadId.toLowerCase(), at: row.at, type: row.type,
+    ...(row.type === 'turn-displayed-complete' ? { turnId: (row.turnId as string).toLowerCase() } : {}) };
+}
+
+/** Keep only lifecycle evidence (no log bodies). Persisted events intentionally
+ * have a shorter lifetime than in-memory history because absent completion
+ * may only mean the app was closed before we could observe it.
+ */
 export class DesktopLogEventCache {
   private latest = new Map<string, DesktopLogEvent>();
+
+  restore(records: readonly unknown[], now = Date.now()): void {
+    for (const value of records.slice(0, MAX_PERSISTED_EVENTS * 2)) {
+      const event = parseSavedDesktopEvent(value, now);
+      if (!event) continue;
+      const previous = this.latest.get(event.threadId);
+      if (!previous || event.at > previous.at ||
+          (event.at === previous.at && event.type === 'turn-displayed-complete')) {
+        this.latest.set(event.threadId, event);
+      }
+    }
+    this.prune(now);
+  }
+
+  snapshot(now = Date.now()): DesktopLogEvent[] {
+    return [...this.latest.values()].map(item => parseSavedDesktopEvent(item, now))
+      .filter((item): item is DesktopLogEvent => item !== null)
+      .sort((a, b) => b.at - a.at).slice(0, MAX_PERSISTED_EVENTS);
+  }
+
+  private prune(now: number): void {
+    for (const [threadId, event] of this.latest) {
+      if (now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS ||
+          event.at > now + 5000) this.latest.delete(threadId);
+    }
+    if (this.latest.size > MAX_PERSISTED_EVENTS) {
+      const keep = new Map(this.snapshot(now).map(item => [item.threadId, item]));
+      this.latest = keep;
+    }
+  }
+
   observe(events: ReadonlyMap<string, DesktopLogEvent>, now = Date.now()): Map<string, DesktopLogEvent> {
     for (const [threadId, event] of events) {
+      if (!parseSavedDesktopEvent(event, now) && (event.at <= 0 ||
+          event.at > now + 5000 || now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS)) continue;
       const prior = this.latest.get(threadId);
       if (!prior || event.at > prior.at ||
           (event.at === prior.at && event.type === 'turn-displayed-complete')) {
         this.latest.set(threadId, event);
       }
     }
-    for (const [threadId, event] of this.latest) {
-      if (now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS ||
-          event.at > now + 5000) this.latest.delete(threadId);
-    }
-    // Never expose a mutable view of the retained state to callers.
+    this.prune(now);
     return new Map(this.latest);
   }
 }
