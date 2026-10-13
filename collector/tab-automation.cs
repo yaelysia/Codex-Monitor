@@ -85,6 +85,14 @@ namespace CodexMonitor {
       } catch { return new Snapshot(null, 0); }
     }
 
+    /** Verify against the SAME UIA provider whose runtime token was bound.
+     * MobaXterm may also expose a legacy MSAA tab list; comparing a UIA RID
+     * with the preferred MSAA ID would falsely claim a correct switch failed.
+     */
+    static bool SelectedUiaToken(IntPtr hwnd, string id) {
+      return String.Equals(ReadUia(hwnd).Id, id, StringComparison.Ordinal);
+    }
+
     public static bool Select(IntPtr hwnd, string id) {
       if (String.IsNullOrEmpty(id) || id.Length > 192) return false;
       if (id.StartsWith("msaa:", StringComparison.Ordinal))
@@ -94,26 +102,50 @@ namespace CodexMonitor {
         AutomationElementCollection items = Items(hwnd);
         if (items == null || items.Count < 2 || items.Count > MaxTabs) return false;
         AutomationElement target = null;
-        SelectionItemPattern chosen = null;
+        SelectionItemPattern selection = null;
         int matches = 0;
         foreach (AutomationElement item in items) {
           if (!String.Equals(Token(item), id, StringComparison.Ordinal)) continue;
-          SelectionItemPattern pattern;
-          // A TabItem may implement SelectionItem while not currently selected.
-          try {
-            pattern = item.GetCurrentPattern(SelectionItemPattern.Pattern)
-              as SelectionItemPattern;
-          } catch { pattern = null; }
-          if (pattern == null) return false;
           target = item;
-          chosen = pattern;
           matches++;
+          try {
+            selection = item.GetCurrentPattern(SelectionItemPattern.Pattern)
+              as SelectionItemPattern;
+          } catch { selection = null; }
         }
-        if (matches != 1 || target == null || chosen == null) return false;
-        if (!chosen.Current.IsSelected) chosen.Select();
-        // Verify that this UIA runtime element, not merely a tab of the same
-        // name or index, is selected after the action.
-        return String.Equals(Read(hwnd).Id, id, StringComparison.Ordinal);
+        if (matches != 1 || target == null) return false;
+        if (SelectedUiaToken(hwnd, id)) return true;
+
+        // Some Moba UIA providers support Select but silently ignore it.
+        try {
+          if (selection != null) selection.Select();
+        } catch { /* Fall back only to an exact, verified tab action. */ }
+        System.Threading.Thread.Sleep(120);
+        if (SelectedUiaToken(hwnd, id)) return true;
+
+        // Windows UIA LegacyIAccessiblePattern.DoDefaultAction is the same
+        // page-tab click exposed through MSAA. It is a last-resort fallback
+        // for the target's exact runtime ID, never generic keyboard cycling.
+        if (!MobaTabProbe.IsMobaWindow(hwnd)) return false;
+        try {
+          LegacyIAccessiblePattern legacy = target.GetCurrentPattern(
+            LegacyIAccessiblePattern.Pattern) as LegacyIAccessiblePattern;
+          if (legacy != null) {
+            legacy.DoDefaultAction();
+            System.Threading.Thread.Sleep(120);
+          }
+        } catch { /* Provider may not implement a usable legacy action. */ }
+        if (SelectedUiaToken(hwnd, id)) return true;
+
+        try {
+          InvokePattern invoke = target.GetCurrentPattern(
+            InvokePattern.Pattern) as InvokePattern;
+          if (invoke != null) {
+            invoke.Invoke();
+            System.Threading.Thread.Sleep(120);
+          }
+        } catch { /* Do not invent keyboard shortcuts or tab indices. */ }
+        return SelectedUiaToken(hwnd, id);
       } catch { return false; }
     }
   }
