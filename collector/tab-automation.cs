@@ -43,9 +43,16 @@ namespace CodexMonitor {
     static bool Selected(AutomationElement element, out SelectionItemPattern selection) {
       selection = null;
       try {
-        object pattern = element.GetCurrentPattern(SelectionItemPattern.Pattern);
-        selection = pattern as SelectionItemPattern;
-        return selection != null && selection.Current.IsSelected;
+        selection = element.GetCurrentPattern(SelectionItemPattern.Pattern)
+          as SelectionItemPattern;
+        if (selection != null && selection.Current.IsSelected) return true;
+      } catch { /* TabItem might provide legacy accessibility only. */ }
+      try {
+        // Native Windows tabs may implement LegacyIAccessible state even when
+        // SelectionItemPattern is absent. STATE_SYSTEM_SELECTED is bit 0x2.
+        LegacyIAccessiblePattern legacy = element.GetCurrentPattern(
+          LegacyIAccessiblePattern.Pattern) as LegacyIAccessiblePattern;
+        return legacy != null && (legacy.Current.State & 0x2) != 0;
       } catch { return false; }
     }
 
