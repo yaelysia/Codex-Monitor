@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -64,6 +64,36 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
     });
     expect(output.stdout).not.toMatch(/PRIVATE_SECRET|PRIVATE_TEXT|conversationId=|01a09f3b/);
     expect(output.stdout).not.toContain(root);
+  });
+
+  it('keeps a start that arrives after the first poll and counts it only once', async () => {
+    const root = tmp();
+    write(root, ['initial diagnostic noise']);
+    const child = spawn(process.execPath, [script, '--duration', '1', '--no-moba'], {
+      cwd: path.resolve('.'), env: { ...process.env, LOCALAPPDATA: root, NODE_NO_WARNINGS: '1' },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (data: string) => { stdout += data; });
+    child.stderr.on('data', (data: string) => { stderr += data; });
+    const ended = new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+    // Simulate Desktop accepting a turn during the observation interval.
+    await new Promise(resolve => setTimeout(resolve, 600));
+    write(root, [new Date().toISOString() + ' info [AppServerConnection] response_routed ' +
+      'conversationId=' + uuid + ' method=turn/start errorCode=null']);
+    const exit = await ended;
+    expect(exit, stderr).toBe(0);
+    const summary = JSON.parse(stdout).desktop;
+    expect(summary.events.acceptedStart).toBe(1);
+    expect(summary.events.failedStart).toBe(0);
+    expect(summary.latestStartAgeSeconds).not.toBeNull();
+    expect(stdout).not.toContain(uuid);
+    expect(stdout).not.toContain(root);
   });
 
   it('detects MSIX log directory and safely rejects unsupported arguments', () => {

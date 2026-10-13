@@ -55,7 +55,7 @@ function candidate(line, now, target) {
   return { at, type, id };
 }
 
-async function inspectLogs(root, now, target) {
+async function inspectLogs(root, now, target, seenEvents = new Set()) {
   const discovered = await discoverDesktopLogFiles(root, now);
   const files = discovered.files;
   const counts = { acceptedStart: 0, failedStart: 0, turnCompleteNotice: 0, unknownConversation: 0 };
@@ -64,7 +64,6 @@ async function inspectLogs(root, now, target) {
   // Useful when the GUI changes its log line format between versions.
   const markerHints = { appServerConnection: 0, responseRouted: 0,
     turnStart: 0, turnComplete: 0, conversationId: 0 };
-  const keys = new Set();
   let scannedFiles = 0;
   let byteBudget = MAX_TOTAL;
   for (const file of files.slice(0, 12)) {
@@ -93,8 +92,10 @@ async function inspectLogs(root, now, target) {
         const event = candidate(line, now, target);
         if (!event) continue;
         const unique = event.at + '|' + event.type + '|' + event.id;
-        if (keys.has(unique)) continue;
-        keys.add(unique);
+        // Keep a single identity across successive polls; a verbose log can
+        // rotate the event out of its bounded tail before the final poll.
+        if (seenEvents.has(unique)) continue;
+        seenEvents.add(unique);
         counts[event.type]++;
         if (event.type in latest)
           latest[event.type] = Math.max(latest[event.type] ?? 0, event.at);
@@ -178,11 +179,33 @@ async function run(args) {
   const localAppData = process.env.LOCALAPPDATA || '';
   const stopAt = Date.now() + opts.duration * 1000;
   let logSummary;
-  do {
-    logSummary = await inspectLogs(localAppData, Date.now(), opts.threadId);
+  // Report unique lifecycle events observed across the ENTIRE duration, not
+  // only the last log tail. Otherwise rotating logs can hide a captured start.
+  const seenEvents = new Set();
+  const totals = { acceptedStart: 0, failedStart: 0, turnCompleteNotice: 0, unknownConversation: 0 };
+  let latestStartAt = null;
+  let latestCompleteAt = null;
+  while (true) {
+    const sampledAt = Date.now();
+    logSummary = await inspectLogs(localAppData, sampledAt, opts.threadId, seenEvents);
+    for (const name of Object.keys(totals)) totals[name] += logSummary.events[name];
+    if (logSummary.latestStartAgeSeconds !== null) {
+      const at = sampledAt - logSummary.latestStartAgeSeconds * 1000;
+      latestStartAt = Math.max(latestStartAt ?? 0, at);
+    }
+    if (logSummary.latestCompleteAgeSeconds !== null) {
+      const at = sampledAt - logSummary.latestCompleteAgeSeconds * 1000;
+      latestCompleteAt = Math.max(latestCompleteAt ?? 0, at);
+    }
     if (opts.duration === 0 || Date.now() >= stopAt) break;
-    await sleep(Math.min(4000, Math.max(0, stopAt-Date.now())));
-  } while (Date.now() < stopAt);
+    await sleep(Math.min(4000, Math.max(0, stopAt - Date.now())));
+    // Always include the closing boundary, even when the sleep reaches stopAt.
+  }
+  logSummary.events = totals;
+  logSummary.latestStartAgeSeconds = latestStartAt === null ? null :
+    Math.max(0, Math.round((Date.now() - latestStartAt) / 1000));
+  logSummary.latestCompleteAgeSeconds = latestCompleteAt === null ? null :
+    Math.max(0, Math.round((Date.now() - latestCompleteAt) / 1000));
   const moba = opts.skipMoba ? { available: false, reason: 'skipped' } : await inspectMoba();
   console.log(JSON.stringify({ diagnosticVersion: 1, desktop: logSummary, moba }, null, 2));
 }
