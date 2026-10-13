@@ -98,11 +98,11 @@ async function inspectLogs(root, now, target, seenEvents, follower) {
           if (line.includes('conversationId=')) recentMarkerHints.conversationId++;
         }
         const event = candidate(line, now, target);
-        if (!event) continue;
+        if (!event) return;
         const unique = event.at + '|' + event.type + '|' + event.id;
         // Keep a single identity across successive polls; a verbose log can
         // rotate the event out of its bounded tail before the final poll.
-        if (seenEvents.has(unique)) continue;
+        if (seenEvents.has(unique)) return;
         seenEvents.add(unique);
         counts[event.type]++;
         if (event.type in latest)
