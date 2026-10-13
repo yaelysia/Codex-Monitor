@@ -28,9 +28,13 @@ async function prepareWindowGuard(scriptPath: string): Promise<Release | null> {
       if (!release) child.kill();
       resolve(release);
     }
+    let exited = false;
     child.once('error', () => finish(null));
-    child.once('exit', () => finish(null));
+    child.once('exit', () => { exited = true; finish(null); });
     if (!child.stdout || !child.stdin) { finish(null); return; }
+    // A guard might terminate between its ready message and protocol handoff.
+    // An asynchronous EPIPE from end() must not crash the Electron main process.
+    child.stdin.on('error', () => { if (!exited) child.kill(); });
     child.stdout.on('data', (data: Buffer) => {
       if (decided) return;
       buffer += data.toString('utf8');
@@ -45,6 +49,7 @@ async function prepareWindowGuard(scriptPath: string): Promise<Release | null> {
           ready.observed < 0 || ready.observed > 32) { finish(null); return; }
       if (ready.observed === 0) { finish(null); return; }
       finish(opened => {
+        if (exited) return;
         const cleanup = setTimeout(() => child.kill(), FINISH_TIMEOUT_MS);
         cleanup.unref?.();
         child.once('exit', () => clearTimeout(cleanup));
