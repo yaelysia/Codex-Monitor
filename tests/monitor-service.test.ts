@@ -252,3 +252,39 @@ describe('Windows Desktop native lifecycle evidence without rescanning remote so
     expect(vi.mocked(projectDesktopRuntime).mock.calls).toHaveLength(before);
   });
 });
+
+describe('Desktop ownership metadata is broadcast even if status is unchanged', () => {
+  it('updates open-in-Desktop capability without waiting for an unrelated filesystem rescan', async () => {
+    fake.health = { local: 'active', 'ssh:one': 'active' };
+    const guiThread = session('019a21b0-aaaa-7ccc-8ddd-111122223333', 'working', NOW);
+    guiThread.clientKind = 'terminal'; // Started in CLI, resumed in Codex Desktop.
+    vi.mocked(collect).mockImplementation(async () =>
+      snapshot(Date.now(), [source('ssh:one', [guiThread])]));
+    let ticks = 0;
+    vi.mocked(projectDesktopRuntime).mockImplementation(async baseline => {
+      ticks++;
+      const sources = baseline.sources.map(src => ({
+        ...src, sessions: src.sessions.map(value => ({ ...value })),
+      }));
+      const row = sources[0]!.sessions[0]!;
+      if (ticks === 2) row.desktopRuntimeObserved = true;
+      if (ticks > 2) delete row.desktopRuntimeObserved;
+      return { ...baseline, sources };
+    });
+    const emitted: MonitorState[] = [];
+    service = new MonitorService(s => emitted.push(s), () => undefined,
+      () => undefined, 'win32');
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(service.state().scan?.sources[0]?.sessions[0]?.desktopRuntimeObserved).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(service.state().scan?.sources[0]?.sessions[0]).toMatchObject({
+      status: 'working', desktopRuntimeObserved: true,
+    });
+    expect(emitted.at(-1)?.scan?.sources[0]?.sessions[0]?.desktopRuntimeObserved).toBe(true);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(service.state().scan?.sources[0]?.sessions[0]?.desktopRuntimeObserved).toBeUndefined();
+    expect(emitted.at(-1)?.scan?.sources[0]?.sessions[0]?.desktopRuntimeObserved).toBeUndefined();
+    expect(collect).toHaveBeenCalledTimes(1);
+  });
+});
