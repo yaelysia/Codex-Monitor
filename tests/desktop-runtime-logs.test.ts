@@ -198,3 +198,81 @@ describe('long running Desktop log rotation continuity', () => {
     expect(memory.observe(new Map(), NOW + 25 * 60 * 60_000)).toEqual(new Map());
   });
 });
+
+describe('Desktop runtime completion ordering on resumed threads', () => {
+  const start = newestDesktopEvents([parseDesktopLogEvent(accepted(-10), NOW)!]);
+
+  it('recovers activity after an older, timestamp-less rollout completion', () => {
+    const legacy = row('finished');
+    legacy.sourceId = 'ssh:remote';
+    legacy.key = 'ssh:remote:' + SESSION;
+    legacy.finishedToken = '|previous-turn-with-no-timestamp';
+    legacy.ageAtSourceMs = 65_000;
+    applyDesktopLogEvidence([legacy], start, NOW, NOW - 1_000);
+    expect(legacy.status).toBe('working');
+    expect(legacy.finishedToken).toBeNull();
+  });
+
+  it('does not reopen a completed turn when the rollout was modified after native start', () => {
+    const latestFinish = row('finished');
+    latestFinish.finishedToken = '|current-turn-no-time';
+    latestFinish.ageAtSourceMs = 300;
+    applyDesktopLogEvidence([latestFinish], start, NOW, NOW - 1_000);
+    expect(latestFinish.status).toBe('finished');
+    expect(latestFinish.finishedToken).toBe('|current-turn-no-time');
+  });
+
+  it('keeps a remote completion when source age is unavailable and timing is ambiguous', () => {
+    const remote = row('finished');
+    remote.sourceId = 'ssh:remote';
+    remote.finishedToken = '|untrusted-clock';
+    remote.updatedAt = NOW - 200_000;
+    delete remote.ageAtSourceMs;
+    applyDesktopLogEvidence([remote], start, NOW, NOW - 1_000);
+    expect(remote.status).toBe('finished');
+  });
+});
+
+describe('persisted Desktop lifecycle evidence normalization', () => {
+  it('restores a recent accepted start from strict metadata and not raw log content', () => {
+    const first = new DesktopLogEventCache();
+    first.observe(newestDesktopEvents([parseDesktopLogEvent(accepted(-20), NOW)!]), NOW);
+    const serialized = first.snapshot(NOW);
+    expect(serialized).toEqual([{ threadId: SESSION, at: NOW - 20_000,
+      type: 'turn-start-accepted' }]);
+    const restarted = new DesktopLogEventCache();
+    restarted.restore(serialized, NOW + 10_000);
+    const visible = restarted.observe(new Map(), NOW + 10_000);
+    const task = row('unknown');
+    applyDesktopLogEvidence([task], visible, NOW + 10_000);
+    expect(task.status).toBe('working');
+  });
+
+  it('prefers a later completion after restart and will not revive stale work', () => {
+    const restarted = new DesktopLogEventCache();
+    restarted.restore([{ threadId: SESSION, at: NOW - 30_000,
+      type: 'turn-start-accepted' }], NOW);
+    restarted.observe(newestDesktopEvents([parseDesktopLogEvent(completed(-5), NOW)!]), NOW);
+    const afterRestart = new DesktopLogEventCache();
+    afterRestart.restore(restarted.snapshot(NOW), NOW + 10_000);
+    const task = row('unknown');
+    applyDesktopLogEvidence([task], afterRestart.observe(new Map(), NOW + 10_000), NOW + 10_000);
+    expect(task.status).toBe('unknown');
+    expect(afterRestart.snapshot(NOW + 10_000)[0]?.type).toBe('turn-displayed-complete');
+  });
+
+  it('rejects injected, expired, future and unscoped saved event fields', () => {
+    const cache = new DesktopLogEventCache();
+    cache.restore([
+      { threadId: SESSION, at: NOW - 46 * 60_000, type: 'turn-start-accepted' },
+      { threadId: SESSION, at: NOW + 20_000, type: 'turn-start-accepted' },
+      { threadId: '../prompt', at: NOW, type: 'turn-start-accepted' },
+      { threadId: SESSION, at: NOW, type: 'turn-displayed-complete' },
+      { threadId: OTHER, at: NOW - 500, type: 'turn-start-accepted',
+        prompt: 'PRIVATE USER PROMPT', secret: 'PRIVATE SSH KEY' },
+    ], NOW);
+    expect(cache.snapshot(NOW)).toEqual([{ threadId: OTHER, at: NOW - 500,
+      type: 'turn-start-accepted' }]);
+    expect(JSON.stringify(cache.snapshot(NOW))).not.toMatch(/PRIVATE/);
+  });
+});
