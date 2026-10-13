@@ -63,7 +63,7 @@ describe('privacy-preserving one-command tracking diagnostics', () => {
       },
       recentMarkerHints: {
         logLines: 4, appServerConnection: 2, responseRouted: 2,
-        turnStart: 3, turnStartedNotification: 1,
+        turnStart: 2, turnStartedNotification: 1,
         turnCompletedNotification: 0, turnCompleteNotice: 1, conversationId: 4,
       },
     });
