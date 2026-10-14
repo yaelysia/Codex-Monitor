@@ -17,5 +17,13 @@ describe('desktop UI rendering smoke', () => {
     expect(html).toContain('数据源设置');
     expect(html).toContain('常驻设置');
     expect(html).toContain('显示子代理');
+    // The decorative marketing hero and unused logo were deliberately removed.
+    expect(html).toContain('任务概览');
+    expect(html).not.toContain('今天的工作');
+    expect(html).not.toContain('signal-brand-symbol');
+    // Previously a literal <br/> in a string was visible in the task card.
+    expect(html).not.toContain('&lt;br/&gt;');
+    expect(html).toContain('signal-view');
+    expect(html).toContain('nav-board');
   });
 });
