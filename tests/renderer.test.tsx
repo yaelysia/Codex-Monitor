@@ -88,6 +88,21 @@ describe('decision desk and session drill-down interaction contract', () => {
   });
 });
 
+describe('audit: visibility and inspector consistency', () => {
+  it('does not leak child alerts through the main window after filtering its session list', () => {
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('visibleAlerts(alerts, rawSessions, showSubagents)');
+    expect(source).not.toContain('visibleAlerts(alerts, allSessions)');
+  });
+
+  it('preserves the opened session inspector across list filter and status changes', () => {
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('if (detailOpen) {');
+    expect(source).toContain('if (selectedKey && allSessions.some(session => session.key === selectedKey)) return;');
+    expect(source).not.toContain('if (!shown.length) { setSelectedKey(null); setDetailOpen(false); return; }');
+  });
+});
+
 describe('renderer performance safeguards', () => {
   it('reuses date formatting and limits initial table DOM work', () => {
     const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
