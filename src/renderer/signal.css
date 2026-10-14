@@ -365,3 +365,192 @@
 .signal-machine-workspaces button:hover{color:var(--s-text);background:var(--s-panel-elev)}
 .signal-machine-workspaces button span{margin-left:3px;color:var(--s-accent)}
 .signal-machine-workspaces svg{flex-shrink:0}
+
+/* Signal Studio finish pass: native caption, restrained dashboard, motion continuity.
+   Transform/opacity animations avoid layout thrashing on long-running monitor sessions. */
+.signal-app .signal-chrome{
+  -webkit-app-region:drag;flex-basis:66px;min-height:66px;
+  padding:0 22px;gap:14px;
+}
+.signal-app.signal-native-overlay .signal-chrome{padding-right:152px}
+.signal-app .signal-chrome :is(button,input,select,.signal-nav,.signal-search,.signal-popover){
+  -webkit-app-region:no-drag;
+}
+.signal-app .signal-brand{
+  flex:0 0 auto;min-width:128px;display:block;
+  font-size:13px;font-weight:650;letter-spacing:-.03em;
+  white-space:nowrap;color:var(--s-text);user-select:none;
+}
+.signal-app .signal-nav{position:relative;isolation:isolate;overflow:hidden;gap:4px}
+.signal-app .signal-nav::before{
+  content:"";pointer-events:none;position:absolute;top:4px;bottom:4px;left:4px;
+  width:calc((100% - 16px)/3);
+  background:var(--s-panel-elev);border:1px solid var(--s-stroke-strong);
+  border-radius:8px;
+  box-shadow:inset 0 1px 0 var(--s-stroke-strong),0 6px 18px var(--s-shadow);
+  transform:translate3d(0,0,0);opacity:1;
+  transition:transform .52s cubic-bezier(.16,1,.3,1),opacity .26s ease,background-color .4s;
+}
+.signal-app .signal-nav.nav-locations::before{transform:translate3d(calc(100% + 4px),0,0)}
+.signal-app .signal-nav.nav-chronicle::before{transform:translate3d(calc(200% + 8px),0,0)}
+.signal-app .signal-nav.nav-sessions::before{opacity:0}
+.signal-app .signal-nav button{position:relative;z-index:1;min-width:108px}
+.signal-app .signal-nav button.active{background:transparent;box-shadow:none}
+.signal-app .signal-nav button:hover{background:transparent}
+.signal-app .signal-popover{animation:signalPopoverIn .31s cubic-bezier(.16,1,.3,1) both}
+.signal-app.signal-native-overlay .signal-popover{right:152px}
+.signal-app .signal-scroll{scroll-behavior:smooth}
+.signal-app .signal-status-line{padding-top:13px}
+.signal-app .signal-body{padding-top:20px}
+.signal-app .signal-page-title{
+  position:relative;display:flex;align-items:center;gap:11px 18px;
+  min-height:0;margin:0;padding-bottom:4px;flex-wrap:wrap;
+  animation:signalTextIn .44s cubic-bezier(.16,1,.3,1) both;
+}
+.signal-app .signal-page-title .signal-eyebrow{font-size:9px;letter-spacing:.17em;margin:0}
+.signal-app .signal-page-title h1{
+  font-size:21px;font-weight:620;line-height:1.35;letter-spacing:-.03em;
+  margin:0;color:var(--s-text);
+}
+.signal-app .signal-page-title p{font-size:11px;line-height:1.5;margin:0;color:var(--s-muted)}
+.signal-app .signal-toolbar{margin:16px 0 18px}
+.signal-app .signal-key-stats{margin-top:0;margin-bottom:12px}
+.signal-app .signal-view{min-width:0;animation:signalViewIn .49s cubic-bezier(.16,1,.3,1) both}
+.signal-app .signal-view .signal-focus,
+.signal-app .signal-view .signal-running,
+.signal-app .signal-view .signal-bottom-grid > *,
+.signal-app .signal-view .signal-machine,
+.signal-app .signal-view .signal-chronicle-main,
+.signal-app .signal-view .signal-chronicle-side{
+  animation:signalCardIn .56s cubic-bezier(.16,1,.3,1) both;
+}
+.signal-app .signal-view .signal-running{animation-delay:.07s}
+.signal-app .signal-view .signal-bottom-grid > :first-child{animation-delay:.12s}
+.signal-app .signal-view .signal-bottom-grid > :last-child{animation-delay:.17s}
+.signal-app .signal-view .signal-machine:nth-child(2){animation-delay:.08s}
+.signal-app .signal-view .signal-machine:nth-child(3){animation-delay:.13s}
+.signal-app .signal-view .signal-chronicle-side{animation-delay:.09s}
+.signal-app .signal-focus{isolation:isolate}
+.signal-app .signal-focus > *{position:relative;z-index:2}
+.signal-app .signal-focus::after{
+  z-index:0;right:-99px;top:-96px;width:320px;height:320px;
+  border-top-color:var(--s-accent);border-right-color:transparent;
+  border-bottom-color:var(--s-stroke-strong);border-left-color:transparent;
+  opacity:.3;
+  animation:signalOrbit 24s linear infinite;
+}
+.signal-app .signal-focus::before{
+  content:"";pointer-events:none;position:absolute;right:-57px;top:-56px;
+  width:236px;height:236px;z-index:0;
+  border:1px solid var(--s-stroke-strong);border-top-color:transparent;
+  border-right-color:var(--s-accent);border-radius:50%;opacity:.2;
+  animation:signalOrbit 19s linear infinite reverse;
+}
+.signal-app .signal-task{
+  transition:transform .33s cubic-bezier(.16,1,.3,1),
+    background-color .25s ease,color .22s ease;
+}
+.signal-app .signal-task:hover{transform:translate3d(3px,0,0)}
+.signal-app .signal-event{
+  transition:transform .29s cubic-bezier(.16,1,.3,1),background-color .22s ease;
+}
+.signal-app .signal-event:hover{transform:translate3d(3px,0,0)}
+.signal-app .signal-focus-cta{
+  transition:transform .34s cubic-bezier(.16,1,.3,1),box-shadow .3s ease;
+}
+.signal-app .signal-focus-action:hover .signal-focus-cta{
+  transform:translate3d(0,-2px,0);
+  box-shadow:0 9px 28px var(--s-glow);
+}
+.signal-app .signal-ambient{width:62%;height:330px;top:-30px;right:0;opacity:.42}
+.signal-app .signal-ribbon-body{transform-origin:55% 46%;animation:signalRibbon 17s ease-in-out infinite alternate}
+.signal-app .signal-ribbon-tracer{
+  stroke:var(--s-accent);stroke-width:2.1;opacity:.7;
+  stroke-dasharray:110 1500;stroke-dashoffset:1500;
+  animation:signalRibbonTrace 15s linear infinite;
+  filter:drop-shadow(0 0 3px var(--s-accent));
+}
+.signal-app::before{
+  content:"";position:absolute;inset:-30% -18%;pointer-events:none;z-index:-1;
+  background:radial-gradient(ellipse 44% 38% at 66% 23%,var(--s-glow),transparent 86%);
+  opacity:.65;animation:signalBreath 16s ease-in-out infinite alternate;
+}
+.signal-app .detail-veil{
+  display:block;opacity:0;pointer-events:none;
+  transition:opacity .35s ease;
+}
+.signal-app .detail-veil.is-visible{opacity:1;pointer-events:auto}
+.signal-app .detail-panel{
+  display:flex;visibility:hidden;pointer-events:none;opacity:.35;
+  transform:translate3d(103%,0,0);
+  transition:transform .53s cubic-bezier(.16,1,.3,1),
+    opacity .35s ease,visibility 0s linear .53s;
+}
+.signal-app .detail-panel.detail-open{
+  visibility:visible;pointer-events:auto;opacity:1;
+  transform:translate3d(0,0,0);
+  transition:transform .53s cubic-bezier(.16,1,.3,1),
+    opacity .35s ease,visibility 0s;
+}
+.signal-app .modal-backdrop{animation:signalBackdropIn .24s ease-out both}
+.signal-app .modal{animation:signalPopoverIn .35s cubic-bezier(.16,1,.3,1) both}
+@keyframes signalViewIn{
+  from{opacity:.42;transform:translate3d(0,12px,0)}
+  to{opacity:1;transform:translate3d(0,0,0)}
+}
+@keyframes signalTextIn{
+  from{opacity:0;transform:translate3d(0,7px,0)}
+  to{opacity:1;transform:translate3d(0,0,0)}
+}
+@keyframes signalCardIn{
+  from{opacity:.5;transform:translate3d(0,14px,0) scale(.988)}
+  to{opacity:1;transform:translate3d(0,0,0) scale(1)}
+}
+@keyframes signalPopoverIn{
+  from{opacity:0;transform:translate3d(0,-7px,0) scale(.97)}
+  to{opacity:1;transform:translate3d(0,0,0) scale(1)}
+}
+@keyframes signalBackdropIn{from{opacity:0}to{opacity:1}}
+@keyframes signalOrbit{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes signalRibbon{
+  from{transform:translate3d(-9px,6px,0) rotate(-1deg)}
+  to{transform:translate3d(13px,-4px,0) rotate(1deg)}
+}
+@keyframes signalRibbonTrace{
+  from{stroke-dashoffset:1500}
+  to{stroke-dashoffset:-1500}
+}
+@keyframes signalBreath{
+  from{transform:translate3d(-2%,-2%,0) scale(.98);opacity:.44}
+  to{transform:translate3d(2%,3%,0) scale(1.06);opacity:.76}
+}
+@media(max-width:1130px){
+  .signal-app .signal-brand{min-width:113px}
+  .signal-app .signal-chrome{gap:10px;padding-left:14px}
+}
+@media(max-width:950px){
+  .signal-app .signal-chrome{padding:12px 16px;min-height:77px;flex-basis:auto}
+  .signal-app.signal-native-overlay .signal-chrome{padding-right:152px}
+  .signal-app .signal-brand{min-width:108px;flex:1 1 112px}
+  .signal-app .signal-nav{order:3;flex:1 1 100%}
+  .signal-app .signal-nav button{min-width:0}
+  .signal-app .signal-page-title h1{font-size:20px}
+}
+@media(max-width:620px){
+  .signal-app .signal-chrome{padding-left:12px}
+  .signal-app.signal-native-overlay .signal-chrome{padding-right:145px}
+  .signal-app .signal-brand{font-size:12px}
+  .signal-app .signal-search{display:none}
+  .signal-app .signal-page-title{gap:7px 11px}
+  .signal-app .signal-page-title h1{font-size:19px}
+  .signal-app .signal-page-title p{flex:1 1 100%}
+  .signal-app .signal-body{padding-top:16px}
+}
+@media(prefers-reduced-motion:reduce){
+  .signal-app::before,.signal-app .signal-ribbon-body,
+  .signal-app .signal-ribbon-tracer,.signal-app .signal-focus::before,
+  .signal-app .signal-focus::after{animation:none!important}
+  .signal-app .detail-panel,.signal-app .detail-veil,
+  .signal-app .signal-nav::before{transition:none!important}
+  .signal-app .signal-scroll{scroll-behavior:auto}
+}
