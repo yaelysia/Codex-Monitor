@@ -252,6 +252,7 @@ export default function App() {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [scan, setScan] = useState<ScanResponse | null>(null);
   const [eventChannels, setEventChannels] = useState<Record<string, 'active' | 'connecting' | 'fallback'>>({});
+  const [performanceStats, setPerformanceStats] = useState<import('../shared/types').MonitorPerformance | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
@@ -315,6 +316,7 @@ export default function App() {
     const unsubscribe = window.monitorApi.onMonitorState(state => {
       if (!mounted.current) return;
       setEventChannels(state.eventChannels || {});
+      setPerformanceStats(state.performance ?? null);
       if (state.scan) {
         setScan(state.scan);
         setNow(Date.now());
@@ -349,6 +351,7 @@ export default function App() {
     void window.monitorApi.getMonitorState().then(state => {
       if (!mounted.current) return;
       setEventChannels(state.eventChannels || {});
+      setPerformanceStats(state.performance ?? null);
       if (state.scan) setScan(state.scan);
     }).catch(console.error);
     void refresh();
@@ -669,7 +672,14 @@ export default function App() {
         </div>}
 
         <footer className="content-footer"><span>当前显示 {shown.length} / {totals.all} 条 · 每个来源最多采集 200 条</span>
-          <span>每 12 秒自动刷新 · 状态为保守推断</span></footer>
+          <span title="最近一次采集统计；仅包含耗时和字节数，不含会话内容">
+            {performanceStats?.desktopAudit
+              ? '采集 ' + (performanceStats.sourceScanDurationMs ?? '-') + 'ms · Desktop ' +
+                performanceStats.desktopAudit.durationMs + 'ms / ' +
+                Math.round(performanceStats.desktopAudit.logBytesRead / 1024) + 'KiB · ' +
+                '目录缓存 ' + performanceStats.desktopAudit.directoryCacheHits + ' · ' +
+                '待追读 ' + performanceStats.desktopAudit.backlogFiles
+              : '事件优先，12 秒回退扫描 · 状态为保守推断'}</span></footer>
       </div>
     </main>
 

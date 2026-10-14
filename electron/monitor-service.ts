@@ -5,6 +5,7 @@ import { refresh as collect, projectDesktopRuntime } from './collector';
 import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 import { AlertStateStore } from './alert-store';
+import { getDesktopLogMetrics } from './desktop-runtime-logs';
 
 const POLLING_FALLBACK_MS = 12_000;
 const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
@@ -35,6 +36,7 @@ function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): bool
 export class MonitorService {
   private tracker = new AlertTracker();
   private readonly alertStore: AlertStateStore | null;
+  private lastSourceScanDurationMs: number | null = null;
   private lastScan: ScanResponse | null = null;
   private rawLastScan: ScanResponse | null = null;
   private nativeAuditTimer: ReturnType<typeof setInterval> | null = null;
@@ -100,7 +102,15 @@ export class MonitorService {
     this.alertStore?.flush();
   }
 
-  state(): MonitorState { return { ...this.tracker.state(this.lastScan), eventChannels: this.watchers.status() }; }
+  state(): MonitorState {
+    return {
+      ...this.tracker.state(this.lastScan), eventChannels: this.watchers.status(),
+      performance: {
+        sourceScanDurationMs: this.lastSourceScanDurationMs,
+        desktopAudit: this.platform === 'win32' ? getDesktopLogMetrics() : null,
+      },
+    };
+  }
   setMuted(muted: boolean): MonitorState {
     this.tracker.setMuted(muted);
     this.persistAlerts();
@@ -208,6 +218,7 @@ export class MonitorService {
     }
 
     this.scanningFull = !partial;
+    const scanStartedAt = performance.now();
     const task = (async () => {
       const settings = await readSettings();
       const delta = await collect(settings, partial ? sourceIds : undefined);
@@ -225,6 +236,7 @@ export class MonitorService {
       const projected = await projectDesktopRuntime(raw, Date.now());
       this.rawLastScan = raw;
       this.lastScan = projected;
+      this.lastSourceScanDurationMs = Math.max(0, Math.round(performance.now() - scanStartedAt));
 
       // Notify from genuinely rescanned sources only. The four-second
       // log-only overlay updates the board but must not fabricate alerts.

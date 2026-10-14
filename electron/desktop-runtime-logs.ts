@@ -1,9 +1,15 @@
-import { desktopLogRoots, discoverDesktopLogFiles } from '../scripts/desktop-log-discovery.mjs';
+import { desktopLogRoots, discoverDesktopLogFiles, DesktopDirectoryCache } from '../scripts/desktop-log-discovery.mjs';
 import { DesktopLogFollower } from '../scripts/desktop-log-follower.mjs';
 import { parseDesktopLogEvent, newestDesktopEvents,
   type DesktopLogEvent } from '../src/shared/desktop-log-status';
+import type { DesktopAuditMetrics } from '../src/shared/types';
 
 const liveFollower = new DesktopLogFollower();
+const liveDirectoryCache = new DesktopDirectoryCache();
+let latestAuditMetrics: DesktopAuditMetrics | null = null;
+export function getDesktopLogMetrics(): DesktopAuditMetrics | null {
+  return latestAuditMetrics && { ...latestAuditMetrics };
+}
 
 /** Shared discovery for the Monitor and the support CLI; no duplicate
  * hard-coded date/package heuristics that silently disagree on real Windows.
@@ -16,6 +22,7 @@ export interface DesktopLogSummary {
   events: Map<string, DesktopLogEvent>;
   logFilesRead: number;
   signalCount: number;
+  metrics?: DesktopAuditMetrics;
   /** No raw paths, filenames, log records, thread IDs or account details. */
   discovery: {
     validLocalAppData: boolean;
@@ -34,8 +41,12 @@ export interface DesktopLogSummary {
  */
 export async function inspectDesktopLogSignals(now = Date.now(),
   localAppData = process.env.LOCALAPPDATA ?? '',
-  follower: DesktopLogFollower = liveFollower): Promise<DesktopLogSummary> {
-  const found = await discoverDesktopLogFiles(localAppData, now);
+  follower: DesktopLogFollower = liveFollower,
+  catalog: DesktopDirectoryCache = liveDirectoryCache): Promise<DesktopLogSummary> {
+  const start = performance.now();
+  const before = catalog.stats();
+  const found = await discoverDesktopLogFiles(localAppData, now,
+    process.env.APPDATA ?? '', catalog);
   const coverage = {
     validLocalAppData: found.validLocalAppData,
     rootCount: found.roots.length,
@@ -49,8 +60,23 @@ export async function inspectDesktopLogSignals(now = Date.now(),
     const event = parseDesktopLogEvent(line, now);
     if (event) events.push(event);
   });
+  const latestAt = events.reduce((max, event) => Math.max(max, event.at), 0);
+  const after = catalog.stats();
+  const metrics: DesktopAuditMetrics = {
+    at: now,
+    durationMs: Math.max(0, Math.round(performance.now() - start)),
+    logFilesTracked: tracked.trackedFiles,
+    logBytesRead: tracked.bytesRead,
+    backlogFiles: tracked.backlogFiles,
+    unchangedFiles: tracked.skippedUnchanged,
+    directoryCacheHits: after.cacheHits - before.cacheHits,
+    directoriesEnumerated: after.enumerations - before.enumerations,
+    lastEventLagMs: latestAt ? Math.max(0, now - latestAt) : null,
+  };
+  if (catalog === liveDirectoryCache) latestAuditMetrics = metrics;
   return {
     events: newestDesktopEvents(events),
+    metrics,
     // Followed files remain readable even when they have not grown this tick.
     logFilesRead: tracked.trackedFiles,
     signalCount: events.length,
@@ -61,5 +87,6 @@ export async function inspectDesktopLogSignals(now = Date.now(),
 export async function readDesktopLogSignals(now = Date.now(),
   localAppData = process.env.LOCALAPPDATA ?? ''): Promise<Map<string, DesktopLogEvent>> {
   // Standalone one-shot readers must not consume the Monitor's live cursor.
-  return (await inspectDesktopLogSignals(now, localAppData, new DesktopLogFollower())).events;
+  return (await inspectDesktopLogSignals(now, localAppData,
+    new DesktopLogFollower(), new DesktopDirectoryCache())).events;
 }

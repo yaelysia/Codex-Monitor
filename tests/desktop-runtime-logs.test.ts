@@ -6,6 +6,8 @@ import { parseDesktopLogEvent, newestDesktopEvents, applyDesktopLogEvidence,
   DesktopLogEventCache } from
   '../src/shared/desktop-log-status';
 import { findDesktopLogRoots, readDesktopLogSignals, inspectDesktopLogSignals } from '../electron/desktop-runtime-logs';
+import { DesktopLogFollower } from '../scripts/desktop-log-follower.mjs';
+import { DesktopDirectoryCache } from '../scripts/desktop-log-discovery.mjs';
 import type { SessionRecord } from '../src/shared/types';
 
 const NOW = Date.parse('2026-10-12T10:00:00Z');
@@ -214,6 +216,28 @@ describe('incremental Desktop log follow under heavy output', () => {
     expect(summary.discovery.recentCandidateCount).toBe(20);
     expect(summary.logFilesRead).toBeGreaterThanOrEqual(20);
     expect(summary.events.get(SESSION)?.type).toBe('turn-start-accepted');
+  });
+});
+
+describe('bounded runtime I/O metrics', () => {
+  it('skips unchanged files and caches directory enumerations without missing appends', async () => {
+    const root = temp();
+    const file = write(root, [accepted(-10)]);
+    const follower = new DesktopLogFollower();
+    const catalog = new DesktopDirectoryCache();
+    const first = await inspectDesktopLogSignals(NOW, root, follower, catalog);
+    expect(first.metrics?.logBytesRead).toBeGreaterThan(0);
+    expect(first.metrics?.directoriesEnumerated).toBeGreaterThan(0);
+    const unchanged = await inspectDesktopLogSignals(NOW + 1000, root, follower, catalog);
+    expect(unchanged.metrics?.logBytesRead).toBe(0);
+    expect(unchanged.metrics?.unchangedFiles).toBeGreaterThanOrEqual(1);
+    expect(unchanged.metrics?.directoryCacheHits).toBeGreaterThan(0);
+    fs.appendFileSync(file, accepted(2, OTHER) + '\n');
+    fs.utimesSync(file, new Date(NOW + 2500), new Date(NOW + 2500));
+    const next = await inspectDesktopLogSignals(NOW + 3000, root, follower, catalog);
+    expect(next.events.get(OTHER)?.type).toBe('turn-start-accepted');
+    expect(next.metrics?.logBytesRead).toBeGreaterThan(0);
+    expect(next.metrics?.backlogFiles).toBe(0);
   });
 });
 

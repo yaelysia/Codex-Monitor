@@ -104,8 +104,26 @@ export interface MonitorAlert {
 }
 
 export type EventChannelMode = 'active' | 'connecting' | 'fallback';
+export interface DesktopAuditMetrics {
+  at: number;
+  durationMs: number;
+  logFilesTracked: number;
+  logBytesRead: number;
+  backlogFiles: number;
+  unchangedFiles: number;
+  directoryCacheHits: number;
+  directoriesEnumerated: number;
+  lastEventLagMs: number | null;
+}
+export interface MonitorPerformance {
+  sourceScanDurationMs: number | null;
+  desktopAudit: DesktopAuditMetrics | null;
+}
+
 export interface MonitorState {
   scan: ScanResponse | null;
+  /** Metadata-only performance counters; never emits session content or paths. */
+  performance?: MonitorPerformance;
   alerts: MonitorAlert[];
   muted: boolean;
   /** Per-source event watcher health. "fallback" still has periodic scans. */
