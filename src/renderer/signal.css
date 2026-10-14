@@ -373,9 +373,13 @@
   padding:0 22px;gap:14px;
 }
 .signal-app.signal-native-overlay .signal-chrome{padding-right:152px}
-.signal-app.signal-native-overlay .signal-chrome{-webkit-app-region:drag}
+.signal-app.signal-native-overlay .signal-chrome{
+  -webkit-app-region:drag;
+  app-region:drag;
+}
 .signal-app .signal-chrome :is(button,input,select,.signal-nav,.signal-search,.signal-popover){
   -webkit-app-region:no-drag;
+  app-region:no-drag;
 }
 .signal-app .signal-brand{
   flex:0 0 auto;min-width:128px;display:block;
