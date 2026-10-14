@@ -24,6 +24,8 @@ const api: MonitorApi = {
   setFloatingExpanded: expanded => ipcRenderer.invoke('floating:set-expanded', expanded),
   setFloatingOpacity: opacity => ipcRenderer.invoke('floating:set-opacity', opacity),
   resetFloatingPosition: () => ipcRenderer.invoke('floating:reset-position'),
+  setFloatingAppearance: appearance => ipcRenderer.invoke('floating:set-appearance', appearance),
+  setFloatingCompactSize: size => ipcRenderer.invoke('floating:set-compact-size', size),
   onFloatingState: (listener: (state: FloatingWindowState) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: FloatingWindowState) => listener(state);
     ipcRenderer.on('floating:state', handler);
