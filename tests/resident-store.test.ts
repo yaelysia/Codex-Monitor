@@ -78,4 +78,16 @@ describe('resident window persistence and multi-display layout', () => {
     expect(findSavedDockDisplay({ ...dock, displayX: 9000 }, [area])).toBeNull();
   });
 
+  it('normalizes and persists appearance and compact size with bounded native geometry', () => {
+    const micro = normalizeResident({ dock: {} }).dock;
+    expect(micro).toMatchObject({ appearance: 'moonsea', compactSize: 'micro' });
+    expect(dockWindowBounds(micro, area)).toMatchObject({ width: 38, height: 78 });
+    const compact = normalizeResident({ dock: { compactSize: 'compact', appearance: 'mist',
+      side: 'right', offsetY: 2200 } }).dock;
+    expect(compact).toMatchObject({ appearance: 'mist', compactSize: 'compact' });
+    expect(dockWindowBounds(compact, area)).toEqual({ x: -42, y: 960, width: 42, height: 120 });
+    expect(normalizeResident({ dock: { compactSize: 'nonsense', appearance: 'purple' } }).dock)
+      .toMatchObject({ compactSize: 'micro', appearance: 'moonsea' });
+  });
+
 });
