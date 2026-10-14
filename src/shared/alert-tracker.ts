@@ -198,10 +198,12 @@ export class AlertTracker {
         // An asynchronous question may be unanswered while Codex continues
         // working or after its current turn finished. Such a request deserves
         // a waiting notification, not a fabricated process-waiting state.
+        // An explicit abort must remain an interruption even when an unrelated
+        // asynchronous question token is still present in the session.
         const kind: AlertKind | null =
+          session.status === 'interrupted' ? 'interrupted' :
           questionToken ? 'waiting' :
           session.status === 'finished' ? 'finished' :
-          session.status === 'interrupted' ? 'interrupted' :
           session.status === 'waiting' ? 'waiting' : null;
 
         if (kind && knownBefore) {
@@ -212,7 +214,7 @@ export class AlertTracker {
             kind === 'interrupted' ? prior.interruptedToken :
               (prior.pendingQuestionToken || prior.waitingToken));
           const changed = prior ? fileOrEventChanged(prior, session, token, priorToken) : true;
-          const newTerminal = !prior || (questionToken
+          const newTerminal = !prior || (kind === 'waiting' && questionToken
             ? questionToken !== prior.pendingQuestionToken
             : prior.status !== session.status || (!!token && token !== priorToken));
           // Two adjacent successful scans bound the completion to that observation

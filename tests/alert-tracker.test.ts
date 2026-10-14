@@ -212,6 +212,29 @@ describe('interrupted turn notifications', () => {
     ]), NOW + 600_000)).toEqual([]);
   });
 
+  it('treats a persisted abort as interruption even with an outstanding async question', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, {byteSize: 80,
+      pendingQuestionToken: 'async:existing'})]), NOW);
+    const ended = row('interrupted', NOW + 10_000, {
+      byteSize: 100, interruptedToken: 'abort|turn-a',
+      pendingQuestionToken: 'async:existing', questionText: 'Existing question?',
+    });
+    expect(tracker.observe(snapshot(NOW + 12_000, [ended]), NOW + 12_000)
+      .map(alert => alert.kind)).toEqual(['interrupted']);
+  });
+
+  it('handles source-relative age for interrupted turns despite SSH clock skew', () => {
+    const tracker = new AlertTracker();
+    const offset = 9 * 60_000;
+    tracker.observe(snapshot(NOW, [row('working', NOW + offset,
+      {byteSize: 120, ageAtSourceMs: 1_000})]), NOW);
+    const ended = row('interrupted', NOW + offset + 10_000,
+      {byteSize: 150, interruptedToken: 'abort|remote-turn', ageAtSourceMs: 1_000});
+    expect(tracker.observe(snapshot(NOW + 12_000, [ended]), NOW + 12_000)
+      .map(alert => alert.kind)).toEqual(['interrupted']);
+  });
+
   it('suppresses a child interruption even when a later scan loses the child flag', () => {
     const tracker = new AlertTracker();
     tracker.observe(snapshot(NOW, [row('working', NOW, {isSubagent: true, byteSize: 10})]), NOW);
