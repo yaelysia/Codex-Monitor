@@ -572,7 +572,7 @@ export default function App() {
           <path className="signal-ribbon-tracer" d="M0 288 C210 250 235 95 430 140 S690 308 920 65"/>
         </svg></div>
 
-        <div className="signal-page-title" key={view}>
+        <div className="signal-page-title" data-current-view={view}>
           <span className="signal-eyebrow">WORKSPACE / {view === 'board' ? 'MONITOR' :
             view === 'locations' ? 'LOCATIONS' : view === 'chronicle' ? 'ACTIVITY' : 'SESSIONS'}</span>
           <h1>{view === 'board' ? '任务概览' : view === 'locations' ? '机器矩阵' :
@@ -618,7 +618,7 @@ export default function App() {
         {workspaceId && <div className="scope-banner">工作目录：{currentWorkspace?.workspace || '未知'}
           <button type="button" onClick={() => setWorkspaceId(null)}>清除 ×</button></div>}
 
-        <div key={view} className="signal-view" aria-label="工作区内容">
+        <div className={'signal-view view-' + view} aria-label="工作区内容">
         {view === 'board' && <>
           <div className="signal-key-stats" aria-label="会话统计">
             <span><i className="signal-mini-dot"/> <b>{String(running.length).padStart(2, '0')}</b> 条活动线索</span>
