@@ -34,8 +34,8 @@ export class DesktopLogFolderWatcher {
     const selected = new Set(this.complete ? valid : []);
     for (const [dir, subscription] of this.active) {
       if (selected.has(dir)) continue;
-      subscription.close();
       this.active.delete(dir);
+      subscription.close();
       this.retryAfter.delete(dir);
     }
     this.desired = selected;
@@ -46,13 +46,15 @@ export class DesktopLogFolderWatcher {
           if (!this.disposed) this.wake();
         });
         this.active.set(dir, subscription);
-        subscription.on('error', () => {
+        const lost = () => {
           if (this.active.get(dir) !== subscription) return;
           this.active.delete(dir);
           subscription.close();
           this.retryAfter.set(dir, Date.now() + 30_000);
           if (!this.disposed) this.wake(); // Immediate fallback after failure.
-        });
+        };
+        subscription.on('error', lost);
+        subscription.on('close', lost);
         this.retryAfter.delete(dir);
       } catch {
         this.retryAfter.set(dir, now + 30_000);
@@ -64,8 +66,9 @@ export class DesktopLogFolderWatcher {
     this.disposed = true;
     this.complete = false;
     this.desired.clear();
-    for (const subscription of this.active.values()) subscription.close();
+    const subscriptions = [...this.active.values()];
     this.active.clear();
+    for (const subscription of subscriptions) subscription.close();
     this.retryAfter.clear();
   }
 }

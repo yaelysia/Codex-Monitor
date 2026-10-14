@@ -399,3 +399,27 @@ describe('Desktop event-driven wakeups with bounded safety scans', () => {
     expect(collect).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('native completion captured during filesystem refresh', () => {
+  it('notifies on the same full scan and does not repeat on next Desktop audit', async () => {
+    const ID = '019a21b0-aaaa-7ccc-8ddd-111122223333';
+    const TURN = '019a21b0-aaaa-7ccc-8ddd-777788889999';
+    fake.health = { local: 'active' };
+    const sourceRow = { ...session(ID,'working',NOW), key:'local:'+ID,
+      sourceId:'local', sourceLabel:'Windows', clientKind:'desktop' as const };
+    vi.mocked(collect).mockResolvedValue(snapshot(NOW,[source('local',[sourceRow])]));
+    const sent: MonitorAlert[] = [];
+    service = new MonitorService(() => undefined, a => sent.push(a),
+      () => undefined, 'win32');
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(recentDesktopCompletions).mockReturnValue([{
+      threadId:ID,type:'turn-displayed-complete',turnId:TURN,at:NOW+1000,
+    }]);
+    await vi.advanceTimersByTimeAsync(1100);
+    await service.refresh(true);
+    expect(sent).toMatchObject([{kind:'finished',sessionId:ID}]);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(sent).toHaveLength(1);
+  });
+});

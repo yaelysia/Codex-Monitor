@@ -298,6 +298,10 @@ export class MonitorService {
       };
       for (const source of delta.sources) this.lastSourceScan.set(source.id, delta.scannedAt);
       const alerts = this.tracker.observe(projectedDelta);
+      // A Desktop completion that occurred during this source scan must not
+      // wait for the next safety audit. Both paths share exact-turn dedup.
+      if (this.running) alerts.push(...this.tracker.observeDesktopCompletions(
+        projected, recentDesktopCompletions(), this.startedAt, Date.now()));
       // Only an actual new alert changes the persisted inbox here. Frequent
       // no-change filesystem scans must not serialize the same 500 IDs.
       if (alerts.length) this.persistAlerts();

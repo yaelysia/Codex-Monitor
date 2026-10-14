@@ -237,7 +237,7 @@ export async function projectDesktopRuntime(
       !src.error && src.sessions.some(s => !s.isSubagent))) return snapshot;
   const inspected = await (dependencies.inspect ?? inspectDesktopLogSignals)(now).catch(() => ({
     events: new Map(), logFilesRead: 0, signalCount: 0,
-    discovery: null,
+    completions: [] as DesktopLogEvent[], discovery: null,
   }));
   const eventCache = dependencies.cache ?? desktopLogCache;
   const evidence = eventCache.observe(inspected.events, now);
