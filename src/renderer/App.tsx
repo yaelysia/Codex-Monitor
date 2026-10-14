@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
-import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
+import { filterSessions } from '../shared/monitor-view';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 
 type View = 'board' | 'sessions' | 'locations' | 'chronicle';
@@ -37,9 +37,6 @@ const STATUS: Record<SessionStatus, { text: string; className: string; short: st
   failed: { text: '本轮失败', className: 'failed', short: '失败' },
   unknown: { text: '状态未知', className: 'unknown', short: '状态未知' },
 };
-const REFRESH_MS = 12_000;
-const MAX_SIDEBAR_FOLDERS = 6;
-const BATCH_SIZE = 8;
 
 const ICONS: Record<GlyphName, ReactNode> = {
   grid: <><rect x="3" y="3" width="7" height="7" rx="1.3"/><rect x="14" y="3" width="7" height="7" rx="1.3"/><rect x="3" y="14" width="7" height="7" rx="1.3"/><rect x="14" y="14" width="7" height="7" rx="1.3"/></>,
@@ -91,29 +88,6 @@ function StatusPill({ status }: { status: SessionStatus }) {
   </span>;
 }
 
-function SessionCard({ session, now, selected, onSelect }: {
-  session: SessionRecord; now: number; selected: boolean; onSelect: (session: SessionRecord) => void;
-}) {
-  return <button type="button" className={'task-card status-' + session.status + (selected ? ' is-selected' : '')}
-    aria-pressed={selected} onClick={() => onSelect(session)}>
-    <div className="task-topline">
-      <span className="task-source">{session.sourceLabel}{session.isSubagent && <span className="child-badge"> · 子代理</span>}</span>
-      <span className="task-age">{ageText(session.updatedAt, now)}</span>
-    </div>
-    <div className="task-title">{session.title || '未命名会话'}</div>
-    {session.pendingQuestionToken && <div className="task-question" title={session.questionText || ''}>
-      <Icon name="alert" size={13}/>待回答：{session.questionText || '请查看 Codex 的问题'}
-    </div>}
-    <div className="task-path" title={session.workspace || '未记录工作目录'}>{session.workspace || '未记录工作目录'}</div>
-    <div className="task-footer"><span className="task-state"><span className="status-dot" />{STATUS[session.status].short}</span>
-      {session.status === 'working' && <span className="task-evidence" title={session.statusReason}>
-        {sessionEvidenceLabel(session)}</span>}
-      <Icon name="chevron-right" size={15}/>
-    </div>
-  </button>;
-}
-
-
 function SignalTaskRow({ session, now, onSelect }: {
   session: SessionRecord; now: number; onSelect: (value: SessionRecord) => void;
 }) {
@@ -161,31 +135,6 @@ function SessionTable({ sessions, now, selectedKey, onSelect }: {
     </table>
     {!sessions.length && <EmptyState text="没有符合条件的会话" />}
   </div>;
-}
-
-function WorkspaceSection({ group, now, selectedKey, onSelect }: {
-  group: WorkspaceGroup; now: number; selectedKey: string | null;
-  onSelect: (session: SessionRecord) => void;
-}) {
-  const [expanded, setExpanded] = useState(group.working > 0 || group.waiting > 0);
-  useEffect(() => { if (group.working || group.waiting) setExpanded(true); }, [group.working, group.waiting]);
-  return <section className="workspace-section">
-    <button type="button" className="workspace-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-      <span className="workspace-identity"><strong>{workspaceName(group.workspace)}</strong>
-        <span className="mono truncate" title={group.workspace || ''}>{group.workspace || '未记录工作目录'}</span></span>
-      <span className="workspace-totals">{group.sessions.length} 会话{group.working ? ' · ' + group.working + ' 活动' : ''}</span>
-      <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16}/>
-    </button>
-    {expanded && <div className="workspace-rows">{group.sessions.map(item =>
-      <button key={item.key} type="button" className={'workspace-session' + (selectedKey === item.key ? ' is-selected' : '')}
-        onClick={() => onSelect(item)}>
-        <span className={'workspace-session-indicator status-' + item.status}/>
-        <span className="workspace-session-name">{item.title || '未命名会话'}</span>
-        <span className="workspace-session-time">{ageText(item.updatedAt, now)}</span>
-        <Icon name="chevron-right" size={14}/>
-      </button>
-    )}</div>}
-  </section>;
 }
 
 function EmptyState({ text }: { text: string }) {
@@ -283,7 +232,6 @@ export default function App() {
   const [view, setView] = useState<View>(() => readViewPreferences().view);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [expandedSources, setExpandedSources] = useState<string[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [replyVersion, setReplyVersion] = useState(0);
@@ -310,9 +258,6 @@ export default function App() {
   const [showAlerts, setShowAlerts] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [laneLimit, setLaneLimit] = useState<Record<string, number>>({
-    working: BATCH_SIZE, other: BATCH_SIZE, finished: BATCH_SIZE,
-  });
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -425,7 +370,6 @@ export default function App() {
     query, status: filter, recentOnly, sourceId, workspaceId,
   }, now), [allSessions, query, filter, recentOnly, sourceId, workspaceId, now]);
   const groups = useMemo(() => groupByExecutionLocation(shown), [shown]);
-  const lanes = useMemo(() => makeStatusLanes(shown), [shown]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
 
@@ -485,7 +429,6 @@ export default function App() {
   const running = shown.filter(item => item.status === 'working');
   const recentAlerts = visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at);
   const unreadCount = recentAlerts.filter(item => !item.read).length;
-  const title = view === 'board' ? '决策台' : view === 'locations' ? '机器矩阵' : view === 'chronicle' ? '事件轨迹' : '全部会话';
   async function updateAppearance(next: SignalAppearance): Promise<void> {
     try { setAppearance(next); const saved = await window.monitorApi.setFloatingAppearance(next); setAppearance(saved.appearance); }
     catch (cause) { setError(describeError(cause)); }
@@ -528,9 +471,6 @@ export default function App() {
     } catch (error) {
       if (mounted.current) setOriginalWindowMessage('原窗口定位失败：' + describeError(error));
     }
-  }
-  function toggleSource(id: string) {
-    setExpandedSources(ids => ids.includes(id) ? ids.filter(entry => entry !== id) : [...ids, id]);
   }
   async function updateResidentOptions(next: ResidentOptions): Promise<void> {
     if (residentSaving) return;
