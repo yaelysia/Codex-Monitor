@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizeDock, type SavedDock } from '../src/shared/window-geometry';
+import type { FloatingWindowState } from '../src/shared/types';
 
 const fake = vi.hoisted(() => ({
   windows: [] as any[],
@@ -309,5 +310,83 @@ describe('signal studio native compact rail', () => {
     restored.show();
     expect(fake.windows[1]?.bounds).toMatchObject({ width: 42, height: 120 });
     expect(restored.state()).toMatchObject({ appearance: 'ember', compactSize: 'compact' });
+  });
+});
+
+
+describe('native floating transition under rapid interaction', () => {
+  it('anchors the right edge on every frame and reverses without snapping to either endpoint', async () => {
+    const snapshots: FloatingWindowState[] = [];
+    const controller = new FloatingWindowController(
+      state => snapshots.push(state), () => undefined,
+      normalizeDock({ side: 'right', displayId: 1, offsetY: 960 }), () => undefined);
+    controller.show();
+    const win = fake.windows[0]!;
+    const rail = { ...win.bounds };
+    expect(rail).toEqual({ x: 1882, y: 960, width: 38, height: 78 });
+    controller.setExpanded(true);
+    expect(controller.state().motion).toBe('expanding');
+    // Native resizing starts from the visible size rather than jumping to 438x488.
+    expect(win.bounds).toEqual(rail);
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS / 2);
+    const halfway = { ...win.bounds };
+    expect(halfway.width).toBeGreaterThan(rail.width);
+    expect(halfway.width).toBeLessThan(438);
+    expect(halfway.x + halfway.width).toBe(1920);
+    expect(halfway.y).toBeGreaterThanOrEqual(592);
+    expect(halfway.y).toBeLessThan(960);
+    // A delayed window-moved event from native resize must not be interpreted as drag.
+    win.emit('moved');
+    expect(controller.state()).toMatchObject({ side: 'right', expanded: true });
+    controller.setExpanded(false);
+    expect(controller.state().motion).toBe('collapsing');
+    expect(win.bounds).toEqual(halfway);
+    await vi.advanceTimersByTimeAsync(DOCK_COLLAPSE_MS / 2);
+    expect(win.bounds.width).toBeLessThan(halfway.width);
+    expect(win.bounds.x + win.bounds.width).toBe(1920);
+    await vi.advanceTimersByTimeAsync(DOCK_COLLAPSE_MS + 20);
+    expect(win.bounds).toEqual(rail);
+    expect(controller.state().motion).toBeNull();
+    expect(snapshots.some(s => s.motion === 'expanding')).toBe(true);
+    expect(snapshots.some(s => s.motion === 'collapsing')).toBe(true);
+    expect(snapshots.at(-1)?.motion).toBeNull();
+  });
+
+  it('keeps the left edge fixed through expansion and returns to the saved bottom position', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined,
+      normalizeDock({ side: 'left', displayId: 2, displayX: 1920, displayY: 0,
+        offsetY: 850, compactSize: 'compact' }), () => undefined);
+    controller.show();
+    const win = fake.windows[0]!;
+    const start = { ...win.bounds };
+    expect(start).toEqual({ x: 1920, y: 780, width: 42, height: 120 });
+    controller.setExpanded(true);
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS / 2);
+    expect(win.bounds.x).toBe(1920);
+    expect(win.bounds.width).toBeGreaterThan(42);
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS + 20);
+    expect(win.bounds).toEqual({ x: 1920, y: 412, width: 438, height: 488 });
+    controller.setExpanded(false);
+    await vi.advanceTimersByTimeAsync(DOCK_COLLAPSE_MS + 20);
+    expect(win.bounds).toEqual(start);
+  });
+
+  it('cancels a pending native transition on hide, then shows only the compact hit area', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, normalizeDock({ side: 'right' }), () => undefined);
+    controller.show();
+    const win = fake.windows[0]!;
+    controller.setExpanded(true);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(win.bounds.width).toBeGreaterThan(38);
+    controller.hide();
+    const stopped = { ...win.bounds };
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS + 30);
+    expect(win.bounds).toEqual(stopped);
+    controller.show();
+    expect(win.bounds).toMatchObject({ width: 38, height: 78 });
+    expect(controller.state()).toMatchObject({ expanded: false, motion: null });
+    expect(fake.windows).toHaveLength(1);
   });
 });
