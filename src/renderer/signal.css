@@ -358,3 +358,10 @@
   color:var(--s-text)}
 @media(max-width:600px){.signal-app .signal-compact-setting{flex-direction:column;align-items:stretch}
   .signal-app .signal-compact-buttons button{flex:1}}
+
+.signal-machine-workspaces{display:flex;gap:7px;flex-wrap:wrap;max-height:74px;overflow:auto;margin:0 0 14px}
+.signal-machine-workspaces button{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%;padding:6px 9px;
+  border:1px solid var(--s-stroke-strong);border-radius:6px;background:var(--s-tint);color:var(--s-muted);font-size:10px}
+.signal-machine-workspaces button:hover{color:var(--s-text);background:var(--s-panel-elev)}
+.signal-machine-workspaces button span{margin-left:3px;color:var(--s-accent)}
+.signal-machine-workspaces svg{flex-shrink:0}
