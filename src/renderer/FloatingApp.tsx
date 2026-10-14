@@ -4,6 +4,7 @@ import { recentParentCompletions } from '../shared/monitor-view';
 import { windowWasActivated } from '../shared/window-navigation';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
+import { useVisibleInterval } from './useVisibleInterval';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
 const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right', opacity: 1,
@@ -45,6 +46,8 @@ export default function FloatingApp() {
   const [dock, setDock] = useState<FloatingWindowState>(DEFAULT_DOCK);
   const [tab, setTab] = useState<FloatingTab>('running');
   const [now, setNow] = useState(Date.now());
+  // Collapsed rails never display relative time. Keep their renderer idle.
+  useVisibleInterval(() => setNow(Date.now()), 30_000, dock.expanded && tab === 'completed');
 
   useEffect(() => {
     let alive = true;
@@ -52,22 +55,23 @@ export default function FloatingApp() {
     const offDock = window.monitorApi.onFloatingState(state => { if (alive) setDock(state); });
     void window.monitorApi.getMonitorState().then(state => { if (alive) setMonitor(state); }).catch(console.error);
     void window.monitorApi.getFloatingState().then(state => { if (alive) setDock(state); }).catch(console.error);
-    const timer = setInterval(() => setNow(Date.now()), 5000);
-    return () => { alive = false; offMonitor(); offDock(); clearInterval(timer); };
+    return () => { alive = false; offMonitor(); offDock(); };
   }, []);
 
   const sessions = useMemo(() => recentSessions(monitor), [monitor.scan]);
-  const running = sessions.filter(s => s.status === 'working');
-  const waiting = sessions.filter(s => s.status === 'waiting' || !!s.pendingQuestionToken);
+  const running = useMemo(() => sessions.filter(s => s.status === 'working'), [sessions]);
+  const waiting = useMemo(() => sessions.filter(s => s.status === 'waiting' || !!s.pendingQuestionToken),
+    [sessions]);
   const completed = recentParentCompletions(sessions, now, monitor.scan?.scannedAt);
-  const alerts = visibleAlerts(monitor.alerts,
+  const alerts = useMemo(() => visibleAlerts(monitor.alerts,
     monitor.scan?.sources.flatMap(source => source.sessions) || [])
-    .sort((a, b) => b.at - a.at);
+    .sort((a, b) => b.at - a.at), [monitor.alerts, monitor.scan]);
   const unread = alerts.filter(a => !a.read);
   const dataSources = monitor.scan?.sources.filter(s => !s.error).length || 0;
 
   function showTab(target: FloatingTab) {
     setTab(target);
+    if (target === 'completed') setNow(Date.now());
     // The native main process broadcasts the authoritative dock state.
     // Do not apply a possibly stale IPC response after a fast outside click
     // has already collapsed the popup via BrowserWindow.blur.
