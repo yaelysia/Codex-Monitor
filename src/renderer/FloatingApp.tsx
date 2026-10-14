@@ -93,9 +93,14 @@ export default function FloatingApp() {
   const description = tab === 'running' ? '点击任务优先返回原窗口；无法定位则打开会话详情' :
     tab === 'alerts' ? '仅显示新检测到的变化' : '最近 24 小时完成的轮次';
 
+  // Keep the panel mounted while shrinking so its contents can fade out.
+  // The edge rail itself never changes size or position in an open/close turn.
+  const panelVisible = dock.expanded || dock.motion === 'collapsing';
   return <div className={'float-shell signal-float scene-' + dock.appearance +
-    ' size-' + dock.compactSize + ' side-' + dock.side + (dock.expanded ? ' expanded' : ' collapsed')}>
-    {dock.expanded && <section className="dock-panel" aria-label={heading}>
+    ' size-' + dock.compactSize + ' side-' + dock.side + (panelVisible ? ' expanded' : ' collapsed') +
+    ' motion-' + (dock.motion ?? 'idle')}>
+    {panelVisible && <section className="dock-panel" aria-label={heading}
+      aria-hidden={!dock.expanded} inert={!dock.expanded}>
       <header className="signal-dock-top">
         <strong>CODEX / AMBIENT SIGNAL</strong>
         <div>
@@ -104,6 +109,9 @@ export default function FloatingApp() {
             onClick={() => void window.monitorApi.setNotificationsMuted(!monitor.muted)
               .then(setMonitor).catch(console.error)}>
             <Icon name={monitor.muted ? 'mute' : 'volume'} size={15}/></button>
+          <button type="button" title="隐藏悬浮窗" aria-label="隐藏悬浮窗"
+            onClick={() => void window.monitorApi.setFloatingVisible(false).catch(console.error)}>
+            <Icon name="close" size={15}/></button>
           <button type="button" title="收起" aria-label="收起悬浮窗"
             onClick={collapse}><Icon name="fold" size={16}/></button>
         </div>
@@ -197,21 +205,10 @@ export default function FloatingApp() {
           onClick={() => acknowledge(unread[0]!.id)} title="直接标记最新提醒已读"
           aria-label={'标记最新提醒已读：' + unread[0]!.title}><Icon name="check" size={10}/></button>}
       </div>
-      {(dock.expanded || dock.compactSize === 'compact') &&
-        <button type="button" className={'rail-tab rail-completed' + (tab === 'completed' && dock.expanded ? ' selected' : '')}
-          aria-label={'最近完成 ' + completed.length} aria-pressed={tab === 'completed' && dock.expanded}
-          title="展开最近完成" onClick={() => showTab('completed')}>
-          <Icon name="check" size={17}/>
-        </button>}
-      {dock.expanded && <>
-        <span className="rail-gap"/>
-        <button type="button" className="rail-tab rail-collapse" title="收起" aria-label="收起悬浮窗"
-          onClick={collapse}><Icon name="fold" size={17}/></button>
-        <button type="button" className="rail-tab rail-hide" title="隐藏悬浮窗"
-          aria-label="隐藏悬浮窗" onClick={() =>
-            void window.monitorApi.setFloatingVisible(false).catch(console.error)}>
-          <Icon name="close" size={16}/></button>
-      </>}
+      {dock.compactSize === 'compact' && !panelVisible &&
+        <button type="button" className="rail-tab rail-completed"
+          aria-label={'最近完成 ' + completed.length} title="展开最近完成"
+          onClick={() => showTab('completed')}><Icon name="check" size={17}/></button>}
     </aside>
   </div>;
 }
