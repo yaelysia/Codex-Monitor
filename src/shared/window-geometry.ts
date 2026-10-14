@@ -77,6 +77,23 @@ export function restoreMainBounds(saved: unknown, areas: WorkArea[], fallback: S
   };
 }
 
+/** Interpolate native dock bounds with both the size and the attached edge moving together.
+ * Keeping the right edge fixed avoids the apparent sideways hop when the dock grows.
+ */
+export function interpolateDockBounds(from: SavedBounds, to: SavedBounds, progress: number): SavedBounds {
+  const t = Math.max(0, Math.min(1, progress));
+  const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  const mix = (a: number, b: number) => Math.round(a + (b - a) * eased);
+  const width = mix(from.width, to.width);
+  const height = mix(from.height, to.height);
+  const anchoredRight = from.x + from.width === to.x + to.width;
+  return {
+    x: anchoredRight ? from.x + from.width - width : mix(from.x, to.x),
+    y: mix(from.y, to.y),
+    width, height,
+  };
+}
+
 export function dockWindowBounds(dock: SavedDock, workArea: WorkArea): SavedBounds {
   // Native bounds must match the visible rail. A transparent 276px hit area
   // would intercept clicks even if the CSS only painted a 78px capsule.
