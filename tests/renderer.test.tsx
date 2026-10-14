@@ -101,6 +101,11 @@ describe('audit: visibility and inspector consistency', () => {
     expect(source).toContain('if (selectedKey && allSessions.some(session => session.key === selectedKey)) return;');
     expect(source).not.toContain('if (!shown.length) { setSelectedKey(null); setDetailOpen(false); return; }');
   });
+
+  it('clears modal overlays before focusing an externally requested session', () => {
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).toMatch(/const focusSession = \(key: string\) => \{[\s\S]*?setOverviewStatus\(null\);[\s\S]*?setView\('sessions'\);/);
+  });
 });
 
 describe('renderer performance safeguards', () => {
