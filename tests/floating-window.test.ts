@@ -61,23 +61,24 @@ vi.mock('electron', () => {
   return { BrowserWindow: FakeBrowserWindow, screen };
 });
 
-import { FloatingWindowController, HIDDEN_RENDERER_IDLE_MS } from '../electron/floating';
+import { FloatingWindowController, HIDDEN_RENDERER_IDLE_MS, DOCK_EXPAND_MS, DOCK_COLLAPSE_MS } from '../electron/floating';
 
 const INITIAL = normalizeDock({
   side: 'left', displayId: 2, displayX: 1920, displayY: 0,
   offsetY: 430, visible: true, expanded: false, opacity: 0.7,
 });
 beforeEach(() => {
+  vi.useFakeTimers();
   fake.windows.length = 0;
   fake.displays = [
     { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
     { id: 2, workArea: { x: 1920, y: 0, width: 1600, height: 900 } },
   ];
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('floating window native opacity and position memory', () => {
-  it('restores persisted monitor/edge/Y/opacity, live-updates opacity, and keeps it while hidden', () => {
+  it('restores persisted monitor/edge/Y/opacity, live-updates opacity, and keeps it while hidden', async () => {
     const snapshots: SavedDock[] = [];
     const controller = new FloatingWindowController(
       () => undefined, () => undefined, INITIAL, value => snapshots.push(value));
@@ -90,6 +91,7 @@ describe('floating window native opacity and position memory', () => {
     expect(win.opacity).toBe(0.55);
     controller.setExpanded(true);
     expect(win.focusCalls).toBe(1);
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS + 20);
     expect(win.bounds.width).toBe(438);
     expect(win.opacity).toBe(0.55);
     controller.hide();
@@ -147,7 +149,7 @@ describe('floating window native opacity and position memory', () => {
 });
 
 describe('floating panel blur-to-collapse behavior', () => {
-  it('expands with focus and collapses after clicking another window', () => {
+  it('expands with focus and collapses after clicking another window', async () => {
     const persisted: SavedDock[] = [];
     const controller = new FloatingWindowController(
       () => undefined, () => undefined, INITIAL, dock => persisted.push(dock));
@@ -157,23 +159,27 @@ describe('floating panel blur-to-collapse behavior', () => {
     controller.setExpanded(true);
     expect(controller.state().expanded).toBe(true);
     expect(win.focused).toBe(true);
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS + 20);
     expect(win.bounds.width).toBe(438);
     win.loseFocus();
     expect(controller.state()).toMatchObject({ visible: true, expanded: false });
+    await vi.advanceTimersByTimeAsync(DOCK_COLLAPSE_MS + 20);
     expect(win.bounds).toEqual(closedBounds);
     expect(persisted.at(-1)?.expanded).toBe(false);
   });
 
-  it('does not collapse while still focused, and does not steal focus when collapsed', () => {
+  it('does not collapse while still focused, and does not steal focus when collapsed', async () => {
     const controller = new FloatingWindowController(
       () => undefined, () => undefined, INITIAL, () => undefined);
     controller.show();
     const win = fake.windows[0]!;
     controller.setExpanded(true);
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS + 20);
     expect(win.focusCalls).toBe(1);
     win.emit('moved');
     expect(controller.state().expanded).toBe(true);
     controller.setExpanded(false);
+    await vi.advanceTimersByTimeAsync(DOCK_COLLAPSE_MS + 20);
     expect(win.focusCalls).toBe(1);
     win.loseFocus();
     expect(controller.state()).toMatchObject({ visible: true, expanded: false });
@@ -271,7 +277,7 @@ describe('hidden floating renderer lifecycle', () => {
 
 
 describe('signal studio native compact rail', () => {
-  it('switches micro and compact sizes without retaining an invisible window hit area', () => {
+  it('switches micro and compact sizes without retaining an invisible window hit area', async () => {
     const captured: SavedDock[] = [];
     const controller = new FloatingWindowController(
       () => undefined, () => undefined, normalizeDock({ side: 'right' }),
@@ -286,8 +292,10 @@ describe('signal studio native compact rail', () => {
     controller.setAppearance('ember');
     expect(controller.state().appearance).toBe('ember');
     controller.setExpanded(true);
+    await vi.advanceTimersByTimeAsync(DOCK_EXPAND_MS + 20);
     expect(win.bounds).toMatchObject({ width: 438, height: 488 });
     controller.setExpanded(false);
+    await vi.advanceTimersByTimeAsync(DOCK_COLLAPSE_MS + 20);
     expect(win.bounds).toMatchObject({ width: 42, height: 120 });
 
     controller.hide();
