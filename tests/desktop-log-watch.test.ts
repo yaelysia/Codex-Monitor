@@ -16,8 +16,9 @@ describe('bounded Desktop event-watch coverage and fallback', () => {
   it('wakes on changes, deduplicates subscriptions and disposes safely', () => {
     const created: FakeWatcher[] = [];
     const wake = vi.fn();
-    const observer = new DesktopLogFolderWatcher(wake, () => {
+    const observer = new DesktopLogFolderWatcher(wake, (_dir, onChange) => {
       const item = new FakeWatcher(); created.push(item);
+      item.on('change', onChange);
       return item as unknown as FSWatcher;
     });
     observer.reconcile([folder('today'), folder('today'), folder('yesterday')]);
