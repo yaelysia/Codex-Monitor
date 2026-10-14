@@ -3,12 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
-import { filterSessions } from '../shared/monitor-view';
+import { filterSessions, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 
 type View = 'board' | 'sessions' | 'locations' | 'chronicle';
 
-type StoredViewPreferences = { view: View; recentOnly: boolean; filter: SessionStatus | 'all'; showSubagents: boolean };
+type StoredViewPreferences = { view: View; recentOnly: boolean; filter: ViewFilter['status']; showSubagents: boolean };
 const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
 function readViewPreferences(): StoredViewPreferences {
   const fallback: StoredViewPreferences = { view: 'board', recentOnly: true, filter: 'all', showSubagents: false };
@@ -17,7 +17,7 @@ function readViewPreferences(): StoredViewPreferences {
     const row = JSON.parse(localStorage.getItem(VIEW_PREFERENCES_KEY) || 'null');
     if (!row || typeof row !== 'object') return fallback;
     const validView = row.view === 'board' || row.view === 'sessions' || row.view === 'locations' || row.view === 'chronicle';
-    const validFilter = ['all', 'working', 'waiting', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
+    const validFilter = ['all', 'working', 'waiting', 'abnormal', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
     return { view: validView ? row.view : 'board',
       recentOnly: typeof row.recentOnly === 'boolean' ? row.recentOnly : true,
       filter: validFilter ? row.filter : 'all',
@@ -226,7 +226,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<SessionStatus | 'all'>(() => readViewPreferences().filter);
+  const [filter, setFilter] = useState<ViewFilter['status']>(() => readViewPreferences().filter);
   const [recentOnly, setRecentOnly] = useState(() => readViewPreferences().recentOnly);
   const [showSubagents, setShowSubagents] = useState(() => readViewPreferences().showSubagents);
   const [view, setView] = useState<View>(() => readViewPreferences().view);
@@ -429,9 +429,8 @@ export default function App() {
   const scopeSource = scan?.sources.find(source => source.id === sourceId);
   const currentWorkspace = sourceGroups.flatMap(group => group.workspaces)
     .find(group => group.key === workspaceId);
-  const attention = shown.filter(item => item.status === 'waiting' || item.status === 'failed' ||
-    item.status === 'interrupted' || !!item.pendingQuestionToken);
-  const running = shown.filter(item => item.status === 'working');
+  const { pending, abnormal, working: running } = useMemo(
+    () => summarizeDashboardSessions(shown), [shown]);
   const recentAlerts = visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at);
   const unreadCount = recentAlerts.filter(item => !item.read).length;
   async function updateAppearance(next: SignalAppearance): Promise<void> {
@@ -457,6 +456,10 @@ export default function App() {
     setWorkspaceId(nextWorkspace);
     setView('board');
     setFilter('all');
+  }
+  function showStatusSessions(status: ViewFilter['status']) {
+    setFilter(status);
+    setView('sessions');
   }
   function openSession(session: SessionRecord) {
     // Notifications may refer to sessions outside the current filters. Keep the
@@ -585,9 +588,9 @@ export default function App() {
 
         <div className="signal-toolbar" aria-label="筛选与快捷操作">
           <label>状态 <select aria-label="运行状态筛选" value={filter}
-            onChange={event => setFilter(event.target.value as SessionStatus | 'all')}>
+            onChange={event => setFilter(event.target.value as ViewFilter['status'])}>
             <option value="all">全部</option><option value="working">可能执行中</option>
-            <option value="waiting">可能待处理</option><option value="finished">本轮完成</option>
+            <option value="waiting">可能待处理</option><option value="abnormal">失败 / 中断</option><option value="finished">本轮完成</option>
             <option value="failed">失败</option><option value="interrupted">中断</option>
             <option value="unknown">未知</option></select></label>
           <label>位置 <select aria-label="执行位置筛选" value={sourceId ?? ''}
@@ -620,24 +623,46 @@ export default function App() {
 
         <div className={'signal-view view-' + view} aria-label="工作区内容">
         {view === 'board' && <>
-          <div className="signal-key-stats" aria-label="会话统计">
-            <span><i className="signal-mini-dot"/> <b>{String(running.length).padStart(2, '0')}</b> 条活动线索</span>
-            <span><b>{String(attention.length).padStart(2, '0')}</b> 条需要关注</span>
-            <span className="signal-stat-soft">当前 {shown.length} 个会话</span>
+          <div className="signal-overview-stats" aria-label="会话状态入口">
+            <button type="button" className="signal-overview-stat pending"
+              aria-label={'查看可能待处理会话，共 ' + pending.length + ' 条'}
+              onClick={() => showStatusSessions('waiting')}>
+              <span className="signal-overview-icon"><Icon name="bell" size={17}/></span>
+              <span className="signal-overview-copy"><strong>可能待处理</strong>
+                <small>{pending.length ? '有会话等待处理 · 点击查看' : '当前没有待处理会话'}</small></span>
+              <span className="signal-overview-count">{String(pending.length).padStart(2, '0')}</span>
+              <Icon name="chevron-right" size={15}/>
+            </button>
+            <button type="button" className="signal-overview-stat abnormal"
+              aria-label={'查看失败和中断会话，共 ' + abnormal.length + ' 条'}
+              onClick={() => showStatusSessions('abnormal')}>
+              <span className="signal-overview-icon"><Icon name="alert" size={17}/></span>
+              <span className="signal-overview-copy"><strong>失败 / 中断</strong>
+                <small>{abnormal.length ? '结束异常记录 · 不等于待处理' : '暂无异常结束记录'}</small></span>
+              <span className="signal-overview-count">{String(abnormal.length).padStart(2, '0')}</span>
+              <Icon name="chevron-right" size={15}/>
+            </button>
+            <button type="button" className="signal-overview-stat working"
+              aria-label={'查看可能执行中会话，共 ' + running.length + ' 条'}
+              onClick={() => showStatusSessions('working')}>
+              <span className="signal-overview-icon"><Icon name="activity" size={17}/></span>
+              <span className="signal-overview-copy"><strong>可能执行中</strong>
+                <small>按最近活动与状态证据推断</small></span>
+              <span className="signal-overview-count">{String(running.length).padStart(2, '0')}</span>
+              <Icon name="chevron-right" size={15}/>
+            </button>
           </div>
-          <div className="signal-main-grid">
-            <section className="signal-focus">
-              <div className="signal-section-kicker"><span className="signal-mini-dot warning"/>需要你的关注</div>
-              <div className="signal-focus-total"><strong>{String(attention.length).padStart(2, '0')}</strong><span>件待处理</span></div>
-              <h2>{attention.length ? '待处理会话' : '目前没有待处理任务'}</h2>
-              <p>来自会话的待回答、失败与中断证据；不自动执行确认。</p>
-              {attention.length ? <button type="button" className="signal-focus-action"
-                onClick={() => openSession(attention[0]!)}>
-                <span><strong>{attention[0]?.title || '未命名会话'}</strong>
-                  <small>{attention[0]?.sourceLabel} · {ageText(attention[0]!.updatedAt, now)}</small></span>
-                <span className="signal-focus-cta">查看任务 <Icon name="arrow-up-right" size={15}/></span>
-              </button> : <div className="signal-focus-action signal-no-action">无需立即操作，其他会话继续监控中。</div>}
-            </section>
+          <div className={'signal-main-grid' + (pending.length ? ' has-pending' : '')}>
+            {pending.length > 0 && <section className="signal-panel signal-pending" aria-label="可能待处理会话">
+              <div className="signal-panel-heading">
+                <div><h2>可能待处理 · {pending.length}</h2><small>仅展示等待回答或确认的会话线索</small></div>
+                <button type="button" onClick={() => showStatusSessions('waiting')}>
+                  查看全部 <Icon name="chevron-right" size={14}/></button>
+              </div>
+              <div className="signal-task-list">{pending.slice(0, 4).map(session =>
+                <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
+              </div>
+            </section>}
             <section className="signal-panel signal-running" aria-label="可能执行中的会话">
               <div className="signal-panel-heading"><div><h2>可能执行中</h2><small>最新状态与活动证据</small></div>
                 <button type="button" onClick={() => {setView('sessions');setFilter('working');}}>查看全部 <Icon name="chevron-right" size={14}/></button></div>
