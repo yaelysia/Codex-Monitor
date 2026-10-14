@@ -31,4 +31,15 @@ describe('parent-only default presentation', () => {
     expect(visibleAlerts(alerts, sessions, true)).toHaveLength(2);
     expect(alerts).toHaveLength(2);
   });
+  it('must filter alerts against raw sessions, not already hidden UI rows', () => {
+    const alerts = [makeAlert('parent'), makeAlert('child')];
+    const displayed = visibleSessions(sessions); // child was removed here
+    expect(displayed.some(s => s.isSubagent)).toBe(false);
+    // Wrong call: no hidden keys remain to suppress the child alert.
+    expect(visibleAlerts(alerts, displayed).map(a => a.sessionId))
+      .toEqual(['parent', 'child']);
+    // Correct call: raw source evidence still contains child identity.
+    expect(visibleAlerts(alerts, sessions, false).map(a => a.sessionId))
+      .toEqual(['parent']);
+  });
 });
