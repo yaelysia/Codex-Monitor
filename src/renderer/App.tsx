@@ -1,12 +1,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus } from '../shared/types';
+import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
-import { visibleSessions } from '../shared/session-visibility';
+import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 
-type View = 'board' | 'sessions' | 'locations';
+type View = 'board' | 'sessions' | 'locations' | 'chronicle';
 
 type StoredViewPreferences = { view: View; recentOnly: boolean; filter: SessionStatus | 'all'; showSubagents: boolean };
 const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
@@ -16,7 +16,7 @@ function readViewPreferences(): StoredViewPreferences {
     if (typeof localStorage === 'undefined') return fallback;
     const row = JSON.parse(localStorage.getItem(VIEW_PREFERENCES_KEY) || 'null');
     if (!row || typeof row !== 'object') return fallback;
-    const validView = row.view === 'board' || row.view === 'sessions' || row.view === 'locations';
+    const validView = row.view === 'board' || row.view === 'sessions' || row.view === 'locations' || row.view === 'chronicle';
     const validFilter = ['all', 'working', 'waiting', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
     return { view: validView ? row.view : 'board',
       recentOnly: typeof row.recentOnly === 'boolean' ? row.recentOnly : true,
@@ -27,7 +27,7 @@ function readViewPreferences(): StoredViewPreferences {
 
 
 type GlyphName = 'grid' | 'list' | 'folder' | 'monitor' | 'server' | 'search' | 'refresh' | 'settings' |
-  'copy' | 'clock' | 'check' | 'alert' | 'close' | 'chevron-right' | 'chevron-down' | 'chevron-left' | 'activity' | 'sliders';
+  'copy' | 'clock' | 'check' | 'alert' | 'close' | 'chevron-right' | 'chevron-down' | 'chevron-left' | 'activity' | 'sliders' | 'bell' | 'palette' | 'arrow-up-right';
 
 const STATUS: Record<SessionStatus, { text: string; className: string; short: string }> = {
   working: { text: '可能执行中', className: 'working', short: '执行中 · 推断' },
@@ -60,6 +60,9 @@ const ICONS: Record<GlyphName, ReactNode> = {
   'chevron-down': <path d="m5 9 7 7 7-7"/>,
   'chevron-left': <path d="m15 5-7 7 7 7"/>,
   activity: <path d="M2 12h4l3-7 5 14 3-7h5"/>,
+  bell: <><path d="M18 8a6 6 0 0 0-12 0c0 8-3 8-3 10h18c0-2-3-2-3-10M10 21h4"/></>,
+  palette: <><path d="M12 3a9 9 0 1 0 0 18h2a2.5 2.5 0 0 0 1-4.8 2 2 0 0 1 .9-3.8H19a2 2 0 0 0 2-2c0-4-4-7.4-9-7.4Z"/><path d="M7.5 11h.01M9 7h.01M14 6.5h.01M17.4 9.5h.01" strokeWidth="2.8"/></>,
+  'arrow-up-right': <path d="M6 18 18 6M8 6h10v10"/>, 
 };
 function Icon({ name, size = 16 }: { name: GlyphName; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -282,6 +285,12 @@ export default function App() {
   const [floatingVisible, setFloatingVisible] = useState(false);
   const [floatingOpacity, setFloatingOpacity] = useState(1);
   const [floatingSide, setFloatingSide] = useState<'left' | 'right'>('right');
+  const [appearance, setAppearance] = useState<SignalAppearance>('moonsea');
+  const [compactSize, setCompactSize] = useState<FloatingCompactSize>('micro');
+  const [alerts, setAlerts] = useState<MonitorAlert[]>([]);
+  const [muted, setMuted] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [laneLimit, setLaneLimit] = useState<Record<string, number>>({
     working: BATCH_SIZE, other: BATCH_SIZE, finished: BATCH_SIZE,
@@ -317,6 +326,8 @@ export default function App() {
       if (!mounted.current) return;
       setEventChannels(state.eventChannels || {});
       setPerformanceStats(state.performance ?? null);
+      setAlerts(state.alerts);
+      setMuted(state.muted);
       if (state.scan) {
         setScan(state.scan);
         setNow(Date.now());
@@ -327,6 +338,8 @@ export default function App() {
       setFloatingVisible(state.visible);
       setFloatingOpacity(state.opacity);
       setFloatingSide(state.side);
+      setAppearance(state.appearance);
+      setCompactSize(state.compactSize);
     });
     const focusSession = (key: string) => {
       setSourceId(null);
@@ -347,11 +360,15 @@ export default function App() {
       setFloatingVisible(state.visible);
       setFloatingOpacity(state.opacity);
       setFloatingSide(state.side);
+      setAppearance(state.appearance);
+      setCompactSize(state.compactSize);
     }).catch(console.error);
     void window.monitorApi.getMonitorState().then(state => {
       if (!mounted.current) return;
       setEventChannels(state.eventChannels || {});
       setPerformanceStats(state.performance ?? null);
+      setAlerts(state.alerts);
+      setMuted(state.muted);
       if (state.scan) setScan(state.scan);
     }).catch(console.error);
     void refresh();
@@ -445,7 +462,23 @@ export default function App() {
   const scopeSource = scan?.sources.find(source => source.id === sourceId);
   const currentWorkspace = sourceGroups.flatMap(group => group.workspaces)
     .find(group => group.key === workspaceId);
-  const title = view === 'board' ? '任务状态' : view === 'sessions' ? '全部会话' : '执行位置';
+  const attention = shown.filter(item => item.status === 'waiting' || item.status === 'failed' || item.status === 'interrupted');
+  const running = shown.filter(item => item.status === 'working');
+  const recentAlerts = visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at);
+  const unreadCount = recentAlerts.filter(item => !item.read).length;
+  const title = view === 'board' ? '决策台' : view === 'locations' ? '机器矩阵' : view === 'chronicle' ? '事件轨迹' : '全部会话';
+  async function updateAppearance(next: SignalAppearance): Promise<void> {
+    try { setAppearance(next); const saved = await window.monitorApi.setFloatingAppearance(next); setAppearance(saved.appearance); }
+    catch (cause) { setError(describeError(cause)); }
+  }
+  async function updateCompactSize(next: FloatingCompactSize): Promise<void> {
+    try { setCompactSize(next); const saved = await window.monitorApi.setFloatingCompactSize(next); setCompactSize(saved.compactSize); }
+    catch (cause) { setResidentError(describeError(cause)); }
+  }
+  async function acknowledgeAlert(id: string): Promise<void> {
+    try { const state = await window.monitorApi.acknowledgeAlert(id); setAlerts(state.alerts); }
+    catch (cause) { setError(describeError(cause)); }
+  }
 
   async function saveSettings(settings: Settings) {
     const next = await window.monitorApi.setConfig(settings);
