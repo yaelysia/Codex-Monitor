@@ -344,3 +344,17 @@
 @media(prefers-reduced-motion:reduce){
   .signal-app *,.signal-app *::before,.signal-app *::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
 }
+
+.signal-app .signal-compact-setting{padding:15px;border:1px solid var(--s-stroke-strong);
+  background:var(--s-tint);border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:15px}
+.signal-app .signal-compact-setting > div:first-child{display:flex;flex-direction:column;gap:7px;min-width:0;flex:1}
+.signal-app .signal-compact-setting strong{color:var(--s-text);font-size:12px;font-weight:620}
+.signal-app .signal-compact-setting small{color:var(--s-muted);font-size:11px;line-height:1.55}
+.signal-app .signal-compact-buttons{display:flex;gap:5px;flex:0 0 auto;background:var(--s-panel);
+  border:1px solid var(--s-stroke-strong);border-radius:9px;padding:4px}
+.signal-app .signal-compact-buttons button{padding:8px 10px;border:1px solid transparent;
+  background:transparent;border-radius:7px;font-size:11px;color:var(--s-muted);white-space:nowrap}
+.signal-app .signal-compact-buttons button.active{background:var(--s-panel-elev);border-color:var(--s-stroke-strong);
+  color:var(--s-text)}
+@media(max-width:600px){.signal-app .signal-compact-setting{flex-direction:column;align-items:stretch}
+  .signal-app .signal-compact-buttons button{flex:1}}
