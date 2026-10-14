@@ -84,13 +84,13 @@ describe('floating window native opacity and position memory', () => {
     controller.show();
     expect(fake.windows).toHaveLength(1);
     const win = fake.windows[0]!;
-    expect(win.bounds).toEqual({ x: 1920, y: 430, width: 55, height: 276 });
+    expect(win.bounds).toEqual({ x: 1920, y: 430, width: 38, height: 78 });
     expect(win.opacity).toBe(0.7);
     controller.setOpacity(0.55);
     expect(win.opacity).toBe(0.55);
     controller.setExpanded(true);
     expect(win.focusCalls).toBe(1);
-    expect(win.bounds.width).toBe(350);
+    expect(win.bounds.width).toBe(438);
     expect(win.opacity).toBe(0.55);
     controller.hide();
     controller.setOpacity(0.85);
@@ -98,7 +98,7 @@ describe('floating window native opacity and position memory', () => {
     controller.show();
     expect(fake.windows).toHaveLength(1); // No extra renderer on show.
     expect(controller.state().expanded).toBe(false); // Restored dock starts collapsed.
-    expect(win.bounds.width).toBe(55);
+    expect(win.bounds.width).toBe(38);
     expect(win.opacity).toBe(0.85);
     expect(snapshots.at(-1)).toMatchObject({
       displayId: 2, side: 'left', offsetY: 430, opacity: 0.85,
@@ -107,7 +107,7 @@ describe('floating window native opacity and position memory', () => {
       () => undefined, () => undefined, snapshots.at(-1)!, () => undefined);
     restored.show();
     expect(fake.windows[1]?.opacity).toBe(0.85);
-    expect(fake.windows[1]?.bounds).toMatchObject({ x: 1920, y: 430, width: 55 });
+    expect(fake.windows[1]?.bounds).toMatchObject({ x: 1920, y: 430, width: 38 });
   });
 
   it('captures a cross-monitor drag and remembers the new location after restart', () => {
@@ -116,16 +116,16 @@ describe('floating window native opacity and position memory', () => {
       () => undefined, () => undefined, normalizeDock({}), value => snapshots.push(value));
     controller.show();
     const win = fake.windows[0]!;
-    win.drag({ x: 1920 + 1600 - 55 - 120, y: 530, width: 55, height: 276 });
+    win.drag({ x: 1920 + 1600 - 38 - 120, y: 530, width: 38, height: 78 });
     expect(controller.state().side).toBe('right');
-    expect(win.bounds).toMatchObject({ x: 3465, y: 530 });
+    expect(win.bounds).toMatchObject({ x: 3482, y: 530 });
     expect(snapshots.at(-1)).toMatchObject({
       displayId: 2, displayX: 1920, side: 'right', offsetY: 530,
     });
     const restored = new FloatingWindowController(
       () => undefined, () => undefined, snapshots.at(-1)!, () => undefined);
     restored.show();
-    expect(fake.windows[1]!.bounds).toEqual({ x: 3465, y: 530, width: 55, height: 276 });
+    expect(fake.windows[1]!.bounds).toEqual({ x: 3482, y: 530, width: 38, height: 78 });
   });
 
   it('recovers original display location when Windows changes its ID, then falls back if unplugged', () => {
@@ -141,7 +141,7 @@ describe('floating window native opacity and position memory', () => {
     expect(fake.windows[0]!.bounds.x).toBe(0);
     expect(states.at(-1)).toMatchObject({ displayId: 1, displayX: 0, offsetY: 430 });
     controller.resetPosition();
-    expect(fake.windows[0]!.bounds).toMatchObject({ x: 1865, y: 92 });
+    expect(fake.windows[0]!.bounds).toMatchObject({ x: 1882, y: 92 });
     expect(states.at(-1)).toMatchObject({ opacity: 0.7, side: 'right', offsetY: 92 });
   });
 });
@@ -157,7 +157,7 @@ describe('floating panel blur-to-collapse behavior', () => {
     controller.setExpanded(true);
     expect(controller.state().expanded).toBe(true);
     expect(win.focused).toBe(true);
-    expect(win.bounds.width).toBe(350);
+    expect(win.bounds.width).toBe(438);
     win.loseFocus();
     expect(controller.state()).toMatchObject({ visible: true, expanded: false });
     expect(win.bounds).toEqual(closedBounds);
@@ -192,7 +192,7 @@ describe('floating panel blur-to-collapse behavior', () => {
     expect(controller.state()).toMatchObject({ visible: false, expanded: true });
     controller.show();
     expect(controller.state()).toMatchObject({ visible: true, expanded: false });
-    expect(win.bounds.width).toBe(55);
+    expect(win.bounds.width).toBe(38);
   });
 
   it('restores old persisted expanded=true docks as collapsed without focusing user desktop', () => {
@@ -202,7 +202,7 @@ describe('floating panel blur-to-collapse behavior', () => {
     controller.show();
     expect(controller.state()).toMatchObject({ visible: true, expanded: false });
     expect(fake.windows[0]!.focusCalls).toBe(0);
-    expect(fake.windows[0]!.bounds.width).toBe(55);
+    expect(fake.windows[0]!.bounds.width).toBe(38);
   });
 });
 
