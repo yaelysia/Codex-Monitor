@@ -254,8 +254,9 @@ describe('streaming follower with strict memory bounds', () => {
     fs.appendFileSync(file, payload);
     fs.utimesSync(file, new Date(NOW+3500), new Date(NOW+3500));
     const rows: string[] = [];
-    const changed = await follower.scan((await import('../scripts/desktop-log-discovery.mjs'))
-      .discoverDesktopLogFiles(root, NOW + 4000), line => rows.push(line));
+    const candidateScan = await (await import('../scripts/desktop-log-discovery.mjs'))
+      .discoverDesktopLogFiles(root, NOW + 4000);
+    const changed = await follower.scan(candidateScan.files, line => rows.push(line));
     expect(changed.maxReadBytes).toBeLessThanOrEqual(65536);
     expect(changed.bytesRead).toBeGreaterThan(2 * 1024 * 1024);
     expect(rows).toHaveLength(2);
