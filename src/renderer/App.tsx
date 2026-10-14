@@ -390,9 +390,13 @@ export default function App() {
   useEffect(() => setSessionLimit(SESSION_PAGE_SIZE),
     [view, query, filter, recentOnly, showSubagents, sourceId, workspaceId]);
 
-  const allSessions = useMemo(() => visibleSessions(
-    scan?.sources.flatMap(source => source.sessions) ?? [], showSubagents)
-    .sort((a, b) => b.updatedAt - a.updatedAt), [scan, showSubagents]);
+  // Retain the unfiltered source records for child-alert suppression.
+  // Using the already hidden UI list here would lose the child identities.
+  const rawSessions = useMemo(() =>
+    scan?.sources.flatMap(source => source.sessions) ?? [], [scan]);
+  const allSessions = useMemo(() =>
+    visibleSessions(rawSessions, showSubagents)
+      .sort((a, b) => b.updatedAt - a.updatedAt), [rawSessions, showSubagents]);
   // The full workspace tree is only needed when a workspace is selected.
   const sourceGroups = useMemo(() => workspaceId ?
     groupByExecutionLocation(allSessions) : [], [allSessions, workspaceId]);
@@ -443,10 +447,20 @@ export default function App() {
   }, [detailOpen, selected?.key, scan?.scannedAt]);
 
   useEffect(() => {
-    if (!shown.length) { setSelectedKey(null); setDetailOpen(false); return; }
+    // Keep an opened inspector anchored to its actual session even when a
+    // status/recency filter or a fresh scan removes the row from the list.
+    // Only close if that session itself is no longer visible to this user.
+    if (detailOpen) {
+      if (selectedKey && allSessions.some(session => session.key === selectedKey)) return;
+      setDetailOpen(false);
+    }
+    if (!shown.length) {
+      if (selectedKey !== null) setSelectedKey(null);
+      return;
+    }
     if (selectedKey && shown.some(session => session.key === selectedKey)) return;
     setSelectedKey((shown.find(session => session.status === 'working') ?? shown[0])?.key ?? null);
-  }, [shown, selectedKey]);
+  }, [allSessions, detailOpen, shown, selectedKey]);
 
   const totals = useMemo(() => ({
     all: allSessions.length,
@@ -471,8 +485,8 @@ export default function App() {
     interrupted: '中断', failed: '失败', unknown: '未知',
   };
   const recentAlerts = useMemo(() =>
-    visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at),
-  [alerts, allSessions]);
+    visibleAlerts(alerts, rawSessions, showSubagents).sort((a, b) => b.at - a.at),
+  [alerts, rawSessions, showSubagents]);
   const unreadCount = recentAlerts.filter(item => !item.read).length;
   async function updateAppearance(next: SignalAppearance): Promise<void> {
     try { setAppearance(next); const saved = await window.monitorApi.setFloatingAppearance(next); setAppearance(saved.appearance); }
