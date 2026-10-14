@@ -14,7 +14,8 @@
     "probe:app-server": "node scripts/probe-app-server.mjs",
     "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "probe:desktop-logs": "node scripts/probe-desktop-logs.mjs",
-    "diagnose:tracking": "node scripts/diagnose-tracking.mjs"
+    "diagnose:tracking": "node scripts/diagnose-tracking.mjs",
+    "diagnose:memory": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/diagnose-memory.ps1"
   },
   "dependencies": {
     "react": "^19.1.0",
