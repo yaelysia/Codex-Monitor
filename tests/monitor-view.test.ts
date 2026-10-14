@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { groupByExecutionLocation, workspaceGroupKey } from '../src/shared/grouping';
-import { filterSessions, makeStatusLanes, recentParentCompletions, summarizeDashboardSessions } from '../src/shared/monitor-view';
+import { filterSessions, filterSessionsForView, makeStatusLanes, recentParentCompletions, summarizeDashboardSessions } from '../src/shared/monitor-view';
 import type { SessionRecord } from '../src/shared/types';
 
 const NOW = 1_800_000_000_000;
@@ -161,5 +161,43 @@ describe('dashboard waiting and abnormal counts', () => {
       .toEqual(groups.pending.map(x => x.id));
     expect(filterSessions(all, { ...options, status: 'abnormal' }, NOW).map(x => x.id))
       .toEqual(groups.abnormal.map(x => x.id));
+  });
+});
+
+describe('session-list-only status filtering', () => {
+  const rows = [
+    row('pending', 'local', '/repo', 'waiting', NOW, '待确认'),
+    row('running', 'local', '/repo', 'working', NOW, '任务执行'),
+    row('interrupted', 'local', '/repo', 'interrupted', NOW, '本轮终止'),
+    row('failed', 'ssh:host', '/elsewhere', 'failed', NOW, '另一项失败'),
+  ];
+
+  it('does not zero out dashboard tiles or machine matrix after filtering the list', () => {
+    const options = {
+      query: '', status: 'waiting' as const, recentOnly: true,
+      sourceId: null, workspaceId: null,
+    };
+    expect(filterSessionsForView(rows, 'sessions', options, NOW).map(x => x.id))
+      .toEqual(['pending']);
+    for (const view of ['board', 'locations', 'chronicle'] as const) {
+      const groups = summarizeDashboardSessions(filterSessionsForView(rows, view, options, NOW));
+      expect(groups.pending.map(x => x.id)).toEqual(['pending']);
+      expect(groups.abnormal.map(x => x.id)).toEqual(['interrupted', 'failed']);
+      expect(groups.working.map(x => x.id)).toEqual(['running']);
+    }
+    // Entering all sessions normally clears the filter.
+    expect(filterSessionsForView(rows, 'sessions', { ...options, status: 'all' }, NOW))
+      .toHaveLength(4);
+  });
+
+  it('preserves search and location scope but never inherits list-only status', () => {
+    const options = {
+      query: '', status: 'working' as const, recentOnly: true,
+      sourceId: 'local', workspaceId: null,
+    };
+    const board = filterSessionsForView(rows, 'board', options, NOW);
+    expect(board.map(x => x.id)).toEqual(['pending', 'running', 'interrupted']);
+    const list = filterSessionsForView(rows, 'sessions', options, NOW);
+    expect(list.map(x => x.id)).toEqual(['running']);
   });
 });
