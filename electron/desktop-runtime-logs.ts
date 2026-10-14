@@ -1,5 +1,6 @@
 import { desktopLogRoots, discoverDesktopLogFiles, DesktopDirectoryCache } from '../scripts/desktop-log-discovery.mjs';
 import { DesktopLogFollower } from '../scripts/desktop-log-follower.mjs';
+import path from 'node:path';
 import { parseDesktopLogEvent, newestDesktopEvents,
   type DesktopLogEvent } from '../src/shared/desktop-log-status';
 import type { DesktopAuditMetrics } from '../src/shared/types';
@@ -7,6 +8,11 @@ import type { DesktopAuditMetrics } from '../src/shared/types';
 const liveFollower = new DesktopLogFollower();
 const liveDirectoryCache = new DesktopDirectoryCache();
 let latestAuditMetrics: DesktopAuditMetrics | null = null;
+let liveWatchDirectories: string[] = [];
+/** Trusted internal paths; never included in a user-facing state or log. */
+export function getDesktopLogWatchDirectories(): string[] {
+  return [...liveWatchDirectories];
+}
 export function getDesktopLogMetrics(): DesktopAuditMetrics | null {
   return latestAuditMetrics && { ...latestAuditMetrics };
 }
@@ -47,6 +53,10 @@ export async function inspectDesktopLogSignals(now = Date.now(),
   const before = catalog.stats();
   const found = await discoverDesktopLogFiles(localAppData, now,
     process.env.APPDATA ?? '', catalog);
+  if (catalog === liveDirectoryCache && follower === liveFollower) {
+    liveWatchDirectories = [...new Set(found.files.slice(0, 32)
+      .map(file => path.dirname(file.path)))];
+  }
   const coverage = {
     validLocalAppData: found.validLocalAppData,
     rootCount: found.roots.length,

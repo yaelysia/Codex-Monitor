@@ -5,7 +5,8 @@ import { refresh as collect, projectDesktopRuntime, recentDesktopCompletions } f
 import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 import { AlertStateStore } from './alert-store';
-import { getDesktopLogMetrics } from './desktop-runtime-logs';
+import { getDesktopLogMetrics, getDesktopLogWatchDirectories } from './desktop-runtime-logs';
+import { DesktopLogFolderWatcher } from './desktop-log-watch';
 import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
 
 const POLLING_FALLBACK_MS = 12_000;
@@ -15,6 +16,8 @@ const EVENT_DEBOUNCE_MS = 400;
 const MIN_SOURCE_SCAN_GAP_MS = 3_000;
 // Bounded log-only audits are independent from expensive WSL/SSH metadata scans.
 const DESKTOP_NATIVE_AUDIT_MS = 4_000;
+const DESKTOP_WATCH_FALLBACK_MS = 12_000;
+const DESKTOP_EVENT_GAP_MS = 2_000;
 
 function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): boolean {
   if (!a || a.sources.length !== b.sources.length) return true;
@@ -42,6 +45,11 @@ export class MonitorService {
   private rawLastScan: ScanResponse | null = null;
   private nativeAuditTimer: ReturnType<typeof setInterval> | null = null;
   private nativeAuditInFlight = false;
+  private lastNativeAuditAt = 0;
+  private desktopWakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private nativeWakePending = false;
+  private readonly desktopLogWatcher = new DesktopLogFolderWatcher(
+    () => this.queueDesktopAudit());
   private inFlight: Promise<ScanResponse> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -84,7 +92,12 @@ export class MonitorService {
     if (this.platform === 'win32' &&
         process.env.CODEX_MONITOR_DISABLE_DESKTOP_LOGS !== '1') {
       this.nativeAuditTimer = setInterval(() => {
-        void this.auditDesktopRuntime();
+        // Keep the old four-second safety net when fs.watch has no complete
+        // coverage. With event coverage, use a 12s audit to recover lost events.
+        const due = this.desktopLogWatcher.healthy
+          ? DESKTOP_WATCH_FALLBACK_MS : DESKTOP_NATIVE_AUDIT_MS;
+        if (Date.now() - this.lastNativeAuditAt >= due)
+          void this.auditDesktopRuntime();
       }, DESKTOP_NATIVE_AUDIT_MS);
       this.nativeAuditTimer.unref?.();
     }
@@ -97,6 +110,10 @@ export class MonitorService {
     this.timer = null;
     if (this.nativeAuditTimer) clearInterval(this.nativeAuditTimer);
     this.nativeAuditTimer = null;
+    if (this.desktopWakeTimer) clearTimeout(this.desktopWakeTimer);
+    this.desktopWakeTimer = null;
+    this.nativeWakePending = false;
+    this.desktopLogWatcher.close();
     if (this.wakeTimer) clearTimeout(this.wakeTimer);
     this.wakeTimer = null;
     this.pendingSources.clear();
@@ -129,6 +146,21 @@ export class MonitorService {
     return this.state();
   }
 
+  private queueDesktopAudit(): void {
+    if (!this.running) return;
+    this.nativeWakePending = true;
+    if (this.desktopWakeTimer) return;
+    const delay = Math.max(250, DESKTOP_EVENT_GAP_MS -
+      Math.max(0, Date.now() - this.lastNativeAuditAt));
+    this.desktopWakeTimer = setTimeout(() => {
+      this.desktopWakeTimer = null;
+      if (!this.running || this.nativeAuditInFlight || this.inFlight) return;
+      this.nativeWakePending = false;
+      void this.auditDesktopRuntime();
+    }, delay);
+    this.desktopWakeTimer.unref?.();
+  }
+
   /** Native status can update a known local/WSL/SSH session without waiting
    * for a new JSONL write or rescanning a slow remote filesystem.
    * The raw filesystem snapshot remains immutable; overlay can be removed or
@@ -136,10 +168,17 @@ export class MonitorService {
    */
   private async auditDesktopRuntime(): Promise<void> {
     const baseline = this.rawLastScan;
-    if (!this.running || !baseline || this.inFlight || this.nativeAuditInFlight) return;
+    if (!this.running || !baseline) return;
+    if (this.inFlight || this.nativeAuditInFlight) {
+      this.nativeWakePending = true;
+      return;
+    }
     this.nativeAuditInFlight = true;
+    this.lastNativeAuditAt = Date.now();
     try {
       const projected = await projectDesktopRuntime(baseline, Date.now());
+      if (this.eventsEnabled) this.desktopLogWatcher.reconcile(
+        getDesktopLogWatchDirectories());
       if (!this.running || this.inFlight || this.rawLastScan !== baseline) return;
       const changed = desktopProjectionChanged(this.lastScan, projected);
       const alerts = this.tracker.observeDesktopCompletions(
@@ -153,6 +192,7 @@ export class MonitorService {
       // A locked/rotating Desktop log is not a reason to stop other monitoring.
     } finally {
       this.nativeAuditInFlight = false;
+      if (this.running && this.nativeWakePending) this.queueDesktopAudit();
     }
   }
 
@@ -243,6 +283,8 @@ export class MonitorService {
       const raw = partial && this.rawLastScan
         ? mergeSourceSnapshots(this.rawLastScan, delta) : delta;
       const projected = await projectDesktopRuntime(raw, Date.now());
+      if (this.running && this.eventsEnabled) this.desktopLogWatcher.reconcile(
+        getDesktopLogWatchDirectories());
       this.rawLastScan = raw;
       this.lastScan = projected;
       this.lastSourceScanDurationMs = Math.max(0, Math.round(performance.now() - scanStartedAt));
@@ -278,6 +320,7 @@ export class MonitorService {
       } else if (this.pendingSources.size) {
         this.scheduleWake();
       }
+      if (this.nativeWakePending) this.queueDesktopAudit();
     }).catch(() => undefined);
     return task;
   }
