@@ -410,7 +410,7 @@
 .signal-app .signal-page-title{
   position:relative;display:flex;align-items:center;gap:11px 18px;
   min-height:0;margin:0;padding-bottom:4px;flex-wrap:wrap;
-  animation:signalTextIn .44s cubic-bezier(.16,1,.3,1) both;
+  /* Keep one persistent header node; animation is reserved for the content view. */
 }
 .signal-app .signal-page-title .signal-eyebrow{font-size:9px;letter-spacing:.17em;margin:0}
 .signal-app .signal-page-title h1{
@@ -420,7 +420,25 @@
 .signal-app .signal-page-title p{font-size:11px;line-height:1.5;margin:0;color:var(--s-muted)}
 .signal-app .signal-toolbar{margin:16px 0 18px}
 .signal-app .signal-key-stats{margin-top:0;margin-bottom:12px}
-.signal-app .signal-view{min-width:0;animation:signalViewIn .49s cubic-bezier(.16,1,.3,1) both}
+.signal-app .signal-view{
+  min-width:0;
+  animation-duration:.49s;
+  animation-timing-function:cubic-bezier(.16,1,.3,1);
+  animation-fill-mode:both;
+}
+/* Vary animation-name instead of remounting the React DOM with key={view}. */
+.signal-app .signal-view.view-board{animation-name:signalEnterBoard}
+.signal-app .signal-view.view-locations{animation-name:signalEnterLocations}
+.signal-app .signal-view.view-chronicle{animation-name:signalEnterChronicle}
+.signal-app .signal-view.view-sessions{animation-name:signalEnterSessions}
+@keyframes signalEnterBoard{from{opacity:.45;transform:translate3d(0,12px,0)}
+  to{opacity:1;transform:translate3d(0,0,0)}}
+@keyframes signalEnterLocations{from{opacity:.45;transform:translate3d(12px,0,0)}
+  to{opacity:1;transform:translate3d(0,0,0)}}
+@keyframes signalEnterChronicle{from{opacity:.45;transform:translate3d(0,12px,0)}
+  to{opacity:1;transform:translate3d(0,0,0)}}
+@keyframes signalEnterSessions{from{opacity:.45;transform:translate3d(-8px,0,0)}
+  to{opacity:1;transform:translate3d(0,0,0)}}
 .signal-app .signal-view .signal-focus,
 .signal-app .signal-view .signal-running,
 .signal-app .signal-view .signal-bottom-grid > *,
