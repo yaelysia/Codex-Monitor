@@ -140,6 +140,8 @@ export interface FloatingWindowState {
   opacity: number;
   appearance: SignalAppearance;
   compactSize: FloatingCompactSize;
+  /** Transient native bounds animation state, never persisted. */
+  motion?: 'expanding' | 'collapsing' | null;
 }
 
 export interface RecentReplyExcerpt {
