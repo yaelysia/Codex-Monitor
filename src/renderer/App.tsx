@@ -539,200 +539,264 @@ export default function App() {
     }
   }
 
-  return <div className="monitor-layout">
-    <aside className="sidebar" aria-label="主导航和执行位置">
-      <div className="brand">
-        <div className="brand-mark">C<span>·</span></div>
-        <div><strong>Codex Monitor</strong><span>AGENT WORKSPACE</span></div>
+  return <div className={'monitor-layout signal-app scene-' + appearance}>
+    <header className="signal-chrome">
+      <div className="signal-brand">
+        <div className="signal-brand-symbol"><Icon name="activity" size={21}/></div>
+        <div className="signal-brand-copy"><strong>Codex Monitor</strong><small>SIGNAL STUDIO</small></div>
       </div>
-
-      <nav className="primary-nav" aria-label="页面">
-        <span className="nav-caption">工作台</span>
-        {([
-          ['board', '任务状态', 'grid'],
-          ['sessions', '全部会话', 'list'],
-          ['locations', '执行位置', 'folder'],
-        ] as const).map(([id, label, icon]) => <button key={id} type="button"
-          className={'nav-item' + (view === id ? ' active' : '')} onClick={() => setView(id)}
-          aria-current={view === id ? 'page' : undefined}>
-          <Icon name={icon}/><span>{label}</span>
-          {id === 'sessions' && <span className="nav-count">{totals.all}</span>}
-        </button>)}
-        <button type="button" className="nav-item settings-entry" onClick={() => setShowSettings(true)}
-          disabled={!config}><Icon name="settings"/><span>数据源设置</span></button>
+      <nav className="signal-nav" aria-label="主视图">
+        {([['board', '决策台'], ['locations', '机器矩阵'], ['chronicle', '事件轨迹']] as const)
+          .map(([id, label], index) => <button key={id} type="button" aria-current={view === id ? 'page' : undefined}
+            className={view === id ? 'active' : ''} onClick={() => setView(id)}>
+            <span>{'0' + (index + 1)}</span>{label}</button>)}
       </nav>
-
-      <div className="source-tree" aria-label="数据源及工作目录">
-        <div className="source-heading"><span>执行位置</span>
-          <button type="button" className="icon-btn" title="清除位置筛选" aria-label="清除位置筛选"
-            onClick={() => selectScope(null)}><Icon name="refresh" size={14}/></button>
-        </div>
-        <button type="button" className={'tree-all' + (!sourceId ? ' active' : '')}
-          onClick={() => selectScope(null)}><Icon name="grid" size={15}/><span>所有位置</span>
-          <span className="tree-count">{totals.all}</span></button>
-        {scan?.sources.map(source => {
-          const group = sourceGroups.find(item => item.sourceId === source.id);
-          const folders = group?.workspaces ?? [];
-          const watchMode = eventChannels[source.id] || 'fallback';
-          const watchText = watchMode === 'active' ? '文件事件监听中' :
-            watchMode === 'connecting' ? '正在连接事件通道' : '轮询兜底';
-          const expanded = expandedSources.includes(source.id);
-          const visible = expanded ? folders : folders.slice(0, MAX_SIDEBAR_FOLDERS);
-          return <div className="source-node" key={source.id}>
-            <button type="button" className={'tree-source' + (sourceId === source.id && !workspaceId ? ' active' : '')}
-              onClick={() => selectScope(source.id)} title={source.label + ' · ' +
-                (source.error ? source.error + ' · ' : '') + watchText}>
-              <Icon name={source.kind === 'ssh' ? 'server' : 'monitor'} size={15}/>
-              <span className="tree-label">{source.label}</span>
-              <span className={'watch-indicator ' + watchMode} aria-label={watchText} title={watchText}/>
-              <span className={'source-light ' + (source.error ? 'error' : 'ok')}/>
-              <span className="tree-count">{group?.count ?? 0}</span>
+      <div className="signal-chrome-right">
+        <label className="signal-search"><Icon name="search" size={15}/>
+          <input ref={searchInput} aria-label="搜索会话" value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="搜索会话、目录、ID"/><kbd>Ctrl K</kbd></label>
+        <button type="button" title="提醒收件箱" className={'signal-icon-button' + (showAlerts ? ' active' : '')}
+          onClick={() => { setShowAlerts(value => !value); setShowPalette(false); }}
+          aria-label={'提醒收件箱，' + unreadCount + ' 条未读'}>
+          <Icon name="bell"/>{unreadCount > 0 && <i className="signal-count-badge">{unreadCount}</i>}</button>
+        <button type="button" title="切换视觉氛围" className={'signal-icon-button' + (showPalette ? ' active' : '')}
+          onClick={() => { setShowPalette(value => !value); setShowAlerts(false); }}
+          aria-label="切换视觉氛围"><Icon name="palette"/></button>
+        <button type="button" title="设置" className="signal-icon-button"
+          onClick={() => setShowResident(true)} aria-label="常驻设置"><Icon name="settings"/></button>
+      </div>
+      {showPalette && <div className="signal-popover signal-theme-menu">
+        <strong>视觉氛围</strong>
+        {([['moonsea', '月海', '深海色 · 冷调玻璃'], ['ember', '岩铜', '暖黑金属 · 铜色高光'],
+          ['mist', '凝霜', '浅色陶瓷 · 轻盈留白']] as const).map(([id,label,detail]) =>
+          <button type="button" key={id} className={appearance === id ? 'active' : ''}
+            onClick={() => { void updateAppearance(id); setShowPalette(false); }}>
+            <span className={'signal-scene-swatch swatch-' + id}/><span><b>{label}</b><small>{detail}</small></span>
+            {appearance === id && <Icon name="check" size={15}/>}</button>)}
+      </div>}
+      {showAlerts && <aside className="signal-popover signal-alerts-menu" aria-label="提醒收件箱">
+        <div className="signal-popover-heading"><strong>提醒收件箱</strong><span>{unreadCount} 未读</span></div>
+        <div className="signal-popover-items">{recentAlerts.slice(0, 12).map(alert =>
+          <div key={alert.id} className={'signal-alert-row' + (alert.read ? ' read' : '')}>
+            <button type="button" onClick={() => {
+              if (!alert.read) void acknowledgeAlert(alert.id);
+              const session = allSessions.find(item => item.key === alert.sessionKey);
+              if (session) openSession(session);
+              setShowAlerts(false);
+            }}>
+              <span className={'signal-mini-dot ' + (alert.kind === 'waiting' ? 'warning' : '')}/>
+              <span><strong>{alert.title}</strong><small>{alert.kind === 'waiting' ? '可能待处理' : '本轮回复已结束'} · {alert.sourceLabel}</small></span>
             </button>
-            {visible.map(folder => <button type="button" key={folder.key}
-              title={folder.workspace || '未记录工作目录'}
-              className={'tree-folder' + (workspaceId === folder.key ? ' active' : '')}
-              onClick={() => selectScope(source.id, folder.key)}>
-              <Icon name="folder" size={14}/><span className="tree-label">{workspaceName(folder.workspace)}</span>
-              {folder.working > 0 && <span className="small-activity" title={folder.working + ' 个可能执行中的会话'}/>}
-              <span className="tree-count">{folder.sessions.length}</span>
-            </button>)}
-            {folders.length > MAX_SIDEBAR_FOLDERS && <button type="button" className="tree-more"
-              onClick={() => toggleSource(source.id)}>
-              {expanded ? '收起目录' : '更多 ' + (folders.length - MAX_SIDEBAR_FOLDERS) + ' 个目录'}
-              <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={13}/>
-            </button>}
-          </div>;
-        })}
-        {!scan && <div className="source-placeholder">正在发现 Windows、WSL 与 SSH…</div>}
+            {!alert.read && <button type="button" className="signal-alert-ack"
+              onClick={() => void acknowledgeAlert(alert.id)} title="标记已读"
+              aria-label={'标记已读：' + alert.title}><Icon name="check" size={14}/></button>}
+          </div>)}
+          {!recentAlerts.length && <p className="signal-empty">暂无提醒</p>}
+        </div>
+        <button type="button" className="signal-popover-foot" onClick={() =>
+          void window.monitorApi.setNotificationsMuted(!muted).then(state => setMuted(state.muted))
+            .catch(error => setError(describeError(error)))}>
+          {muted ? '恢复通知' : '静音通知'}</button>
+      </aside>}
+    </header>
+
+    <div className="signal-scroll">
+      <div className="signal-status-line">
+        <span><i className="signal-live-pulse"/> {totals.errors ? totals.errors + ' 个数据源异常' : '监控已连接'}
+          <em>·</em> {scan?.sources.filter(source => !source.error).length ?? 0} 个数据源
+          <em>·</em> 只读监控</span>
+        <span>最近扫描 <b>{scan ? formatTime(scan.scannedAt) : '等待首次扫描'}</b>
+          <em>·</em><span>状态以采集证据为准</span></span>
       </div>
-      <div className="sidebar-footer">
-        <span className="footer-state"><span className="live-dot"/>只读 · 本地运行</span>
-        <span>{scan ? formatTime(scan.scannedAt) : '尚未扫描'}</span>
-      </div>
-    </aside>
+      <main className="signal-body">
+        <div className="signal-ambient" aria-hidden="true"><svg viewBox="0 0 920 360" preserveAspectRatio="none">
+          <path className="signal-ambient-band" d="M10 335 C220 305 205 45 415 111 S670 355 905 30"/>
+          <path d="M0 310 C210 275 235 70 420 127 S680 330 920 50"/>
+          <path d="M0 288 C210 250 235 95 430 140 S690 308 920 65"/>
+          <path d="M0 265 C218 235 250 115 442 149 S702 290 920 85"/>
+          <path d="M0 246 C220 223 270 135 462 164 S710 275 920 111"/>
+        </svg></div>
 
-    <main className="main-content">
-      <header className="topbar">
-        <div className="breadcrumbs">
-          <button type="button" onClick={() => selectScope(null)}>所有位置</button>
-          {scopeSource && <><Icon name="chevron-right" size={12}/>
-            <button type="button" onClick={() => selectScope(scopeSource.id)}>{scopeSource.label}</button></>}
-          {currentWorkspace && <><Icon name="chevron-right" size={12}/>
-            <span title={currentWorkspace.workspace || ''}>{workspaceName(currentWorkspace.workspace)}</span></>}
-        </div>
-        <div className="header-actions">
-          <button type="button" className="header-button" onClick={() => setShowResident(true)}>
-            <Icon name="settings" size={15}/>常驻设置
-          </button>
-          <span className="read-only-mark"><span className="live-dot"/>只读模式</span>
-          <button type="button" className="header-button float-entry"
-            aria-pressed={floatingVisible}
-            onClick={() => void window.monitorApi.setFloatingVisible(!floatingVisible)
-              .then(state => setFloatingVisible(state.visible)).catch(console.error)}>
-            <Icon name="monitor" size={15}/>{floatingVisible ? '隐藏悬浮窗' : '显示悬浮窗'}
-          </button>
-          <button type="button" className="header-button" disabled={busy} onClick={() => void refresh()}>
-            <Icon name="refresh" size={15}/>{busy ? '扫描中…' : '刷新'}
-          </button>
-        </div>
-      </header>
-
-      <div className="main-scroll">
-        <div className="page-heading">
-          <div><span className="eyebrow">WORKSPACE / MONITOR</span>
-            <h1>{title}</h1>
-            <p>{view === 'board' ? '优先查看正在发生的工作；状态来自日志，可能并非实时进程状态。'
-              : view === 'sessions' ? '查看全部会话标题、执行位置、工作目录与状态。'
-              : '按实际执行机器和完整工作目录浏览会话。'}</p>
-          </div>
-          <div className="scan-meta"><span className={'scan-indicator' + (busy ? ' scanning' : '')}/>
-            {scan ? '最后扫描 ' + formatTime(scan.scannedAt) : '等待首次扫描'}</div>
+        <div className="signal-page-title">
+          <div className="signal-eyebrow">WORKSPACE / {view === 'board' ? 'MONITOR' : view === 'locations' ? 'LOCATIONS' : view === 'chronicle' ? 'ACTIVITY' : 'SESSIONS'}</div>
+          {view === 'board' ? <><h1>今天的工作，<br/>正在这里发生。</h1>
+            <p>让值得注意的事情浮到最前，其余工作安静地继续。</p></> :
+            view === 'locations' ? <><h1>每台机器，<br/>都在自己的位置。</h1>
+              <p>Windows、WSL 与 SSH，一览各执行环境中的会话。</p></> :
+            view === 'chronicle' ? <><h1>看得见变化，<br/>也找得到原因。</h1>
+              <p>按时间回看已检测的提醒和会话活动，不把推断当作真实事件。</p></> :
+            <><h1>全部会话。</h1><p>按最近活动排序，快速查找并返回原 Codex 窗口。</p></>}
         </div>
 
-        <section className="metrics" aria-label="会话统计">
-          <div><strong>{totals.all}</strong><span>会话总数</span></div>
-          <div><strong className="positive">{totals.working}</strong><span>可能执行中</span></div>
-          <div><strong className="warm">{totals.waiting}</strong><span>可能待处理</span></div>
-          <div><strong>{scan?.sources.filter(source => !source.error).length ?? 0}</strong><span>有效数据源</span></div>
-        </section>
-
-        <div className="filterbar">
-          <div className="filter-tabs" role="group" aria-label="运行状态筛选">
-            {([['all', '全部'], ['working', '可能执行中'], ['waiting', '待处理'], ['finished', '本轮完成'], ['interrupted', '中断'], ['failed', '失败'], ['unknown', '未知']] as const)
-              .map(([id, label]) => <button type="button" key={id} className={filter === id ? 'active' : ''}
-                aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
-          </div>
-          <div className="filter-tools">
-            <label className="recent-checkbox"><input type="checkbox" checked={recentOnly}
-              onChange={event => setRecentOnly(event.target.checked)}/>近 7 天</label>
-            <label className="recent-checkbox"><input type="checkbox"
-              checked={showSubagents} onChange={event => setShowSubagents(event.target.checked)}
-              aria-label="显示子代理"/>显示子代理</label>
-            <label className="search-box"><Icon name="search" size={15}/><input ref={searchInput}
-              aria-label="搜索会话" placeholder="搜索标题 / 工作目录 / ID" value={query}
-              onChange={event => setQuery(event.target.value)}/><kbd>Ctrl K</kbd></label>
-          </div>
+        <div className="signal-toolbar" aria-label="筛选与快捷操作">
+          <label>状态 <select aria-label="运行状态筛选" value={filter}
+            onChange={event => setFilter(event.target.value as SessionStatus | 'all')}>
+            <option value="all">全部</option><option value="working">可能执行中</option>
+            <option value="waiting">可能待处理</option><option value="finished">本轮完成</option>
+            <option value="failed">失败</option><option value="interrupted">中断</option>
+            <option value="unknown">未知</option></select></label>
+          <label>位置 <select aria-label="执行位置筛选" value={sourceId ?? ''}
+            onChange={event => { setSourceId(event.target.value || null); setWorkspaceId(null); }}>
+            <option value="">所有位置</option>
+            {scan?.sources.map(source => <option key={source.id} value={source.id}>{source.label}</option>)}
+          </select></label>
+          <label className="signal-check"><input type="checkbox" checked={recentOnly}
+            onChange={event => setRecentOnly(event.target.checked)}/>近 7 天</label>
+          <label className="signal-check"><input type="checkbox" checked={showSubagents}
+            onChange={event => setShowSubagents(event.target.checked)}/>显示子代理</label>
+          <span className="signal-toolbar-spacer"/>
+          <button type="button" onClick={() => setView('sessions')}
+            className={'signal-toolbar-button' + (view === 'sessions' ? ' active' : '')}>全部会话 <span>{totals.all}</span></button>
+          <button type="button" className="signal-toolbar-button" disabled={busy}
+            onClick={() => void refresh()}><Icon name="refresh" size={14}/>{busy ? '刷新中' : '刷新'}</button>
+          <button type="button" className="signal-toolbar-button" onClick={() => setShowSettings(true)}
+            disabled={!config}><Icon name="sliders" size={14}/>数据源设置</button>
         </div>
-
         {error && <div className="error-banner" role="alert">{error}</div>}
-        {scan?.sources.filter(source => !!source.error).map(source => <div className="error-banner" role="alert"
-          key={source.id}><Icon name="alert" size={16}/><strong>{source.label}</strong>{source.error}</div>)}
-        {(sourceId || workspaceId) && <div className="scope-banner">
-          <Icon name="folder" size={15}/><span>当前位置筛选：
-            {scopeSource?.label || '全部'}{currentWorkspace ? ' / ' + (currentWorkspace.workspace || '未记录工作目录') : ''}</span>
-          <button type="button" onClick={() => selectScope(null)}>清除筛选 ×</button>
-        </div>}
+        {scan?.sources.filter(source => source.error).map(source =>
+          <div className="error-banner" role="alert" key={source.id}><Icon name="alert"/>{source.label}: {source.error}</div>)}
+        {workspaceId && <div className="scope-banner">工作目录：{currentWorkspace?.workspace || '未知'}
+          <button type="button" onClick={() => setWorkspaceId(null)}>清除 ×</button></div>}
 
-        {view === 'board' && <div className="board">
-          {lanes.map(lane => <section className={'board-lane lane-' + lane.id} key={lane.id}
-            aria-label={lane.label}>
-            <div className="lane-heading"><div><span className="lane-mark"/>
-              <strong>{lane.label}</strong></div><span className="lane-count">{lane.sessions.length}</span></div>
-            <div className="lane-subtitle">{lane.description}</div>
-            <div className="lane-body">{lane.sessions.slice(0, laneLimit[lane.id] ?? BATCH_SIZE).map(session =>
-              <SessionCard key={session.key} session={session} now={now}
-                selected={selectedKey === session.key} onSelect={openSession}/>)}
-              {!lane.sessions.length && <div className="lane-empty">
-                <Icon name={lane.id === 'working' ? 'activity' : lane.id === 'finished' ? 'check' : 'clock'} size={22}/>
-                <span>{lane.emptyLabel}</span></div>}
+        {view === 'board' && <>
+          <div className="signal-key-stats" aria-label="会话统计">
+            <span><i className="signal-mini-dot"/> <b>{String(running.length).padStart(2, '0')}</b> 条活动线索</span>
+            <span><b>{String(attention.length).padStart(2, '0')}</b> 条需要关注</span>
+            <span className="signal-stat-soft">当前 {shown.length} 个会话</span>
+          </div>
+          <div className="signal-main-grid">
+            <section className="signal-focus">
+              <div className="signal-section-kicker"><span className="signal-mini-dot warning"/>需要你的关注</div>
+              <div className="signal-focus-total"><strong>{String(attention.length).padStart(2, '0')}</strong><span>件待处理</span></div>
+              <h2>{attention.length ? '有些任务，<br/>正在等你。' : '当前没有需要<br/>立即处理的任务。'}</h2>
+              <p>来自会话的待回答、失败与中断证据；不自动执行确认。</p>
+              {attention.length ? <button type="button" className="signal-focus-action"
+                onClick={() => openSession(attention[0]!)}>
+                <span><strong>{attention[0]?.title || '未命名会话'}</strong>
+                  <small>{attention[0]?.sourceLabel} · {ageText(attention[0]!.updatedAt, now)}</small></span>
+                <span className="signal-focus-cta">查看任务 <Icon name="arrow-up-right" size={15}/></span>
+              </button> : <div className="signal-focus-action signal-no-action">无需立即操作，其他会话继续监控中。</div>}
+            </section>
+            <section className="signal-panel signal-running" aria-label="可能执行中的会话">
+              <div className="signal-panel-heading"><div><h2>可能执行中</h2><small>最新状态与活动证据</small></div>
+                <button type="button" onClick={() => {setView('sessions');setFilter('working');}}>查看全部 <Icon name="chevron-right" size={14}/></button></div>
+              <div className="signal-task-list">{running.slice(0, 6).map(session =>
+                <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
+                {!running.length && <div className="signal-list-empty"><Icon name="activity" size={23}/>
+                  <strong>暂无可能执行中的会话</strong><span>等待新的活动证据</span></div>}
+              </div>
+            </section>
+          </div>
+          <div className="signal-bottom-grid">
+            <section className="signal-panel signal-locations">
+              <div className="signal-panel-heading"><h2>执行位置</h2>
+                <button type="button" onClick={() => setView('locations')}>查看机器矩阵 <Icon name="chevron-right" size={14}/></button></div>
+              <div className="signal-location-tiles">
+                {sourceGroups.slice(0, 4).map(group => <button type="button" key={group.sourceId}
+                  onClick={() => { setSourceId(group.sourceId); setWorkspaceId(null); setView('locations'); }}>
+                  <span className="signal-location-head"><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={17}/>
+                    <small>{group.sourceId.startsWith('ssh:') ? 'SSH' : group.sourceId.startsWith('wsl:') ? 'WSL' : 'WIN'}</small></span>
+                  <strong title={group.sourceLabel}>{group.sourceLabel}</strong>
+                  <small>{group.count} 个会话 · {group.working} 条活动线索</small></button>)}
+                {!sourceGroups.length && <span className="signal-empty">等待发现执行位置…</span>}
+              </div>
+            </section>
+            <section className="signal-panel signal-changes">
+              <div className="signal-panel-heading"><h2>最近变化</h2><button type="button"
+                onClick={() => setView('chronicle')}>查看事件轨迹 <Icon name="chevron-right" size={14}/></button></div>
+              <div className="signal-event-list">
+                {recentAlerts.length ? recentAlerts.slice(0, 4).map(alert =>
+                  <button type="button" key={alert.id} className="signal-event" onClick={() => {
+                    const session = allSessions.find(item => item.key === alert.sessionKey);
+                    if (session) openSession(session);
+                  }}>
+                    <span className={'signal-mini-dot' + (alert.kind === 'waiting' ? ' warning' : '')}/>
+                    <span><strong>{alert.kind === 'waiting' ? '会话可能需要处理' : '本轮回复已结束'}</strong>
+                      <small>{alert.title}</small></span><time>{formatTime(alert.at)}</time></button>) :
+                  shown.slice(0, 4).map(session => <button type="button" key={session.key}
+                    className="signal-event" onClick={() => openSession(session)}>
+                    <span className="signal-mini-dot"/><span><strong>{session.title || '未命名会话'}</strong>
+                      <small>最近记录活动 · {sessionEvidenceLabel(session)}</small></span>
+                    <time>{ageText(session.updatedAt, now)}</time></button>)}
+                {!recentAlerts.length && !shown.length && <p className="signal-empty">暂无会话活动记录</p>}
+              </div>
+            </section>
+          </div>
+        </>}
+
+        {view === 'locations' && <div className="signal-matrix">
+          {groups.map(group => <section className="signal-panel signal-machine" key={group.sourceId}>
+            <div className="signal-machine-head">
+              <span className="signal-machine-symbol"><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={21}/></span>
+              <span><small>{group.sourceId.startsWith('ssh:') ? 'SSH / REMOTE' : group.sourceId.startsWith('wsl:') ? 'WSL / LINUX' : 'WINDOWS / LOCAL'}</small>
+                <h2>{group.sourceLabel}</h2></span>
+              <span className="signal-machine-count">{group.count} 会话</span>
             </div>
-            {lane.sessions.length > (laneLimit[lane.id] ?? BATCH_SIZE) && <button type="button" className="more-cards"
-              onClick={() => setLaneLimit(values => ({
-                ...values, [lane.id]: (values[lane.id] ?? BATCH_SIZE) + BATCH_SIZE,
-              }))}>再显示 {Math.min(BATCH_SIZE, lane.sessions.length - (laneLimit[lane.id] ?? BATCH_SIZE))} 个
-              <Icon name="chevron-down" size={14}/></button>}
+            <div className="signal-machine-figures"><span><b>{String(group.working).padStart(2,'0')}</b><small>活动线索</small></span>
+              <span><b>{group.workspaces.length}</b><small>工作目录</small></span></div>
+            <div className="signal-machine-sessions">{group.workspaces.flatMap(workspace => workspace.sessions).slice(0, 6)
+              .map(session => <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
+              {!group.count && <p className="signal-empty">当前没有会话</p>}
+            </div>
+            <button type="button" className="signal-machine-foot" onClick={() => {
+              setSourceId(group.sourceId);setWorkspaceId(null);setView('sessions'); }}>
+              查看该机器的所有会话 <Icon name="arrow-up-right" size={15}/></button>
           </section>)}
+          {!groups.length && <p className="signal-empty">没有符合当前筛选条件的执行位置</p>}
         </div>}
 
-        {view === 'sessions' && <section className="records-panel">
+        {view === 'chronicle' && <div className="signal-chronicle">
+          <section className="signal-panel signal-chronicle-main">
+            <div className="signal-panel-heading"><div><h2>通知与近期活动</h2>
+              <small>通知来自真实结束、待处理证据；最近活动来自会话元数据</small></div></div>
+            <div className="signal-timeline">
+              {recentAlerts.slice(0, 30).map(alert => <div className="signal-timeline-entry" key={alert.id}>
+                <span className={'signal-timeline-pin' + (alert.kind === 'waiting' ? ' warning' : '')}/>
+                <time>{formatTime(alert.at)}</time>
+                <div><strong>{alert.kind === 'waiting' ? '可能需要用户处理' : '本轮回复已结束'}</strong>
+                  <p>{alert.title}</p><small>{alert.sourceLabel}</small></div>
+                <div className="signal-timeline-actions">
+                  <button type="button" onClick={() => {
+                    const session = allSessions.find(item => item.key === alert.sessionKey);
+                    if (session) openSession(session);
+                  }}>会话详情</button>
+                  {!alert.read && <button type="button" onClick={() => void acknowledgeAlert(alert.id)}>标记已读</button>}
+                </div></div>)}
+              {!recentAlerts.length && <p className="signal-list-empty">还没有真实通知事件。下面仅展示最近会话元数据变化。</p>}
+              {shown.slice(0, 24).map(session => <div className="signal-timeline-entry" key={'activity:' + session.key}>
+                <span className="signal-timeline-pin muted"/><time>{formatTime(session.updatedAt)}</time>
+                <div><strong>最近会话活动 · {STATUS[session.status].text}</strong>
+                  <p>{session.title || '未命名会话'}</p><small>{session.sourceLabel} · {sessionEvidenceLabel(session)}</small></div>
+                <div className="signal-timeline-actions"><button type="button" onClick={() => openSession(session)}>查看详情</button></div>
+              </div>)}
+            </div>
+          </section>
+          <aside className="signal-panel signal-chronicle-side">
+            <h2>状态分布</h2><p>当前会话快照，而非进程实时数量。</p>
+            {(['working','waiting','finished','interrupted','failed','unknown'] as const).map(status => {
+              const count = shown.filter(item => item.status === status).length;
+              return <button type="button" className="signal-status-distribution" key={status}
+                onClick={() => {setFilter(status);setView('sessions');}}>
+                <span className={'signal-mini-dot ' + status}/><span>{STATUS[status].text}</span><strong>{count}</strong>
+              </button>;
+            })}
+          </aside>
+        </div>}
+
+        {view === 'sessions' && <section className="records-panel signal-records">
           <div className="panel-heading"><strong>全部会话</strong><span>按最近活动排序 · {shown.length} 条</span></div>
           <SessionTable sessions={shown} now={now} selectedKey={selectedKey} onSelect={openSession}/>
         </section>}
 
-        {view === 'locations' && <div className="location-list">
-          {groups.map(group => <section key={group.sourceId} className="location-section">
-            <div className="location-heading"><div><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={18}/>
-              <div><strong>{group.sourceLabel}</strong>
-                <span>{group.workspaces.length} 个工作目录 · {group.count} 个会话</span></div></div>
-              {group.working > 0 && <span className="group-working">{group.working} 可能执行中</span>}</div>
-            <div className="location-workspaces">{group.workspaces.map(workspace =>
-              <WorkspaceSection key={workspace.key} group={workspace} now={now}
-                selectedKey={selectedKey} onSelect={openSession}/>)}</div>
-          </section>)}
-          {!groups.length && <EmptyState text="没有符合条件的执行位置"/>}
-        </div>}
-
-        <footer className="content-footer"><span>当前显示 {shown.length} / {totals.all} 条 · 每个来源最多采集 200 条</span>
-          <span title="最近一次采集统计；仅包含耗时和字节数，不含会话内容">
-            {performanceStats?.desktopAudit
-              ? '采集 ' + (performanceStats.sourceScanDurationMs ?? '-') + 'ms · Desktop ' +
-                performanceStats.desktopAudit.durationMs + 'ms / ' +
-                Math.round(performanceStats.desktopAudit.logBytesRead / 1024) + 'KiB · ' +
-                '目录缓存 ' + performanceStats.desktopAudit.directoryCacheHits + ' · ' +
-                '待追读 ' + performanceStats.desktopAudit.backlogFiles
-              : '事件优先，12 秒回退扫描 · 状态为保守推断'}</span></footer>
-      </div>
-    </main>
+        <footer className="signal-footer">
+          <span>Codex Monitor · 只读会话观察器 · {shown.length} / {totals.all} 条</span>
+          <span>{performanceStats?.desktopAudit
+            ? '采集 ' + (performanceStats.sourceScanDurationMs ?? '—') + 'ms · Desktop审计 ' + performanceStats.desktopAudit.durationMs + 'ms'
+            : '事件优先 · 兜底扫描 · 状态为保守推断'}</span>
+        </footer>
+      </main>
+    </div>
 
     {detailOpen && <button type="button" aria-label="关闭会话详情" className="detail-veil"
       onClick={() => setDetailOpen(false)}/>}
