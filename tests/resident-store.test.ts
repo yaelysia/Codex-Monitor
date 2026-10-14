@@ -26,8 +26,8 @@ describe('resident window persistence and multi-display layout', () => {
   it('remembers dock edge, display and vertical offset without going offscreen', () => {
     const dock = normalizeResident({ dock: { side: 'left', displayId: 100,
       expanded: true, offsetY: 2000, visible: false } }).dock;
-    expect(dockWindowBounds(dock, area)).toEqual({ x: -1920, y: 804, width: 350, height: 276 });
-    expect(dockWindowBounds({ ...dock, side: 'right', expanded: false }, area).x).toBe(-55);
+    expect(dockWindowBounds(dock, area)).toEqual({ x: -1920, y: 592, width: 438, height: 488 });
+    expect(dockWindowBounds({ ...dock, side: 'right', expanded: false }, area).x).toBe(-38);
   });
 
   it('uses safe defaults for corrupted data and restores user-selected preferences', async () => {
@@ -74,7 +74,7 @@ describe('resident window persistence and multi-display layout', () => {
     const dock = normalizeResident({ dock: { side: 'right', opacity: 0.8,
       displayId: 200, displayX: -1920, displayY: 0, offsetY: 2000 } }).dock;
     expect(findSavedDockDisplay(dock, [area])?.id).toBe(100);
-    expect(dockWindowBounds(dock, area)).toEqual({ x: -55, y: 804, width: 55, height: 276 });
+    expect(dockWindowBounds(dock, area)).toEqual({ x: -38, y: 1002, width: 38, height: 78 });
     expect(findSavedDockDisplay({ ...dock, displayX: 9000 }, [area])).toBeNull();
   });
 
