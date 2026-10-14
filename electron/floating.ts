@@ -1,17 +1,61 @@
 import path from 'node:path';
 import { BrowserWindow, screen } from 'electron';
-import { dockWindowBounds, findSavedDockDisplay, normalizeDockOpacity,
+import { dockWindowBounds, findSavedDockDisplay, interpolateDockBounds, normalizeDockOpacity,
   type SavedDock, type WorkArea } from '../src/shared/window-geometry';
 import type { FloatingCompactSize, FloatingWindowState, SignalAppearance } from '../src/shared/types';
 
 /** Hidden renderer can be released without affecting the resident tray monitor. */
 export const HIDDEN_RENDERER_IDLE_MS = 60_000;
+/** A bounded native resize, independent of the renderer's CSS transitions. */
+export const DOCK_EXPAND_MS = 260;
+export const DOCK_COLLAPSE_MS = 220;
+const DOCK_FRAME_MS = 16;
 export class FloatingWindowController {
   private win: BrowserWindow | null = null;
   private dock: SavedDock;
   private snapping = false;
   private quitting = false;
   private idleDestroy: ReturnType<typeof setTimeout> | null = null;
+  private motion: FloatingWindowState['motion'] = null;
+  private motionTick: ReturnType<typeof setInterval> | null = null;
+  private snapRelease: ReturnType<typeof setTimeout> | null = null;
+
+  private stopMotion(): void {
+    if (this.motionTick) clearInterval(this.motionTick);
+    this.motionTick = null;
+    this.motion = null;
+  }
+
+  /** Restart from the actual HWND bounds when a user reverses direction mid-animation. */
+  private animateTo(target: Electron.Rectangle, direction: 'expanding' | 'collapsing'): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    const from = win.getBounds();
+    this.stopMotion();
+    if (from.x === target.x && from.y === target.y &&
+        from.width === target.width && from.height === target.height) {
+      this.place(target);
+      return;
+    }
+    this.motion = direction;
+    const duration = direction === 'expanding' ? DOCK_EXPAND_MS : DOCK_COLLAPSE_MS;
+    const started = Date.now();
+    this.motionTick = setInterval(() => {
+      if (this.win !== win || win.isDestroyed() || !win.isVisible()) {
+        this.stopMotion();
+        return;
+      }
+      const progress = Math.min(1, (Date.now() - started) / duration);
+      this.place(interpolateDockBounds(from, target, progress));
+      if (progress >= 1) {
+        this.stopMotion();
+        // Release the renderer's transition phase only after the native HWND
+        // has reached its final bounds; notify once, not once per frame.
+        this.onState(this.state());
+      }
+    }, DOCK_FRAME_MS);
+    this.motionTick.unref?.();
+  }
 
   private cancelIdleDestroy(): void {
     if (this.idleDestroy) clearTimeout(this.idleDestroy);
@@ -28,19 +72,19 @@ export class FloatingWindowController {
   state(): FloatingWindowState {
     return { visible: this.win?.isVisible() ?? false, expanded: this.dock.expanded,
       side: this.dock.side, opacity: this.dock.opacity,
-      appearance: this.dock.appearance ?? 'moonsea', compactSize: this.dock.compactSize ?? 'micro' };
+      appearance: this.dock.appearance ?? 'moonsea', compactSize: this.dock.compactSize ?? 'micro',
+      motion: this.motion };
   }
 
   get browserWindow(): BrowserWindow | null { return this.win; }
 
   show(): FloatingWindowState {
     this.cancelIdleDestroy();
-    // Expanded panels are transient popovers. Re-showing a hidden dock must
-    // never leave an unfocused, permanently expanded window on screen.
-    const wasExpanded = this.dock.expanded;
-    if (wasExpanded) this.dock.expanded = false;
+    this.stopMotion();
+    // Re-show as a collapsed rail without constructing a second renderer.
+    this.dock.expanded = false;
     if (!this.win || this.win.isDestroyed()) this.create();
-    else if (wasExpanded) this.place(this.bounds(this.display()));
+    else this.place(this.bounds(this.display()));
     this.dock.visible = true;
     this.win!.showInactive();
     this.persist();
@@ -48,6 +92,7 @@ export class FloatingWindowController {
   }
 
   hide(): FloatingWindowState {
+    this.stopMotion();
     this.win?.hide();
     this.dock.visible = false;
     this.persist();
@@ -83,13 +128,17 @@ export class FloatingWindowController {
       this.cancelIdleDestroy();
       this.create();
     }
-    const wasExpanded = this.dock.expanded;
+    if (this.dock.expanded === expanded) return this.state();
     this.dock.expanded = expanded;
-    this.place(this.bounds(this.display()));
-    // A rail click must grant focus to the expanded panel; otherwise an
-    // inactive always-on-top window receives no blur when clicking elsewhere.
-    // Collapsed rail remains non-activating and never steals focus.
-    if (expanded && !wasExpanded && this.win!.isVisible()) this.win!.focus();
+    const target = this.bounds(this.display());
+    if (this.win!.isVisible()) {
+      this.animateTo(target, expanded ? 'expanding' : 'collapsing');
+    } else {
+      this.stopMotion();
+      this.place(target);
+    }
+    // The panel must receive focus so an outside click can still collapse it.
+    if (expanded && this.win!.isVisible()) this.win!.focus();
     this.persist();
     return this.state();
   }
@@ -111,6 +160,7 @@ export class FloatingWindowController {
   setCompactSize(size: FloatingCompactSize): FloatingWindowState {
     this.dock.compactSize = size;
     if (this.win && !this.win.isDestroyed() && !this.dock.expanded) {
+      this.stopMotion();
       this.place(this.bounds(this.display()));
     }
     this.persist();
@@ -119,6 +169,7 @@ export class FloatingWindowController {
 
   /** Recover a missing/off-screen dock even if the old display is unplugged. */
   resetPosition(): FloatingWindowState {
+    this.stopMotion();
     const primary = screen.getPrimaryDisplay();
     this.dock.side = 'right';
     this.dock.offsetY = 92;
@@ -130,6 +181,7 @@ export class FloatingWindowController {
 
   /** Re-clamp after a monitor is disconnected or its workArea changes. */
   reposition(): void {
+    this.stopMotion();
     const display = this.display();
     const previous = this.dock.offsetY;
     this.rememberDisplay(display);
@@ -137,7 +189,12 @@ export class FloatingWindowController {
     if (previous !== this.dock.offsetY || this.win) this.persist();
   }
 
-  allowQuit(): void { this.quitting = true; this.cancelIdleDestroy(); }
+  allowQuit(): void {
+    this.quitting = true;
+    this.stopMotion();
+    this.cancelIdleDestroy();
+    if (this.snapRelease) clearTimeout(this.snapRelease);
+  }
 
   private display(): Electron.Display {
     const displays = screen.getAllDisplays();
@@ -150,9 +207,13 @@ export class FloatingWindowController {
     this.dock.displayId = display.id;
     this.dock.displayX = display.workArea.x;
     this.dock.displayY = display.workArea.y;
-    const height = this.bounds(display).height;
+    // Keep the rail's saved Y, not the panel's shorter permissible range.
+    // The expanded panel clamps visually; collapse returns to the rail's
+    // original Y rather than unexpectedly migrating up the display.
+    const collapsed = dockWindowBounds({ ...this.dock, expanded: false },
+      { ...display.workArea, id: display.id });
     this.dock.offsetY = Math.max(0, Math.min(this.dock.offsetY,
-      Math.max(0, display.workArea.height - height)));
+      Math.max(0, display.workArea.height - collapsed.height)));
   }
 
   private bounds(display: Electron.Display): Electron.Rectangle {
@@ -181,8 +242,8 @@ export class FloatingWindowController {
     win.webContents.on('will-navigate', event => event.preventDefault());
     win.on('moved', () => { if (!this.snapping) this.snapToDisplayEdge(); });
     win.on('blur', () => {
-      // A click outside this BrowserWindow removes focus. Collapse its panel
-      // while keeping the resident 55px rail visible at the saved location.
+      // A click outside this BrowserWindow removes focus. The rail remains
+      // physically anchored, even while the larger panel contracts.
       if (!this.quitting && this.win === win && !win.isDestroyed() &&
           win.isVisible() && this.dock.expanded) this.setExpanded(false);
     });
@@ -193,6 +254,9 @@ export class FloatingWindowController {
     });
     win.on('closed', () => {
       if (this.win === win) this.win = null;
+      this.stopMotion();
+      if (this.snapRelease) clearTimeout(this.snapRelease);
+      this.snapRelease = null;
       this.cancelIdleDestroy();
       this.onState(this.state());
     });
@@ -203,13 +267,23 @@ export class FloatingWindowController {
 
   private place(bounds: Electron.Rectangle): void {
     if (!this.win || this.win.isDestroyed()) return;
+    const before = this.win.getBounds();
+    if (before.x === bounds.x && before.y === bounds.y &&
+        before.width === bounds.width && before.height === bounds.height) return;
     this.snapping = true;
     this.win.setBounds(bounds);
-    setTimeout(() => { this.snapping = false; }, 150);
+    // The last delayed native moved event may arrive after setBounds returns.
+    // One debounced release avoids dozens of overlapping snap timers.
+    if (this.snapRelease) clearTimeout(this.snapRelease);
+    this.snapRelease = setTimeout(() => {
+      this.snapRelease = null;
+      this.snapping = false;
+    }, 150);
+    this.snapRelease.unref?.();
   }
 
   private snapToDisplayEdge(): void {
-    if (!this.win || this.win.isDestroyed()) return;
+    if (!this.win || this.win.isDestroyed() || this.motion) return;
     const before = this.win.getBounds();
     const display = screen.getDisplayMatching(before);
     const area = display.workArea;
