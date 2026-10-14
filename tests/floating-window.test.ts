@@ -268,3 +268,38 @@ describe('hidden floating renderer lifecycle', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+
+describe('signal studio native compact rail', () => {
+  it('switches micro and compact sizes without retaining an invisible window hit area', () => {
+    const captured: SavedDock[] = [];
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, normalizeDock({ side: 'right' }),
+      dock => captured.push(dock));
+    controller.show();
+    const win = fake.windows[0]!;
+    expect(win.bounds).toMatchObject({ width: 38, height: 78 });
+    controller.setCompactSize('compact');
+    expect(win.bounds).toMatchObject({ width: 42, height: 120 });
+    expect(controller.state().compactSize).toBe('compact');
+
+    controller.setAppearance('ember');
+    expect(controller.state().appearance).toBe('ember');
+    controller.setExpanded(true);
+    expect(win.bounds).toMatchObject({ width: 438, height: 488 });
+    controller.setExpanded(false);
+    expect(win.bounds).toMatchObject({ width: 42, height: 120 });
+
+    controller.hide();
+    controller.show();
+    expect(win.bounds).toMatchObject({ width: 42, height: 120 });
+    expect(fake.windows).toHaveLength(1);
+    expect(captured.at(-1)).toMatchObject({ appearance: 'ember', compactSize: 'compact' });
+
+    const restored = new FloatingWindowController(
+      () => undefined, () => undefined, normalizeDock(captured.at(-1)), () => undefined);
+    restored.show();
+    expect(fake.windows[1]?.bounds).toMatchObject({ width: 42, height: 120 });
+    expect(restored.state()).toMatchObject({ appearance: 'ember', compactSize: 'compact' });
+  });
+});
