@@ -486,13 +486,12 @@ export default function App() {
     }
   }
 
-  return <div className={'monitor-layout signal-app scene-' + appearance}>
+  return <div className={'monitor-layout signal-app scene-' + appearance +
+    (typeof window !== 'undefined' && window.monitorApi?.windowChrome === 'overlay'
+      ? ' signal-native-overlay' : '')}>
     <header className="signal-chrome">
-      <div className="signal-brand">
-        <div className="signal-brand-symbol"><Icon name="activity" size={21}/></div>
-        <div className="signal-brand-copy"><strong>Codex Monitor</strong><small>SIGNAL STUDIO</small></div>
-      </div>
-      <nav className="signal-nav" aria-label="主视图">
+      <div className="signal-brand">Codex Monitor</div>
+      <nav className={'signal-nav nav-' + view} aria-label="主视图">
         {([['board', '决策台'], ['locations', '机器矩阵'], ['chronicle', '事件轨迹']] as const)
           .map(([id, label], index) => <button key={id} type="button" aria-current={view === id ? 'page' : undefined}
             className={view === id ? 'active' : ''} onClick={() => setView(id)}>
@@ -558,22 +557,25 @@ export default function App() {
       </div>
       <main className="signal-body">
         <div className="signal-ambient" aria-hidden="true"><svg viewBox="0 0 920 360" preserveAspectRatio="none">
-          <path className="signal-ambient-band" d="M10 335 C220 305 205 45 415 111 S670 355 905 30"/>
-          <path d="M0 310 C210 275 235 70 420 127 S680 330 920 50"/>
-          <path d="M0 288 C210 250 235 95 430 140 S690 308 920 65"/>
-          <path d="M0 265 C218 235 250 115 442 149 S702 290 920 85"/>
-          <path d="M0 246 C220 223 270 135 462 164 S710 275 920 111"/>
+          <g className="signal-ribbon-body">
+            <path className="signal-ambient-band" d="M10 335 C220 305 205 45 415 111 S670 355 905 30"/>
+            <path d="M0 310 C210 275 235 70 420 127 S680 330 920 50"/>
+            <path d="M0 288 C210 250 235 95 430 140 S690 308 920 65"/>
+            <path d="M0 265 C218 235 250 115 442 149 S702 290 920 85"/>
+            <path d="M0 246 C220 223 270 135 462 164 S710 275 920 111"/>
+          </g>
+          <path className="signal-ribbon-tracer" d="M0 288 C210 250 235 95 430 140 S690 308 920 65"/>
         </svg></div>
 
-        <div className="signal-page-title">
-          <div className="signal-eyebrow">WORKSPACE / {view === 'board' ? 'MONITOR' : view === 'locations' ? 'LOCATIONS' : view === 'chronicle' ? 'ACTIVITY' : 'SESSIONS'}</div>
-          {view === 'board' ? <><h1>今天的工作，<br/>正在这里发生。</h1>
-            <p>让值得注意的事情浮到最前，其余工作安静地继续。</p></> :
-            view === 'locations' ? <><h1>每台机器，<br/>都在自己的位置。</h1>
-              <p>Windows、WSL 与 SSH，一览各执行环境中的会话。</p></> :
-            view === 'chronicle' ? <><h1>看得见变化，<br/>也找得到原因。</h1>
-              <p>按时间回看已检测的提醒和会话活动，不把推断当作真实事件。</p></> :
-            <><h1>全部会话。</h1><p>按最近活动排序，快速查找并返回原 Codex 窗口。</p></>}
+        <div className="signal-page-title" key={view}>
+          <span className="signal-eyebrow">WORKSPACE / {view === 'board' ? 'MONITOR' :
+            view === 'locations' ? 'LOCATIONS' : view === 'chronicle' ? 'ACTIVITY' : 'SESSIONS'}</span>
+          <h1>{view === 'board' ? '任务概览' : view === 'locations' ? '机器矩阵' :
+            view === 'chronicle' ? '事件轨迹' : '全部会话'}</h1>
+          <p>{view === 'board' ? '优先关注待处理任务和活动线索' :
+            view === 'locations' ? '按执行机器与工作目录查看会话' :
+            view === 'chronicle' ? '通知事件与会话活动记录' :
+            '按最近活动排序 · 可定位原 Codex 窗口'}</p>
         </div>
 
         <div className="signal-toolbar" aria-label="筛选与快捷操作">
@@ -611,6 +613,7 @@ export default function App() {
         {workspaceId && <div className="scope-banner">工作目录：{currentWorkspace?.workspace || '未知'}
           <button type="button" onClick={() => setWorkspaceId(null)}>清除 ×</button></div>}
 
+        <div key={view} className="signal-view" aria-label="工作区内容">
         {view === 'board' && <>
           <div className="signal-key-stats" aria-label="会话统计">
             <span><i className="signal-mini-dot"/> <b>{String(running.length).padStart(2, '0')}</b> 条活动线索</span>
@@ -621,7 +624,7 @@ export default function App() {
             <section className="signal-focus">
               <div className="signal-section-kicker"><span className="signal-mini-dot warning"/>需要你的关注</div>
               <div className="signal-focus-total"><strong>{String(attention.length).padStart(2, '0')}</strong><span>件待处理</span></div>
-              <h2>{attention.length ? '有些任务，<br/>正在等你。' : '当前没有需要<br/>立即处理的任务。'}</h2>
+              <h2>{attention.length ? '待处理会话' : '目前没有待处理任务'}</h2>
               <p>来自会话的待回答、失败与中断证据；不自动执行确认。</p>
               {attention.length ? <button type="button" className="signal-focus-action"
                 onClick={() => openSession(attention[0]!)}>
@@ -750,6 +753,8 @@ export default function App() {
           <SessionTable sessions={shown} now={now} selectedKey={selectedKey} onSelect={openSession}/>
         </section>}
 
+        </div>
+
         <footer className="signal-footer">
           <span>Codex Monitor · 只读会话观察器 · {shown.length} / {totals.all} 条</span>
           <span>{performanceStats?.desktopAudit
@@ -759,8 +764,10 @@ export default function App() {
       </main>
     </div>
 
-    {detailOpen && <button type="button" aria-label="关闭会话详情" className="detail-veil"
-      onClick={() => setDetailOpen(false)}/>}
+    <button type="button" aria-label="关闭会话详情"
+      className={'detail-veil' + (detailOpen ? ' is-visible' : '')}
+      aria-hidden={!detailOpen} disabled={!detailOpen}
+      onClick={() => setDetailOpen(false)}/>
     <aside className={'detail-panel' + (detailOpen ? ' detail-open' : '')} aria-label="会话详情">
       <div className="detail-header"><span>当前选中 / SESSION</span><button type="button"
         className="detail-close" title="关闭详情" aria-label="关闭详情"
@@ -899,7 +906,7 @@ export default function App() {
           </section>
           <div className="resident-position">
             <div><strong>停靠位置自动记忆</strong>
-              <small>当前：{floatingSide === 'left' ? '屏幕左侧' : '屏幕右侧'}。拖动悬浮窗顶部 C 标识可以更换位置；重启后恢复上次的屏幕、边缘和高度。</small>
+              <small>当前：{floatingSide === 'left' ? '屏幕左侧' : '屏幕右侧'}。拖动悬浮窗顶部把手可以更换位置；重启后恢复上次的屏幕、边缘和高度。</small>
             </div>
             <button type="button" className="secondary-button" onClick={() => {
               void window.monitorApi.resetFloatingPosition().then(state => {
