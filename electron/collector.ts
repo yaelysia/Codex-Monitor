@@ -65,7 +65,7 @@ function script(): Promise<string> {
 }
 
 /** Process args are fixed; only a trusted base64 JSON literal is prepended to Python stdin. */
-export function runCollector(command: string, args: string[], python: string, root = '', options: Record<string, string> = {}): Promise<unknown> {
+export function runCollector(command: string, args: string[], python: string, root = '', options: Record<string, unknown> = {}): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let output = '';
     let errorText = '';

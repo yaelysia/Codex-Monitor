@@ -406,9 +406,6 @@ class TestLinuxCollector(unittest.TestCase):
         self.assertEqual(stale['status'], 'unknown')
 
 
-if __name__ == '__main__':
-    unittest.main()
-
     def test_pinned_session_keeps_old_remote_rollout_visible_and_detects_completion(self):
         with tempfile.TemporaryDirectory() as root:
             folder = Path(root) / 'sessions' / '2026' / '10' / '12'
@@ -440,3 +437,7 @@ if __name__ == '__main__':
             self.assertEqual(scanner.scan(root, pinned_paths=[
                 '../../outside.jsonl','/tmp/private.jsonl','2026/10/12/../foo.jsonl'
             ]), [])
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -177,7 +177,7 @@ export class MonitorService {
     this.lastNativeAuditAt = Date.now();
     try {
       const projected = await projectDesktopRuntime(baseline, Date.now());
-      if (this.eventsEnabled) this.desktopLogWatcher.reconcile(
+      if (this.running && this.eventsEnabled) this.desktopLogWatcher.reconcile(
         getDesktopLogWatchDirectories());
       if (!this.running || this.inFlight || this.rawLastScan !== baseline) return;
       const changed = desktopProjectionChanged(this.lastScan, projected);
