@@ -2,6 +2,8 @@ import path from 'node:path';
 import { BrowserWindow, screen } from 'electron';
 import { restoreMainBounds, type WorkArea } from '../src/shared/window-geometry';
 import type { ResidentStore } from './resident-store';
+import type { SignalAppearance } from '../src/shared/types';
+import { titlebarPalette } from '../src/shared/titlebar-theme';
 
 export class MainWindowController {
   private win: BrowserWindow | null = null;
@@ -30,6 +32,14 @@ export class MainWindowController {
 
   isOpen(): boolean { return !!this.win && !this.win.isDestroyed(); }
 
+  /** Native caption controls follow the currently selected renderer surface. */
+  setTitlebarAppearance(appearance: SignalAppearance): void {
+    if (process.platform !== 'win32' || !this.win || this.win.isDestroyed()) return;
+    const colors = titlebarPalette(appearance);
+    this.win.setTitleBarOverlay(colors);
+    this.win.setBackgroundColor(colors.color);
+  }
+
   consumePendingKey(): string | null {
     const key = this.pendingKey;
     this.pendingKey = null;
@@ -47,9 +57,14 @@ export class MainWindowController {
       ...display.workArea, id: display.id,
     }));
     const bounds = restoreMainBounds(this.store.snapshot().mainBounds, areas, fallback);
+    const palette = titlebarPalette(this.store.snapshot().dock.appearance ?? 'moonsea');
     const win = new BrowserWindow({
       ...bounds, minWidth: 820, minHeight: 500,
-      backgroundColor: '#111117', autoHideMenuBar: true, show: false,
+      ...(process.platform === 'win32'
+        ? { titleBarStyle: 'hidden' as const, titleBarOverlay: palette }
+        : {}),
+      backgroundColor: process.platform === 'win32' ? palette.color : '#111117',
+      autoHideMenuBar: true, show: false,
       webPreferences: {
         preload: path.join(__dirname, '../preload/index.js'),
         contextIsolation: true, nodeIntegration: false, sandbox: false,
