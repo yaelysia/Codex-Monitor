@@ -88,6 +88,40 @@ describe('decision desk and session drill-down interaction contract', () => {
   });
 });
 
+describe('renderer performance safeguards', () => {
+  it('reuses date formatting and limits initial table DOM work', () => {
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('const DISPLAY_DATE_FORMATTER = new Intl.DateTimeFormat');
+    expect(source).toContain('return DISPLAY_DATE_FORMATTER.format(value)');
+    expect(source).toContain('const SESSION_PAGE_SIZE = 100');
+    expect(source).toContain('sessions={shown.slice(0, sessionLimit)}');
+    expect(source).toContain('setSessionLimit(current =>');
+    expect(source).toContain('Math.min(current + SESSION_PAGE_SIZE, shown.length)');
+  });
+
+  it('reuses filtered groups within each one-minute recency window', () => {
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('const recencyClock = Math.floor(now / 60_000) * 60_000');
+    expect(source).toContain('workspaceId, recencyClock]');
+    expect(source).toContain("view === 'board' || view === 'locations'");
+    expect(source).toContain('const recentAlerts = useMemo');
+    expect(source).not.toContain('setInterval(() => setNow(Date.now()), 5000)');
+  });
+
+  it('does no clock work in collapsed dock and pauses background-only animations', () => {
+    const floating = readFileSync(new URL('../src/renderer/FloatingApp.tsx', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../src/renderer/signal.css', import.meta.url), 'utf8');
+    const clock = readFileSync(new URL('../src/renderer/useVisibleInterval.ts', import.meta.url), 'utf8');
+    expect(floating).toContain("dock.expanded && tab === 'completed'");
+    expect(floating).not.toContain('setInterval(() => setNow(Date.now()), 5000)');
+    expect(clock).toContain("document.addEventListener('visibilitychange', sync)");
+    expect(clock).toContain("return () => document.removeEventListener('visibilitychange', sync)");
+    expect(styles).toContain('.signal-app.signal-paused .signal-ribbon-body');
+    expect(styles).toContain('animation-play-state:paused!important');
+    expect(styles).toContain('.signal-app .signal-ambient svg{animation:none}');
+  });
+});
+
 describe('Signal Studio view switching contract', () => {
   it('uses one persistent title container while changing the view animation', () => {
     const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
