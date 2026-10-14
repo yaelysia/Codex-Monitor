@@ -3,6 +3,21 @@ import type { MonitorAlert, MonitorState, ScanResponse, SessionRecord } from './
 const RECENT_EVENT_MS = 120_000;
 const CONTIGUOUS_SCAN_GAP_MS = 90_000;
 const MAX_ALERTS = 60;
+export const MAX_SEEN_ALERT_IDS = 500;
+export interface SavedAlert {
+  id: string;
+  sessionKey: string;
+  sessionId: string;
+  kind: 'finished' | 'waiting';
+  at: number;
+  read: boolean;
+}
+export interface AlertTrackerPersistence {
+  version: 1;
+  muted: boolean;
+  alerts: SavedAlert[];
+  seenAlertIds: string[];
+}
 
 type KnownSession = Pick<SessionRecord,
   'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'waitingToken' |
@@ -37,7 +52,46 @@ export class AlertTracker {
 
   setMuted(muted: boolean): void { this.muted = muted; }
   getMuted(): boolean { return this.muted; }
-  getAlerts(): MonitorAlert[] { return this.alerts.map(alert => ({ ...alert })); }
+
+  /** Restore ONLY validated metadata, never stored conversation titles/prompts. */
+  restore(snapshot: AlertTrackerPersistence | null): void {
+    if (!snapshot) return;
+    this.muted = snapshot.muted;
+    this.seenAlertIds = new Set(snapshot.seenAlertIds.slice(-MAX_SEEN_ALERT_IDS));
+    this.alerts = snapshot.alerts.slice(0, MAX_ALERTS).map(item => {
+      this.seenAlertIds.add(item.id);
+      return {
+        ...item, title: '已保存的任务提醒', sourceLabel: '历史来源',
+        workspace: null, statusReason: '历史提醒；请打开当前会话查看最新状态',
+        questionText: null,
+      };
+    });
+  }
+
+  /** Persist an intentionally small whitelist; no title, prompt or workspace. */
+  snapshot(): AlertTrackerPersistence {
+    return {
+      version: 1, muted: this.muted,
+      alerts: this.alerts.slice(0, MAX_ALERTS).map(item => ({
+        id: item.id, sessionKey: item.sessionKey, sessionId: item.sessionId,
+        kind: item.kind, at: item.at, read: item.read,
+      })),
+      seenAlertIds: [...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS),
+    };
+  }
+
+  getAlerts(scan: ScanResponse | null = null): MonitorAlert[] {
+    const byKey = new Map(scan?.sources.flatMap(src => src.sessions)
+      .map(session => [session.key, session]) ?? []);
+    return this.alerts.map(alert => {
+      const live = byKey.get(alert.sessionKey);
+      return { ...alert,
+        title: alert.title === '已保存的任务提醒' ? (live?.title || alert.title) : alert.title,
+        sourceLabel: alert.sourceLabel === '历史来源' ? (live?.sourceLabel || alert.sourceLabel) : alert.sourceLabel,
+        workspace: alert.workspace ?? live?.workspace ?? null,
+      };
+    });
+  }
 
   acknowledge(id: string): void { this.acknowledgeMany([id]); }
 
@@ -50,7 +104,7 @@ export class AlertTracker {
   }
 
   state(scan: ScanResponse | null): MonitorState {
-    return { scan, alerts: this.getAlerts(), muted: this.muted };
+    return { scan, alerts: this.getAlerts(scan), muted: this.muted };
   }
 
   observe(scan: ScanResponse, now = Date.now()): MonitorAlert[] {
@@ -123,8 +177,9 @@ export class AlertTracker {
       this.scanned.set(source.id, now);
     }
     this.alerts = [...pending, ...this.alerts].slice(0, MAX_ALERTS);
-    if (this.seenAlertIds.size > 500) {
-      this.seenAlertIds = new Set(this.alerts.map(alert => alert.id));
+    if (this.seenAlertIds.size > MAX_SEEN_ALERT_IDS) {
+      this.seenAlertIds = new Set([...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS));
+      for (const alert of this.alerts) this.seenAlertIds.add(alert.id);
     }
     return pending;
   }
