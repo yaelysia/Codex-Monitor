@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { FloatingWindowState, MonitorApi, MonitorState } from '../src/shared/types';
 
 const api: MonitorApi = {
+  windowChrome: process.platform === 'win32' ? 'overlay' : 'native',
   getConfig: () => ipcRenderer.invoke('config:get'),
   getResidentOptions: () => ipcRenderer.invoke('resident:get'),
   setResidentOptions: options => ipcRenderer.invoke('resident:set', options),
