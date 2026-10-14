@@ -10,9 +10,9 @@ describe('Signal Studio view switching contract', () => {
     // A changing key remounts the heading on every navigation; in Electron this
     // produced a stack of stale animated heading layers.
     expect(source).toContain('className="signal-page-title" data-current-view={view}');
-    expect(source).not.toMatch(/signal-page-title"\\s+key=\\{view\\}/);
+    expect(source).not.toContain('className="signal-page-title" key={view}');
     expect(source).toContain("className={'signal-view view-' + view}");
-    expect(source).not.toMatch(/<div\\s+key=\\{view\\}\\s+className="signal-view"/);
+    expect(source).not.toContain('<div key={view} className="signal-view"');
     const html = renderToStaticMarkup(createElement(App));
     expect((html.match(/class="signal-page-title"/g) || [])).toHaveLength(1);
     expect((html.match(/class="signal-view view-board"/g) || [])).toHaveLength(1);
