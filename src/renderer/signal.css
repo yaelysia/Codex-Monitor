@@ -648,3 +648,34 @@
 @media(prefers-reduced-motion:reduce){
   .signal-app .signal-overview-stat{transition:none}
 }
+
+
+/* Status filtering belongs only to the session list. Make the drill-down
+   reversible without hunting for the persistent header navigation. */
+.signal-app .signal-back-button {
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 11px;border:1px solid var(--s-stroke-strong);
+  border-radius:8px;color:var(--s-accent);background:var(--s-tint);
+  white-space:nowrap;font-weight:600;font-size:11px;
+}
+.signal-app .signal-back-button:hover {background:var(--s-panel-elev)}
+.signal-app .signal-filter-tag {
+  display:inline-flex;align-items:center;margin-left:10px;
+  border:1px solid var(--s-stroke-strong);border-radius:6px;
+  padding:4px 7px;background:var(--s-tint);
+  color:var(--s-accent);font-weight:550;font-size:10px;
+}
+.signal-app .signal-clear-filter {
+  display:inline-flex;margin-left:13px;border:0;background:none;
+  color:var(--s-accent);padding:3px;font-size:10px;text-decoration:underline;
+  text-underline-offset:3px;
+}
+.signal-app .signal-clear-filter:hover {color:var(--s-text)}
+.signal-app .signal-records .panel-heading > span {
+  display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:3px;
+  color:var(--s-muted);
+}
+@media(max-width:650px) {
+  .signal-app .signal-records .panel-heading {flex-wrap:wrap}
+  .signal-app .signal-records .panel-heading > span {justify-content:flex-start}
+}
