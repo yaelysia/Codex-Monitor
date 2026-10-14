@@ -6,9 +6,10 @@ import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
-const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right', opacity: 1 };
+const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right', opacity: 1,
+  appearance: 'moonsea', compactSize: 'micro' };
 
-type IconName = 'play' | 'bell' | 'check' | 'fold' | 'open' | 'close' | 'volume' | 'mute' | 'arrow';
+type IconName = 'play' | 'bell' | 'check' | 'fold' | 'open' | 'close' | 'volume' | 'mute' | 'arrow' | 'activity';
 const paths: Record<IconName, string> = {
   play: 'M4 4 15 11 4 18V4ZM18 5v12',
   bell: 'M18 8a6 6 0 0 0-12 0c0 8-3 8-3 10h18c0-2-3-2-3-10ZM10 21h4',
@@ -19,6 +20,7 @@ const paths: Record<IconName, string> = {
   volume: 'M4 9h4l4-4v14l-4-4H4V9ZM16 8c2 2 2 6 0 8',
   mute: 'M4 9h4l4-4v14l-4-4H4V9ZM16 9l5 6M21 9l-5 6',
   arrow: 'M4 12h15m-6-6 6 6-6 6',
+  activity: 'M2 12h4l3-7 5 14 3-7h5',
 };
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -91,103 +93,125 @@ export default function FloatingApp() {
   const description = tab === 'running' ? '点击任务优先返回原窗口；无法定位则打开会话详情' :
     tab === 'alerts' ? '仅显示新检测到的变化' : '最近 24 小时完成的轮次';
 
-  return <div className={'float-shell side-' + dock.side + (dock.expanded ? ' expanded' : ' collapsed')}>
+  return <div className={'float-shell signal-float scene-' + dock.appearance +
+    ' size-' + dock.compactSize + ' side-' + dock.side + (dock.expanded ? ' expanded' : ' collapsed')}>
     {dock.expanded && <section className="dock-panel" aria-label={heading}>
-      <header className="dock-head">
-        <span className={'small-dot ' + (tab === 'running' ? 'green' : tab === 'alerts' ? 'amber' : 'gray')}/>
-        <strong>{heading} · {count}</strong><small>{dataSources} 个数据源</small>
+      <header className="signal-dock-top">
+        <strong>CODEX / AMBIENT SIGNAL</strong>
+        <div>
+          <button type="button" aria-label={monitor.muted ? '恢复通知' : '通知静音'}
+            title={monitor.muted ? '恢复通知' : '通知静音'}
+            onClick={() => void window.monitorApi.setNotificationsMuted(!monitor.muted)
+              .then(setMonitor).catch(console.error)}>
+            <Icon name={monitor.muted ? 'mute' : 'volume'} size={15}/></button>
+          <button type="button" title="收起" aria-label="收起悬浮窗"
+            onClick={collapse}><Icon name="fold" size={16}/></button>
+        </div>
       </header>
-      <p className="dock-description">{description}</p>
-      <div className="dock-rows">
-        {tab === 'running' && (running.length ? running.slice(0, 10).map(session =>
-          <button key={session.key} type="button" className="dock-task"
-            onClick={() => openOriginal(session.key)}>
-            <span className="small-dot green"/>
-            <span className="task-info"><strong title={session.title || ''}>{session.title || '未命名会话'}</strong>
-              <small title={session.workspace || ''}>{session.sourceLabel} · {sessionEvidenceLabel(session)} · {session.workspace || '未知目录'}</small></span>
-            <Icon name="open" size={13}/>
-          </button>) : <p className="dock-empty">暂无可确认的活动会话</p>)}
-        {tab === 'alerts' && <>
-          {alerts.slice(0, 12).map(alert =>
-            <div key={alert.id} className={'alert-item' + (alert.read ? ' is-read' : '')}>
-              <button type="button" className="alert-body" onClick={() => {
-                if (!alert.read) acknowledge(alert.id);
-                openOriginal(alert.sessionKey);
-              }}>
-                <span className={'small-dot ' + (alert.kind === 'waiting' ? 'amber' : 'green')}/>
-                <span className="task-info"><strong>{alert.title}</strong>
-                  <small title={alert.questionText || undefined}>{alert.kind === 'waiting'
-                    ? (alert.questionText || '可能需要回答/确认') : '本轮完成'} · {alert.sourceLabel}</small></span>
-              </button>
-              {!alert.read && <button className="ack-button" type="button" title="标记已读"
-                aria-label={'标记已读：' + alert.title} onClick={() => acknowledge(alert.id)}>
-                <Icon name="check" size={14}/></button>}
-            </div>)}
-          {waiting.filter(s => !alerts.some(a => a.sessionKey === s.key && a.kind === 'waiting'))
-            .slice(0, 3).map(session => <button className="dock-task" key={session.key}
-              type="button" onClick={() => openOriginal(session.key)}>
-              <span className="small-dot amber"/>
-              <span className="task-info"><strong>{session.title || '未命名会话'}</strong>
-                <small title={session.questionText || undefined}>{session.questionText ||
-                  '有待处理请求'} · {session.sourceLabel}</small></span>
-            </button>)}
-          {!alerts.length && !waiting.length && <p className="dock-empty">目前没有新的提醒</p>}
+      <div className="signal-dock-intro">
+        <h1>会话动态</h1>
+        <p><span className="signal-dock-live"/> {dataSources} 个有效数据源 · 状态来自有界证据</p>
+      </div>
+      <nav className="signal-dock-tabs" aria-label="悬浮窗视图">
+        <button type="button" className={tab === 'running' ? 'active' : ''}
+          onClick={() => showTab('running')}>可能执行 <span>{running.length}</span></button>
+        <button type="button" className={tab === 'alerts' ? 'active' : ''}
+          onClick={() => showTab('alerts')}>提醒 <span>{unread.length}</span></button>
+        <button type="button" className={tab === 'completed' ? 'active' : ''}
+          onClick={() => showTab('completed')}>本轮结束 <span>{completed.length}</span></button>
+      </nav>
+      <div className="signal-dock-content" role="region" aria-label={heading}>
+        {tab === 'running' && <>
+          <div className="signal-dock-section-title">可能执行中的会话 · {running.length}</div>
+          {running.slice(0, 12).map(session => <button key={session.key}
+            type="button" className="signal-dock-session" onClick={() => openOriginal(session.key)}>
+            <span className="signal-dock-session-icon"><Icon name="activity" size={17}/></span>
+            <span className="signal-dock-session-info">
+              <strong title={session.title || ''}>{session.title || '未命名会话'}</strong>
+              <small title={session.statusReason}>{session.sourceLabel} · {sessionEvidenceLabel(session)}</small>
+            </span><Icon name="open" size={13}/>
+          </button>)}
+          {!running.length && <p className="signal-dock-empty">当前没有可靠的活动线索</p>}
         </>}
-        {tab === 'completed' && (completed.length ? completed.slice(0, 10).map(session =>
-          <button key={session.key} type="button" className="dock-task"
-            onClick={() => openOriginal(session.key)}>
-            <span className="small-dot gray"/>
-            <span className="task-info"><strong>{session.title || '未命名会话'}</strong>
+        {tab === 'alerts' && <>
+          <div className="signal-dock-section-title">通知与待处理 · {unread.length} 未读</div>
+          {alerts.slice(0, 14).map(alert => <div key={alert.id}
+            className={'signal-dock-alert' + (alert.read ? ' is-read' : '')}>
+            <button type="button" className="signal-dock-alert-main" onClick={() => {
+              if (!alert.read) acknowledge(alert.id);
+              openOriginal(alert.sessionKey);
+            }}>
+              <span className={'signal-dock-alert-dot' + (alert.kind === 'waiting' ? ' waiting' : '')}/>
+              <span><strong>{alert.title}</strong><small title={alert.questionText || undefined}>
+                {alert.kind === 'waiting' ? alert.questionText || '可能需要回答/确认' : '本轮回复已结束'} · {alert.sourceLabel}
+              </small></span>
+            </button>
+            {!alert.read && <button type="button" className="signal-dock-ack"
+              onClick={() => acknowledge(alert.id)} title="标记已读"
+              aria-label={'标记已读：' + alert.title}><Icon name="check" size={15}/></button>}
+          </div>)}
+          {waiting.filter(session => !alerts.some(a => a.sessionKey === session.key && a.kind === 'waiting'))
+            .slice(0, 4).map(session => <button type="button" key={session.key}
+              className="signal-dock-session" onClick={() => openOriginal(session.key)}>
+              <span className="signal-dock-session-icon warn"><Icon name="bell" size={16}/></span>
+              <span className="signal-dock-session-info"><strong>{session.title || '未命名会话'}</strong>
+                <small>{session.questionText || '有待处理线索'} · {session.sourceLabel}</small></span>
+            </button>)}
+          {!alerts.length && !waiting.length && <p className="signal-dock-empty">没有新的提醒</p>}
+        </>}
+        {tab === 'completed' && <>
+          <div className="signal-dock-section-title">最近 24 小时本轮结束 · {completed.length}</div>
+          {completed.slice(0, 12).map(session => <button type="button" key={session.key}
+            className="signal-dock-session" onClick={() => openOriginal(session.key)}>
+            <span className="signal-dock-session-icon done"><Icon name="check" size={17}/></span>
+            <span className="signal-dock-session-info"><strong>{session.title || '未命名会话'}</strong>
               <small>{session.sourceLabel} · {ageText(session.ageAtSourceMs != null && monitor.scan
                 ? monitor.scan.scannedAt - session.ageAtSourceMs : session.updatedAt, now)}</small></span>
             <Icon name="open" size={13}/>
-          </button>) : <p className="dock-empty">24 小时内没有已完成的轮次</p>)}
+          </button>)}
+          {!completed.length && <p className="signal-dock-empty">24 小时内没有已检测的完成轮次</p>}
+        </>}
       </div>
-      <footer className="dock-foot">
-        <button type="button" onClick={() => openMain()}>打开完整看板 <Icon name="arrow" size={12}/></button>
-        <button type="button" onClick={() =>
-          void window.monitorApi.setNotificationsMuted(!monitor.muted).then(setMonitor).catch(console.error)}
-          title={monitor.muted ? '恢复系统通知' : '静音系统通知'}
-          aria-label={monitor.muted ? '恢复通知' : '通知静音'}>
-          <Icon name={monitor.muted ? 'mute' : 'volume'} size={15}/>
-        </button>
-        <button type="button" onClick={collapse} title="收起">
-          <Icon name="fold" size={15}/>
-        </button>
+      <footer className="signal-dock-foot">
+        <button type="button" onClick={() => openMain()}><Icon name="open" size={15}/> 打开完整看板</button>
+        <button type="button" onClick={() => { if (sessions[0]) openOriginal(sessions[0].key); }}
+          disabled={!sessions.length}>返回原窗口 <Icon name="arrow" size={14}/></button>
       </footer>
     </section>}
     <aside className="dock-rail" aria-label="Codex Monitor 边缘悬浮窗">
-      <div className="rail-grab" title="按住拖动至屏幕左侧或右侧" aria-label="拖动悬浮窗">C</div>
-      <span className="rail-rule"/>
-      <button type="button" className={'rail-tab' + (tab === 'running' && dock.expanded ? ' selected' : '')}
+      <div className="rail-grab" aria-label="按住拖动悬浮窗" title="拖动至屏幕左侧或右侧"/>
+      <button type="button" className={'rail-tab rail-activity' + (tab === 'running' && dock.expanded ? ' selected' : '')}
         aria-label={'可能执行中 ' + running.length} aria-pressed={tab === 'running' && dock.expanded}
-        onClick={() => showTab('running')} title="可能执行中">
-        <Icon name="play"/>{running.length > 0 && <span className="rail-badge green">{Math.min(99, running.length)}</span>}
+        onClick={() => showTab('running')} title="展开可能执行中的会话">
+        <Icon name="activity" size={dock.expanded ? 19 : 16}/>
+        {running.length > 0 && <span className="rail-badge green">{Math.min(99,running.length)}</span>}
       </button>
       <div className="rail-alert-shortcut">
-        <button type="button" className={'rail-tab' + (tab === 'alerts' && dock.expanded ? ' selected' : '')}
+        <button type="button" className={'rail-tab rail-bell' + (tab === 'alerts' && dock.expanded ? ' selected' : '')}
           aria-label={'未读提醒 ' + unread.length} aria-pressed={tab === 'alerts' && dock.expanded}
-          onClick={() => showTab('alerts')} title="新提醒与待处理">
-          <Icon name="bell"/>{unread.length > 0 && <span className="rail-badge amber">{Math.min(99, unread.length)}</span>}
+          onClick={() => showTab('alerts')} title="展开提醒">
+          <Icon name="bell" size={dock.expanded ? 18 : 16}/>
+          {unread.length > 0 && <span className="rail-badge amber">{Math.min(99,unread.length)}</span>}
         </button>
         {unread.length > 0 && <button type="button" className="rail-quick-ack"
-          title={'标记最新提醒已读：' + unread[0]!.title}
-          aria-label={'标记最新提醒已读：' + unread[0]!.title}
-          onClick={() => acknowledge(unread[0]!.id)}><Icon name="check" size={12}/></button>}
+          onClick={() => acknowledge(unread[0]!.id)} title="直接标记最新提醒已读"
+          aria-label={'标记最新提醒已读：' + unread[0]!.title}><Icon name="check" size={10}/></button>}
       </div>
-      <button type="button" className={'rail-tab' + (tab === 'completed' && dock.expanded ? ' selected' : '')}
-        aria-label={'最近完成 ' + completed.length} aria-pressed={tab === 'completed' && dock.expanded}
-        onClick={() => showTab('completed')} title="最近完成">
-        <Icon name="check"/>{completed.length > 0 && <span className="rail-mini-dot"/>}
-      </button>
-      <div className="rail-spacer"/>
-      <button type="button" className="rail-tab rail-collapse" aria-label={dock.expanded ? '收起悬浮窗' : '展开悬浮窗'}
-        title={dock.expanded ? '收起' : '展开'} onClick={collapse}><Icon name="fold"/></button>
-      <button type="button" className="rail-tab rail-hide" title="隐藏悬浮窗，可从主窗口重新开启"
-        aria-label="隐藏悬浮窗" onClick={() =>
-          void window.monitorApi.setFloatingVisible(false).catch(console.error)}>
-        <Icon name="close" size={13}/>
-      </button>
+      {(dock.expanded || dock.compactSize === 'compact') &&
+        <button type="button" className={'rail-tab rail-completed' + (tab === 'completed' && dock.expanded ? ' selected' : '')}
+          aria-label={'最近完成 ' + completed.length} aria-pressed={tab === 'completed' && dock.expanded}
+          title="展开最近完成" onClick={() => showTab('completed')}>
+          <Icon name="check" size={17}/>
+        </button>}
+      {dock.expanded && <>
+        <span className="rail-gap"/>
+        <button type="button" className="rail-tab rail-collapse" title="收起" aria-label="收起悬浮窗"
+          onClick={collapse}><Icon name="fold" size={17}/></button>
+        <button type="button" className="rail-tab rail-hide" title="隐藏悬浮窗"
+          aria-label="隐藏悬浮窗" onClick={() =>
+            void window.monitorApi.setFloatingVisible(false).catch(console.error)}>
+          <Icon name="close" size={16}/></button>
+      </>}
     </aside>
   </div>;
 }
