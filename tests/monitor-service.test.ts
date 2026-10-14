@@ -18,6 +18,7 @@ vi.mock('../electron/config', () => ({
 vi.mock('../electron/collector', () => ({
   refresh: vi.fn(),
   projectDesktopRuntime: vi.fn(async (snapshot: ScanResponse) => snapshot),
+  recentDesktopCompletions: vi.fn(() => []),
 }));
 vi.mock('../electron/watchers', () => ({
   WatchCoordinator: class {
@@ -31,7 +32,7 @@ vi.mock('../electron/watchers', () => ({
   },
 }));
 
-import { refresh as collect, projectDesktopRuntime } from '../electron/collector';
+import { refresh as collect, projectDesktopRuntime, recentDesktopCompletions } from '../electron/collector';
 import { MonitorService } from '../electron/monitor-service';
 
 const NOW = 1_800_000_000_000;
@@ -58,6 +59,8 @@ beforeEach(() => {
   vi.mocked(collect).mockReset();
   vi.mocked(projectDesktopRuntime).mockReset();
   vi.mocked(projectDesktopRuntime).mockImplementation(async snapshot => snapshot);
+  vi.mocked(recentDesktopCompletions).mockReset();
+  vi.mocked(recentDesktopCompletions).mockReturnValue([]);
   fake.wake = null;
   fake.reconciled = [];
   fake.started = 0;
@@ -322,5 +325,34 @@ describe('notification state across Monitor process restarts', () => {
         expect(sent).toHaveLength(1);
       } finally { second.stop(); }
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// Desktop native completion is a notification source even if the read-only
+// filesystem snapshot and GUI-projected task status are unchanged.
+describe('native GUI completion notification orchestration', () => {
+  it('delivers one real parent completion without remote or local rescan', async () => {
+    const ID = '019a21b0-aaaa-7ccc-8ddd-111122223333';
+    const TURN = '019a21b0-aaaa-7ccc-8ddd-777788889999';
+    fake.health = {local:'active'};
+    const raw = snapshot(NOW, [source('local', [{
+      ...session(ID,'working',NOW), key:'local:'+ID, sourceId:'local',
+      sourceLabel:'Windows', clientKind:'desktop', isSubagent:false,
+    }])]);
+    vi.mocked(collect).mockResolvedValue(raw);
+    const delivered: MonitorAlert[] = [];
+    service = new MonitorService(() => undefined, a => delivered.push(a),
+      () => undefined, 'win32');
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(recentDesktopCompletions).mockReturnValue([{
+      threadId:ID,type:'turn-displayed-complete',turnId:TURN,at:NOW+3000,
+    }]);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(delivered).toMatchObject([{kind:'finished',sessionId:ID}]);
+    expect(collect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(delivered).toHaveLength(1);
+    expect(service.state().alerts).toHaveLength(1);
   });
 });

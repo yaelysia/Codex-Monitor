@@ -1,7 +1,7 @@
 import { AlertTracker } from '../src/shared/alert-tracker';
 import type { MonitorAlert, MonitorState, ScanResponse } from '../src/shared/types';
 import { readSettings } from './config';
-import { refresh as collect, projectDesktopRuntime } from './collector';
+import { refresh as collect, projectDesktopRuntime, recentDesktopCompletions } from './collector';
 import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 import { AlertStateStore } from './alert-store';
@@ -57,6 +57,7 @@ export class MonitorService {
   private lastSourceScan = new Map<string, number>();
   private scanningFull = false;
   private running = false;
+  private startedAt = 0;
 
   constructor(
     private readonly onChange: (state: MonitorState) => void,
@@ -76,6 +77,7 @@ export class MonitorService {
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.startedAt = Date.now();
     if (this.eventsEnabled) this.watchers.start();
     this.timer = setInterval(() => this.pollFallback(), POLLING_FALLBACK_MS);
     if (this.platform === 'win32' &&
@@ -138,9 +140,14 @@ export class MonitorService {
     try {
       const projected = await projectDesktopRuntime(baseline, Date.now());
       if (!this.running || this.inFlight || this.rawLastScan !== baseline) return;
-      if (!desktopProjectionChanged(this.lastScan, projected)) return;
+      const changed = desktopProjectionChanged(this.lastScan, projected);
+      const alerts = this.tracker.observeDesktopCompletions(
+        projected, recentDesktopCompletions(), this.startedAt, Date.now());
+      if (!changed && !alerts.length) return;
       this.lastScan = projected;
+      if (alerts.length) this.persistAlerts();
       this.onChange(this.state());
+      if (!this.tracker.getMuted()) for (const alert of alerts) this.onAlert(alert);
     } catch {
       // A locked/rotating Desktop log is not a reason to stop other monitoring.
     } finally {

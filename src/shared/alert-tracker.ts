@@ -1,4 +1,5 @@
 import type { MonitorAlert, MonitorState, ScanResponse, SessionRecord } from './types';
+import type { DesktopLogEvent } from './desktop-log-status';
 
 const RECENT_EVENT_MS = 120_000;
 const CONTIGUOUS_SCAN_GAP_MS = 90_000;
@@ -101,6 +102,67 @@ export class AlertTracker {
     });
   }
 
+  /** Recognize the SAME completion reported by GUI and rollout even if the
+   * two sources write different timestamps. The UUID is the stable turn key.
+   */
+  private alreadyNotifiedTurn(key: string, turnId: string): boolean {
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(turnId)) return false;
+    for (const id of this.seenAlertIds) {
+      try {
+        const parts: unknown = JSON.parse(id);
+        if (!Array.isArray(parts) || parts.length !== 3 ||
+            parts[0] !== key || parts[1] !== 'finished' ||
+            typeof parts[2] !== 'string') continue;
+        if (parts[2] === 'desktop:' + turnId ||
+            parts[2].endsWith('|' + turnId)) return true;
+      } catch { /* Ignore malformed legacy alert ID. */ }
+    }
+    return false;
+  }
+
+  /** Native GUI completion notifications are distinct from filesystem scans.
+   * A first-party completion must be newer than this running Monitor instance,
+   * exact-thread matched, recent, and never a child-agent notification.
+   */
+  observeDesktopCompletions(
+    snapshot: ScanResponse, evidence: readonly DesktopLogEvent[],
+    startedAt: number, now = Date.now(),
+  ): MonitorAlert[] {
+    if (startedAt <= 0 || !snapshot.sources.length) return [];
+    const matching = new Map<string, SessionRecord>();
+    for (const source of snapshot.sources) {
+      if (source.error) continue;
+      for (const row of source.sessions) {
+        if (row.isSubagent || matching.has(row.id.toLowerCase())) continue;
+        matching.set(row.id.toLowerCase(), row);
+      }
+    }
+    const pending: MonitorAlert[] = [];
+    for (const event of evidence) {
+      if (event.type !== 'turn-displayed-complete' || !event.turnId ||
+          event.at < startedAt || event.at > now + 5_000 ||
+          now - event.at > 120_000) continue;
+      const row = matching.get(event.threadId.toLowerCase());
+      if (!row || this.alreadyNotifiedTurn(row.key, event.turnId)) continue;
+      const id = JSON.stringify([row.key, 'finished', 'desktop:' + event.turnId]);
+      if (this.seenAlertIds.has(id)) continue;
+      this.seenAlertIds.add(id);
+      pending.push({
+        id, sessionKey: row.key, sessionId: row.id, kind: 'finished',
+        title: row.title || '未命名会话', sourceLabel: row.sourceLabel,
+        workspace: row.workspace, at: now, read: false,
+        statusReason: 'Codex Desktop 自身日志确认本轮完成（独立于 JSONL 扫描）',
+        questionText: null,
+      });
+    }
+    if (pending.length) {
+      this.alerts = [...pending, ...this.alerts].slice(0, MAX_ALERTS);
+      if (this.seenAlertIds.size > MAX_SEEN_ALERT_IDS)
+        this.seenAlertIds = new Set([...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS));
+    }
+    return pending;
+  }
+
   acknowledge(id: string): void { this.acknowledgeMany([id]); }
 
   /** Only alerts already present when navigation began may be acknowledged. */
@@ -161,7 +223,10 @@ export class AlertTracker {
           if (changed && newTerminal && recentlyObserved && !childNotification) {
             const identity = token || [session.updatedAt, session.byteSize ?? '?'].join(':');
             const id = JSON.stringify([session.key, kind, identity]);
-            if (!this.seenAlertIds.has(id)) {
+            const finishedTurn = kind === 'finished' && token
+              ? token.split('|').at(-1) : null;
+            if (!this.seenAlertIds.has(id) &&
+                !(finishedTurn && this.alreadyNotifiedTurn(session.key, finishedTurn))) {
               this.seenAlertIds.add(id);
               pending.push({
                 id, sessionKey: session.key, sessionId: session.id, kind,

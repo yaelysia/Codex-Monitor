@@ -280,3 +280,60 @@ describe('new unanswered question alerts', () => {
     })]), NOW)).toEqual([]);
   });
 });
+
+// Native Desktop completion notifications must work when the JSONL does not
+// change, but never flood historical, duplicate or child-agent completions.
+describe('native Desktop completion alerts', () => {
+  const THREAD = '019a21b0-aaaa-7ccc-8ddd-111122223333';
+  const TURN = '019a21b0-aaaa-7ccc-8ddd-777788889999';
+  const gui = (status: SessionRecord['status'] = 'working', child = false): SessionRecord => ({
+    ...row(status, NOW, { key: 'local:'+THREAD, sourceId: 'local', id: THREAD,
+      sourceLabel: 'Windows', isSubagent: child, clientKind: 'desktop' }),
+  });
+  const guiSnapshot = (rec: SessionRecord): ScanResponse => ({
+    scannedAt: NOW, sources: [{id:'local',label:'Windows',kind:'local',error:null,sessions:[rec]}],
+  });
+  const native = (at: number) => ({
+    threadId: THREAD, type: 'turn-displayed-complete' as const, turnId: TURN, at,
+  });
+
+  it('notifies a matched live GUI completion exactly once despite unchanged filesystem', () => {
+    const tracker = new AlertTracker();
+    const before = guiSnapshot(gui());
+    const start = NOW - 2000;
+    tracker.observe(before, start);
+    expect(tracker.observeDesktopCompletions(before, [native(NOW)], start, NOW+500))
+      .toMatchObject([{kind:'finished',sessionId:THREAD}]);
+    expect(tracker.observeDesktopCompletions(before, [native(NOW)], start, NOW+1500))
+      .toHaveLength(0);
+    const rollout = gui('finished');
+    rollout.updatedAt += 2000;
+    rollout.finishedToken = new Date(NOW).toISOString() + '|' + TURN;
+    expect(tracker.observe(guiSnapshot(rollout), NOW+2500)).toHaveLength(0);
+  });
+
+  it('does not notify historical, unknown or child events', () => {
+    const tracker = new AlertTracker();
+    const parent = guiSnapshot(gui());
+    const startedAt = NOW;
+    expect(tracker.observeDesktopCompletions(parent, [native(NOW-1000)],
+      startedAt, NOW)).toHaveLength(0);
+    expect(tracker.observeDesktopCompletions(parent,
+      [{...native(NOW+100),threadId:'00000000-0000-0000-0000-000000000001'}],
+      startedAt, NOW+1000)).toHaveLength(0);
+    expect(tracker.observeDesktopCompletions(guiSnapshot(gui('working',true)),
+      [native(NOW+200)], startedAt, NOW+1000)).toHaveLength(0);
+  });
+
+  it('suppresses native duplicate when rollout already reported the same turn', () => {
+    const tracker = new AlertTracker();
+    const baseline = guiSnapshot(gui());
+    tracker.observe(baseline, NOW-1000);
+    const completed = gui('finished');
+    completed.updatedAt = NOW+1000;
+    completed.finishedToken = new Date(NOW).toISOString() + '|' + TURN;
+    expect(tracker.observe(guiSnapshot(completed),NOW+1200)).toHaveLength(1);
+    expect(tracker.observeDesktopCompletions(guiSnapshot(completed),
+      [native(NOW+1300)],NOW-1000,NOW+2000)).toHaveLength(0);
+  });
+});

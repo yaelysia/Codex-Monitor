@@ -6,7 +6,8 @@ import type { ScanResponse, SessionRecord, Settings, SourceKind, SourceResult } 
 import { resolveLocalRoot, scanLocal } from './local';
 import { SessionActivityTracker } from '../src/shared/activity-tracker';
 import { inspectDesktopLogSignals } from './desktop-runtime-logs';
-import { applyDesktopLogEvidence, DesktopLogEventCache, isActiveDesktopStart } from '../src/shared/desktop-log-status';
+import { applyDesktopLogEvidence, DesktopLogEventCache, isActiveDesktopStart,
+  type DesktopLogEvent } from '../src/shared/desktop-log-status';
 import { DesktopEvidenceStore } from './desktop-evidence-store';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
@@ -35,6 +36,16 @@ export function configureDesktopEvidenceStorage(directory: string, now = Date.no
 
 export function flushDesktopEvidenceStorage(): void {
   desktopEvidenceStore?.flush();
+}
+
+/** Only trusted, parsed GUI completion metadata. Never exposes log text.
+ * Historical starts/completions remain in the cache for ordering, but the
+ * notification layer gates events to Monitor's current running lifetime.
+ */
+export function recentDesktopCompletions(now = Date.now()): DesktopLogEvent[] {
+  return desktopLogCache.snapshot(now).filter(event =>
+    event.type === 'turn-displayed-complete' &&
+    now >= event.at && now - event.at <= 120_000);
 }
 
 /** One shared activity timeline across Windows, WSL and SSH, without changing the file adapters. */
