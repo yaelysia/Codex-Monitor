@@ -87,6 +87,8 @@ export interface ConfigResponse {
 
 export type AlertKind = 'finished' | 'waiting';
 export type FloatingSide = 'left' | 'right';
+export type SignalAppearance = 'moonsea' | 'ember' | 'mist';
+export type FloatingCompactSize = 'micro' | 'compact';
 export type FloatingTab = 'running' | 'alerts' | 'completed';
 
 export interface MonitorAlert {
@@ -136,6 +138,8 @@ export interface FloatingWindowState {
   side: FloatingSide;
   /** 0.4 to 1, where 1 is fully opaque. */
   opacity: number;
+  appearance: SignalAppearance;
+  compactSize: FloatingCompactSize;
 }
 
 export interface RecentReplyExcerpt {
@@ -180,6 +184,8 @@ export interface MonitorApi {
   setFloatingVisible(visible: boolean): Promise<FloatingWindowState>;
   setFloatingExpanded(expanded: boolean): Promise<FloatingWindowState>;
   setFloatingOpacity(opacity: number): Promise<FloatingWindowState>;
+  setFloatingAppearance(appearance: SignalAppearance): Promise<FloatingWindowState>;
+  setFloatingCompactSize(size: FloatingCompactSize): Promise<FloatingWindowState>;
   resetFloatingPosition(): Promise<FloatingWindowState>;
   onFloatingState(listener: (state: FloatingWindowState) => void): () => void;
   showMainWindow(sessionKey?: string): Promise<void>;
