@@ -5,11 +5,19 @@ import { dockWindowBounds, findSavedDockDisplay, normalizeDockOpacity,
 import type { FloatingWindowState } from '../src/shared/types';
 
 const HEIGHT = 276;
+/** Hidden renderer can be released without affecting the resident tray monitor. */
+export const HIDDEN_RENDERER_IDLE_MS = 60_000;
 export class FloatingWindowController {
   private win: BrowserWindow | null = null;
   private dock: SavedDock;
   private snapping = false;
   private quitting = false;
+  private idleDestroy: ReturnType<typeof setTimeout> | null = null;
+
+  private cancelIdleDestroy(): void {
+    if (this.idleDestroy) clearTimeout(this.idleDestroy);
+    this.idleDestroy = null;
+  }
 
   constructor(private readonly onState: (state: FloatingWindowState) => void,
     private readonly onHidden: () => void,
@@ -26,6 +34,7 @@ export class FloatingWindowController {
   get browserWindow(): BrowserWindow | null { return this.win; }
 
   show(): FloatingWindowState {
+    this.cancelIdleDestroy();
     // Expanded panels are transient popovers. Re-showing a hidden dock must
     // never leave an unfocused, permanently expanded window on screen.
     const wasExpanded = this.dock.expanded;
@@ -43,6 +52,18 @@ export class FloatingWindowController {
     this.dock.visible = false;
     this.persist();
     this.onHidden();
+    this.cancelIdleDestroy();
+    const captured = this.win;
+    if (captured && !captured.isDestroyed()) {
+      this.idleDestroy = setTimeout(() => {
+        this.idleDestroy = null;
+        // An old timer must not destroy a window that was shown again, or
+        // replace a newly created rail after an Electron renderer crash.
+        if (this.win === captured && !captured.isDestroyed() &&
+            !captured.isVisible() && !this.dock.visible) captured.destroy();
+      }, HIDDEN_RENDERER_IDLE_MS);
+      this.idleDestroy.unref?.();
+    }
     return this.state();
   }
 
@@ -51,7 +72,17 @@ export class FloatingWindowController {
   }
 
   setExpanded(expanded: boolean): FloatingWindowState {
-    if (!this.win || this.win.isDestroyed()) this.create();
+    // A hidden rail must not construct a new renderer merely because a
+    // delayed UI message changes its transient expanded preference.
+    if (!this.win || this.win.isDestroyed()) {
+      if (!this.dock.visible) {
+        this.dock.expanded = expanded;
+        this.persist();
+        return this.state();
+      }
+      this.cancelIdleDestroy();
+      this.create();
+    }
     const wasExpanded = this.dock.expanded;
     this.dock.expanded = expanded;
     this.place(this.bounds(this.display()));
@@ -91,7 +122,7 @@ export class FloatingWindowController {
     if (previous !== this.dock.offsetY || this.win) this.persist();
   }
 
-  allowQuit(): void { this.quitting = true; }
+  allowQuit(): void { this.quitting = true; this.cancelIdleDestroy(); }
 
   private display(): Electron.Display {
     const displays = screen.getAllDisplays();
@@ -144,7 +175,11 @@ export class FloatingWindowController {
       event.preventDefault();
       this.hide();
     });
-    win.on('closed', () => { this.win = null; this.onState(this.state()); });
+    win.on('closed', () => {
+      if (this.win === win) this.win = null;
+      this.cancelIdleDestroy();
+      this.onState(this.state());
+    });
     const rendererURL = process.env.ELECTRON_RENDERER_URL;
     if (rendererURL) void win.loadURL(rendererURL.replace(/\/$/, '') + '/floating.html');
     else void win.loadFile(path.join(__dirname, '../renderer/floating.html'));

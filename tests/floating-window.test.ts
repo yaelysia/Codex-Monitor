@@ -45,6 +45,7 @@ vi.mock('electron', () => {
     isFocused() { return this.focused; }
     loseFocus() { this.focused = false; this.emit('blur'); }
     hide() { this.visible = false; this.focused = false; }
+    destroy() { this.destroyed = true; this.visible = false; this.emit('closed'); }
     setAlwaysOnTop() {}
     loadURL() { return Promise.resolve(); }
     loadFile() { return Promise.resolve(); }
@@ -60,7 +61,7 @@ vi.mock('electron', () => {
   return { BrowserWindow: FakeBrowserWindow, screen };
 });
 
-import { FloatingWindowController } from '../electron/floating';
+import { FloatingWindowController, HIDDEN_RENDERER_IDLE_MS } from '../electron/floating';
 
 const INITIAL = normalizeDock({
   side: 'left', displayId: 2, displayX: 1920, displayY: 0,
@@ -202,5 +203,68 @@ describe('floating panel blur-to-collapse behavior', () => {
     expect(controller.state()).toMatchObject({ visible: true, expanded: false });
     expect(fake.windows[0]!.focusCalls).toBe(0);
     expect(fake.windows[0]!.bounds.width).toBe(55);
+  });
+});
+
+// Idle destroy is deliberately delayed: brief hide/show cycles reuse the
+// original renderer; only a truly hidden rail releases its GPU/renderer state.
+describe('hidden floating renderer lifecycle', () => {
+  it('releases hidden window memory after one idle minute and rebuilds on show', async () => {
+    vi.useFakeTimers();
+    try {
+      const snapshots: SavedDock[] = [];
+      const controller = new FloatingWindowController(
+        () => undefined, () => undefined, INITIAL, x => snapshots.push(x));
+      controller.show();
+      const first = fake.windows[0]!;
+      controller.hide();
+      await vi.advanceTimersByTimeAsync(HIDDEN_RENDERER_IDLE_MS - 1);
+      expect(first.destroyed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(first.destroyed).toBe(true);
+      expect(controller.state().visible).toBe(false);
+      controller.setOpacity(0.53);
+      controller.show();
+      expect(fake.windows).toHaveLength(2);
+      expect(fake.windows[1]?.opacity).toBe(0.53);
+      expect(fake.windows[1]?.bounds.x).toBe(1920);
+      expect(snapshots.at(-1)?.visible).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('cancels scheduled renderer disposal if shown again before expiration', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new FloatingWindowController(
+        () => undefined, () => undefined, INITIAL, () => undefined);
+      controller.show();
+      const win = fake.windows[0]!;
+      controller.hide();
+      await vi.advanceTimersByTimeAsync(HIDDEN_RENDERER_IDLE_MS / 2);
+      controller.show();
+      await vi.advanceTimersByTimeAsync(HIDDEN_RENDERER_IDLE_MS + 1);
+      expect(win.destroyed).toBe(false);
+      expect(fake.windows).toHaveLength(1);
+      controller.hide();
+      await vi.advanceTimersByTimeAsync(HIDDEN_RENDERER_IDLE_MS);
+      expect(win.destroyed).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('does not create a hidden renderer for an expanded-state preference', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new FloatingWindowController(
+        () => undefined, () => undefined, INITIAL, () => undefined);
+      controller.show();
+      controller.hide();
+      await vi.advanceTimersByTimeAsync(HIDDEN_RENDERER_IDLE_MS);
+      controller.setExpanded(true);
+      expect(fake.windows).toHaveLength(1);
+      expect(controller.state().expanded).toBe(true);
+      controller.show();
+      expect(controller.state().expanded).toBe(false);
+      expect(fake.windows).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
   });
 });
