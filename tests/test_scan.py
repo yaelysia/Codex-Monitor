@@ -408,3 +408,35 @@ class TestLinuxCollector(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+    def test_pinned_session_keeps_old_remote_rollout_visible_and_detects_completion(self):
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / 'sessions' / '2026' / '10' / '12'
+            folder.mkdir(parents=True)
+            uid = '01234567-89ab-4cde-8123-123456789abc'
+            older = folder / f'rollout-{uid}.jsonl'
+            head = {'type':'session_meta','payload':{'id':uid,'cwd':'/srv/old'}}
+            older.write_text(json.dumps(head)+'\n'+json.dumps({
+                'type':'event_msg','payload':{'type':'task_started'}})+'\n')
+            old = time.time() - 3600
+            os.utime(older, (old, old))
+            for n in range(210):
+                (folder / f'rollout-fresh-{n}.jsonl').write_text(
+                    json.dumps({'type':'session_meta','payload':{'id':f'new-{n}'}})+'\n')
+            relative = f'2026/10/12/rollout-{uid}.jsonl'
+            self.assertNotIn(uid, [x['id'] for x in scanner.scan(root)])
+            found = scanner.scan(root, pinned_paths=[relative])
+            self.assertEqual(len(found), 201)
+            self.assertEqual(next(x for x in found if x['id']==uid)['status'], 'unknown')
+            with older.open('a') as handle:
+                handle.write(json.dumps({'type':'event_msg',
+                    'payload':{'type':'task_complete','turn_id':'turn-1'}})+'\n')
+            again = scanner.scan(root, pinned_paths=[relative])
+            self.assertEqual(next(x for x in again if x['id']==uid)['status'], 'finished')
+
+    def test_pinned_remote_path_rejects_traversal(self):
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root)/'sessions').mkdir()
+            self.assertEqual(scanner.scan(root, pinned_paths=[
+                '../../outside.jsonl','/tmp/private.jsonl','2026/10/12/../foo.jsonl'
+            ]), [])

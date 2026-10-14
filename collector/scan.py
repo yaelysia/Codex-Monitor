@@ -22,6 +22,8 @@ EXTENDED_TAIL_BYTES = 8 * 1024 * 1024
 RECENT_MS = 5 * 60_000
 MAX_DISCOVERED = 10000
 MAX_RETURNED = 200
+MAX_PINNED = 16
+PINNED_PATH = re.compile(r'^\d{4}/\d{2}/\d{2}/[^/\\\x00-\x1f]{1,220}\.jsonl$', re.I)
 START = {'task_started', 'turn_started'}
 END = {'task_complete', 'turn_complete'}
 ABORT = {'turn_aborted'}
@@ -501,7 +503,7 @@ def details(head, tail, filename, clipped, modified, now):
     }
 
 
-def scan(root, now=None, limit=MAX_RETURNED):
+def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None):
     now = now or int(time.time() * 1000)
     base = Path(root).expanduser() / 'sessions'
     if not base.is_dir():
@@ -523,8 +525,32 @@ def scan(root, now=None, limit=MAX_RETURNED):
         if len(files) >= MAX_DISCOVERED:
             break
     files.sort(key=lambda item: item[0], reverse=True)
+    newest = files[:max(1, min(limit, MAX_RETURNED))]
+    included = {file for _, _, file in newest}
+    # Bounded direct access recovers observed active rollouts even when their
+    # original date folder is outside the newest 10k discovered filenames.
+    extra = []
+    resolved_base = base.resolve()
+    for relative in list(dict.fromkeys(pinned_paths or []))[:MAX_PINNED * 2]:
+        if len(extra) >= MAX_PINN:
+            break
+        if not isinstance(relative, str) or not PINNED_PATH.fullmatch(relative) or '..' in relative:
+            continue
+        file = base.joinpath(*relative.split('/'))
+        if file in included:
+            continue
+        try:
+            actual = file.resolve(strict=True)
+            actual.relative_to(resolved_base)
+            stat = actual.stat()
+            if not actual.is_file() or stat.st_size <= 0:
+                continue
+            included.add(file)
+            extra.append((stat.st_mtime_ns // 1000000, stat.st_size, file))
+        except (OSError, ValueError, RuntimeError):
+            continue
     result, seen = [], set()
-    for modified, size, file in files[:max(1, min(limit, MAX_RETURNED))]:
+    for modified, size, file in newest + extra:
         try:
             with file.open('rb') as handle:
                 head = handle.read(min(HEAD_BYTES, size)).decode('utf-8', errors='replace')
@@ -553,7 +579,11 @@ def main():
     config_b64 = globals().get('CONFIG_B64', '')
     options = json.loads(base64.b64decode(config_b64)) if config_b64 else {}
     root = options.get('root') or os.environ.get('CODEX_HOME') or str(Path.home() / '.codex')
-    print(json.dumps(scan(root, limit=options.get('limit', MAX_RETURNED)), ensure_ascii=False))
+    pinned = options.get('pinnedPaths', [])
+    if not isinstance(pinned, list):
+        pinned = []
+    print(json.dumps(scan(root, limit=options.get('limit', MAX_RETURNED),
+                          pinned_paths=pinned), ensure_ascii=False))
 
 
 if __name__ == '__main__':

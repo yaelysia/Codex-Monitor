@@ -113,3 +113,44 @@ describe('local cache keeps answered-question state fresh', () => {
     expect(stale?.pendingQuestionToken).toBeNull();
   });
 });
+
+// A pinned older rollout must be read from the exact file path, even when
+// the newest 200 have crowded it out of the normal session index.
+describe('bounded pinned local rollover sessions', () => {
+  it('retains an older known-active session and detects its completion beyond newest 200', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-monitor-pinned-'));
+    created.push(root);
+    const dir = path.join(root, 'sessions', '2026', '10', '10');
+    await fs.mkdir(dir, {recursive:true});
+    const id = '01234567-89ab-4cde-8123-123456789abc';
+    const relative = `2026/10/10/rollout-${id}.jsonl`;
+    const old = path.join(dir, `rollout-${id}.jsonl`);
+    await fs.writeFile(old, [
+      JSON.stringify({type:'session_meta',payload:{id,cwd:'/project'}}),
+      JSON.stringify({type:'event_msg',payload:{type:'task_started'}}),
+    ].join('\n')+'\n');
+    const earlier = new Date(Date.now()-3600_000);
+    await fs.utimes(old, earlier, earlier);
+    for(let i=0;i<210;i++) await fs.writeFile(path.join(dir,
+      `rollout-fresh-${String(i).padStart(3,'0')}.jsonl`),
+      JSON.stringify({type:'session_meta',payload:{id:'new-'+i}})+'\n');
+    expect((await scanLocal(root)).some(s=>s.id===id)).toBe(false);
+    expect((await scanLocal(root,'local','Windows',Date.now(),[relative]))
+      .some(s=>s.id===id)).toBe(true);
+    await fs.appendFile(old, JSON.stringify({
+      type:'event_msg',timestamp:new Date().toISOString(),
+      payload:{type:'task_complete',turn_id:'turn-1'},
+    })+'\n');
+    const updated = await scanLocal(root,'local','Windows',Date.now(),[relative]);
+    expect(updated.find(s=>s.id===id)?.status).toBe('finished');
+    expect(updated.length).toBeLessThanOrEqual(216);
+  });
+  it('ignores escaping pinned paths', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(),'codex-monitor-invalid-pin-'));
+    created.push(root);
+    await fs.mkdir(path.join(root,'sessions'),{recursive:true});
+    const rows = await scanLocal(root,'local','Windows',Date.now(),
+      ['../../outside.jsonl','C:/Windows/foo.jsonl','2026/10/10/../outside.jsonl']);
+    expect(rows).toEqual([]);
+  });
+});
