@@ -328,6 +328,10 @@ export default function App() {
       setCompactSize(state.compactSize);
     });
     const focusSession = (key: string) => {
+      // Native notification/deep-link navigation supersedes temporary drawers.
+      setOverviewStatus(null);
+      setShowAlerts(false);
+      setShowPalette(false);
       setSourceId(null);
       setWorkspaceId(null);
       setFilter('all');
