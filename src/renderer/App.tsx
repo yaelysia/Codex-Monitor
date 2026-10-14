@@ -646,6 +646,11 @@ export default function App() {
           <label className="signal-check"><input type="checkbox" checked={showSubagents}
             onChange={event => setShowSubagents(event.target.checked)}/>显示子代理</label>
           <span className="signal-toolbar-spacer"/>
+          <button type="button" className="signal-toolbar-button"
+            onClick={() => void window.monitorApi.setFloatingVisible(!floatingVisible)
+              .then(value => setFloatingVisible(value.visible)).catch(cause => setError(describeError(cause)))}>
+            <Icon name="monitor" size={14}/>{floatingVisible ? '隐藏悬浮窗' : '显示悬浮窗'}
+          </button>
           <button type="button" onClick={() => setView('sessions')}
             className={'signal-toolbar-button' + (view === 'sessions' ? ' active' : '')}>全部会话 <span>{totals.all}</span></button>
           <button type="button" className="signal-toolbar-button" disabled={busy}
@@ -906,6 +911,18 @@ export default function App() {
                 : '仅在正式打包的 Windows 版本中可设置；开发模式不会修改系统开机项。'}</small>
             </span>
           </label>
+          <section className="signal-compact-setting" aria-label="悬浮窗收起尺寸">
+            <div><strong>悬浮窗收起尺寸</strong>
+              <small>极简 38×78 px（默认）；紧凑 42×120 px。只改变收起时的原生窗口占用区域。</small></div>
+            <div className="signal-compact-buttons">
+              <button type="button" aria-pressed={compactSize === 'micro'}
+                className={compactSize === 'micro' ? 'active' : ''}
+                onClick={() => void updateCompactSize('micro')}>极简 38×78</button>
+              <button type="button" aria-pressed={compactSize === 'compact'}
+                className={compactSize === 'compact' ? 'active' : ''}
+                onClick={() => void updateCompactSize('compact')}>紧凑 42×120</button>
+            </div>
+          </section>
           <section className="resident-opacity" aria-label="悬浮窗透明度设置">
             <div className="resident-opacity-head"><strong>悬浮窗透明度</strong>
               <output htmlFor="floating-opacity-range">{Math.round(floatingOpacity * 100)}% 不透明度</output>
