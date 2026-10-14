@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ResidentStore, normalizeResident } from '../electron/resident-store';
-import { dockWindowBounds, findSavedDockDisplay, normalizeDockOpacity,
+import { dockWindowBounds, findSavedDockDisplay, interpolateDockBounds, normalizeDockOpacity,
   restoreMainBounds, type WorkArea } from '../src/shared/window-geometry';
 
 const created: string[] = [];
@@ -76,6 +76,28 @@ describe('resident window persistence and multi-display layout', () => {
     expect(findSavedDockDisplay(dock, [area])?.id).toBe(100);
     expect(dockWindowBounds(dock, area)).toEqual({ x: -38, y: 1002, width: 38, height: 78 });
     expect(findSavedDockDisplay({ ...dock, displayX: 9000 }, [area])).toBeNull();
+  });
+
+  it('eases native transitions without detached-edge or vertical overshoot', () => {
+    const initial = { x: 1882, y: 980, width: 38, height: 78 };
+    const expanded = { x: 1482, y: 592, width: 438, height: 488 };
+    expect(interpolateDockBounds(initial, expanded, 0)).toEqual(initial);
+    expect(interpolateDockBounds(initial, expanded, 1)).toEqual(expanded);
+    let previous = initial.width;
+    for (let step = 1; step < 20; step++) {
+      const middle = interpolateDockBounds(initial, expanded, step / 20);
+      expect(middle.x + middle.width).toBe(1920);
+      expect(middle.width).toBeGreaterThanOrEqual(previous);
+      expect(middle.y).toBeGreaterThanOrEqual(expanded.y);
+      expect(middle.y).toBeLessThanOrEqual(initial.y);
+      previous = middle.width;
+    }
+    const onLeft = interpolateDockBounds(
+      { x: -1920, y: 400, width: 42, height: 120 },
+      { x: -1920, y: 400, width: 438, height: 488 }, 0.5);
+    expect(onLeft.x).toBe(-1920);
+    expect(onLeft.width).toBeGreaterThan(42);
+    expect(onLeft.width).toBeLessThan(438);
   });
 
   it('normalizes and persists appearance and compact size with bounded native geometry', () => {
