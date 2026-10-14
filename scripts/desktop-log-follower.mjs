@@ -32,6 +32,9 @@ export class DesktopLogFollower {
     }
     let budget = MAX_TOTAL_READ_BYTES;
     let filesRead = 0;
+    let bytesReadTotal = 0;
+    let skippedUnchanged = 0;
+    let coldFiles = 0;
     let truncatedTails = 0;
     let backlogFiles = 0;
 
@@ -42,8 +45,10 @@ export class DesktopLogFollower {
         (item.size === previous.offset && item.mtimeMs > previous.mtimeMs + 1000));
       const cold = !previous || rotated;
       const start = cold ? Math.max(0, item.size - COLD_TAIL_BYTES) : previous.offset;
+      if (cold) coldFiles++;
       if (cold && start > 0) truncatedTails++;
       if (start >= item.size) {
+        skippedUnchanged++;
         if (cold) this.positions.set(item.path, { offset: item.size, mtimeMs: item.mtimeMs });
         continue;
       }
@@ -56,6 +61,7 @@ export class DesktopLogFollower {
         const { bytesRead } = await handle.read(buffer, 0, length, start);
         if (!bytesRead) continue;
         filesRead++;
+        bytesReadTotal += bytesRead;
         budget -= bytesRead;
         const bytes = buffer.subarray(0, bytesRead);
         // Cold tail may begin mid-UTF8 character or mid-record. Never parse
@@ -85,6 +91,7 @@ export class DesktopLogFollower {
       }
     }
     return { filesRead, trackedFiles: [...this.positions.keys()].filter(key => retained.has(key)).length,
-      truncatedTails, backlogFiles };
+      truncatedTails, backlogFiles, bytesRead: bytesReadTotal,
+      skippedUnchanged, coldFiles };
   }
 }

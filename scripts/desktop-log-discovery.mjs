@@ -17,11 +17,49 @@ const DAY_OFFSETS = [0, -1, -2, -3, 1];
 const key = p => process.platform === 'win32' ? p.toLowerCase() : p;
 const validRoot = p => typeof p === 'string' && !!p && path.isAbsolute(p);
 
+/** Cache only directory entry names/types, not log contents or file sizes.
+ * Each pass still stats candidate log files, so append-based events remain
+ * visible on the original four-second cadence. New files invalidate on dir
+ * mtime change, with a 30-second safety refresh for coarse filesystems.
+ */
+export class DesktopDirectoryCache {
+  constructor() {
+    this.entries = new Map();
+    this.cacheHits = 0;
+    this.enumerations = 0;
+  }
+  stats() { return { cacheHits: this.cacheHits, enumerations: this.enumerations }; }
+  async read(directory, now = Date.now()) {
+    let stat;
+    try { stat = await fs.stat(directory); }
+    catch { this.entries.delete(directory); return null; }
+    if (!stat.isDirectory()) { this.entries.delete(directory); return null; }
+    const previous = this.entries.get(directory);
+    if (previous && previous.mtimeMs === stat.mtimeMs &&
+        now >= previous.checkedAt && now - previous.checkedAt < 30_000) {
+      this.cacheHits++;
+      return previous.items;
+    }
+    try {
+      const items = await fs.readdir(directory, { withFileTypes: true });
+      this.enumerations++;
+      this.entries.delete(directory);
+      this.entries.set(directory, { mtimeMs: stat.mtimeMs, checkedAt: now, items });
+      while (this.entries.size > 80) this.entries.delete(this.entries.keys().next().value);
+      return items;
+    } catch {
+      this.entries.delete(directory);
+      return null;
+    }
+  }
+}
+
 /** Prefer both the canonical Store package and dynamically discovered package
  * identities. In particular, never slice Package directory entries BEFORE
  * filtering for Codex: directories are not guaranteed to be alphabetic.
  */
-export async function desktopLogRoots(localAppData, appData = process.env.APPDATA ?? '') {
+export async function desktopLogRoots(localAppData, appData = process.env.APPDATA ?? '',
+  cache = null, now = Date.now()) {
   if (!validRoot(localAppData)) return [];
   const roots = [
     { kind: 'standard', path: path.join(localAppData, 'Codex', 'Logs') },
@@ -32,7 +70,9 @@ export async function desktopLogRoots(localAppData, appData = process.env.APPDAT
     roots.push({ kind: 'roaming', path: path.join(appData, 'Codex', 'Logs') });
   }
   try {
-    const packages = await fs.readdir(path.join(localAppData, 'Packages'), { withFileTypes: true });
+    const packages = cache
+      ? (await cache.read(path.join(localAppData, 'Packages'), now)) ?? []
+      : await fs.readdir(path.join(localAppData, 'Packages'), { withFileTypes: true });
     const matching = packages.filter(entry => entry.isDirectory() && PACKAGE.test(entry.name))
       .slice(0, MAX_PACKAGE_NAMES);
     for (const entry of matching) roots.push({
@@ -64,8 +104,8 @@ function dailyFolders(root, now) {
  * Candidate filenames are returned only to the trusted in-process log reader.
  */
 export async function discoverDesktopLogFiles(localAppData, now = Date.now(),
-  appData = process.env.APPDATA ?? '') {
-  const roots = await desktopLogRoots(localAppData, appData);
+  appData = process.env.APPDATA ?? '', cache = null) {
+  const roots = await desktopLogRoots(localAppData, appData, cache, now);
   const result = {
     validLocalAppData: validRoot(localAppData),
     roots: [],
@@ -79,8 +119,12 @@ export async function discoverDesktopLogFiles(localAppData, now = Date.now(),
     catch { /* Missing root is a valid diagnostic outcome. */ }
     for (const directory of dailyFolders(root.path, now)) {
       let entries;
-      try { entries = await fs.readdir(directory, { withFileTypes: true }); }
-      catch { continue; }
+      if (cache) entries = await cache.read(directory, now);
+      else {
+        try { entries = await fs.readdir(directory, { withFileTypes: true }); }
+        catch { entries = null; }
+      }
+      if (!entries) continue;
       stats.accessibleDateFolders++;
       // Filter file kinds BEFORE bounding the work. A directory containing
       // hundreds of unrelated files must not hide a valid recent Codex log.

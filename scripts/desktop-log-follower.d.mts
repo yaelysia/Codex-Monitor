@@ -4,6 +4,9 @@ export interface DesktopLogFollowerReport {
   trackedFiles: number;
   truncatedTails: number;
   backlogFiles: number;
+  bytesRead: number;
+  skippedUnchanged: number;
+  coldFiles: number;
 }
 export class DesktopLogFollower {
   scan(files: readonly DesktopLogCandidate[], onLine: (line: string) => void):

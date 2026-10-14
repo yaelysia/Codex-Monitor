@@ -15,6 +15,14 @@ export interface DesktopLogRootStats {
   matchedNames: number;
   recentCandidates: number;
 }
-export function desktopLogRoots(localAppData: string, appData?: string): Promise<DesktopLogRoot[]>;
-export function discoverDesktopLogFiles(localAppData: string, now?: number, appData?: string):
+export function desktopLogRoots(localAppData: string, appData?: string,
+  cache?: DesktopDirectoryCache | null, now?: number): Promise<DesktopLogRoot[]>;
+export function discoverDesktopLogFiles(localAppData: string, now?: number, appData?: string,
+  cache?: DesktopDirectoryCache | null):
   Promise<{ validLocalAppData: boolean; roots: DesktopLogRootStats[]; files: DesktopLogCandidate[] }>;
+
+export interface DirectoryCacheStats { cacheHits: number; enumerations: number; }
+export class DesktopDirectoryCache {
+  read(directory: string, now?: number): Promise<import('node:fs').Dirent[] | null>;
+  stats(): DirectoryCacheStats;
+}
