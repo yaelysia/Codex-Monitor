@@ -50,6 +50,19 @@ export function summarizeDashboardSessions(rows: SessionRecord[]) {
   };
 }
 
+/** Only the flat session list has a status filter. In every overview or
+ * location view, status counters must reflect the complete selected scope.
+ * Search, recency, source and workspace remain shared filters.
+ */
+export function filterSessionsForView(
+  rows: SessionRecord[],
+  view: 'board' | 'sessions' | 'locations' | 'chronicle',
+  options: ViewFilter,
+  now: number,
+): SessionRecord[] {
+  return filterSessions(rows, { ...options, status: view === 'sessions' ? options.status : 'all' }, now);
+}
+
 /** Unknown is never treated as pending approval; both remain visibly distinct. */
 export function makeStatusLanes(rows: SessionRecord[]): StatusLane[] {
   const working = rows.filter(row => row.status === 'working');
