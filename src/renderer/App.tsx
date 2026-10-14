@@ -5,8 +5,21 @@ import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
+import SignalSelect, { type SignalSelectOption } from './SignalSelect';
 
 type View = 'board' | 'sessions' | 'locations' | 'chronicle';
+
+const ALL_SOURCES_VALUE = '@all-sources';
+const STATUS_OPTIONS: readonly SignalSelectOption<ViewFilter['status']>[] = [
+  { value: 'all', label: '全部状态' },
+  { value: 'working', label: '可能执行中' },
+  { value: 'waiting', label: '可能待处理' },
+  { value: 'abnormal', label: '失败 / 中断' },
+  { value: 'finished', label: '本轮完成' },
+  { value: 'failed', label: '失败' },
+  { value: 'interrupted', label: '中断' },
+  { value: 'unknown', label: '未知' },
+];
 type OverviewStatus = 'waiting' | 'abnormal' | 'working';
 
 type StoredViewPreferences = { view: View; recentOnly: boolean; filter: ViewFilter['status']; showSubagents: boolean };
@@ -428,6 +441,10 @@ export default function App() {
     errors: scan?.sources.filter(source => source.error).length ?? 0,
   }), [allSessions, scan]);
 
+  const sourceOptions = useMemo<SignalSelectOption<string>[]>(() => [
+    { value: ALL_SOURCES_VALUE, label: '所有位置' },
+    ...(scan?.sources ?? []).map(source => ({ value: source.id, label: source.label })),
+  ], [scan?.sources]);
   const scopeSource = scan?.sources.find(source => source.id === sourceId);
   const currentWorkspace = sourceGroups.flatMap(group => group.workspaces)
     .find(group => group.key === workspaceId);
@@ -613,17 +630,15 @@ export default function App() {
             onClick={() => navigate('board')}>
             <Icon name="chevron-left" size={15}/> 返回决策台
           </button>}
-          {view === 'sessions' && <label>状态 <select aria-label="运行状态筛选" value={filter}
-            onChange={event => setFilter(event.target.value as ViewFilter['status'])}>
-            <option value="all">全部</option><option value="working">可能执行中</option>
-            <option value="waiting">可能待处理</option><option value="abnormal">失败 / 中断</option><option value="finished">本轮完成</option>
-            <option value="failed">失败</option><option value="interrupted">中断</option>
-            <option value="unknown">未知</option></select></label>}
-          <label>位置 <select aria-label="执行位置筛选" value={sourceId ?? ''}
-            onChange={event => { setSourceId(event.target.value || null); setWorkspaceId(null); }}>
-            <option value="">所有位置</option>
-            {scan?.sources.map(source => <option key={source.id} value={source.id}>{source.label}</option>)}
-          </select></label>
+          {view === 'sessions' && <div className="signal-filter-field">状态
+            <SignalSelect label="运行状态筛选" appearance={appearance}
+              value={filter} options={STATUS_OPTIONS} onChange={setFilter}/>
+          </div>}
+          <div className="signal-filter-field location">位置
+            <SignalSelect label="执行位置筛选" appearance={appearance}
+              value={sourceId ?? ALL_SOURCES_VALUE} options={sourceOptions}
+              onChange={next => { setSourceId(next === ALL_SOURCES_VALUE ? null : next); setWorkspaceId(null); }}/>
+          </div>
           <label className="signal-check"><input type="checkbox" checked={recentOnly}
             onChange={event => setRecentOnly(event.target.checked)}/>近 7 天</label>
           <label className="signal-check"><input type="checkbox" checked={showSubagents}
