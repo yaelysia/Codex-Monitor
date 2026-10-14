@@ -371,6 +371,9 @@ describe('native GUI completion notification orchestration', () => {
 
 describe('Desktop event-driven wakeups with bounded safety scans', () => {
   it('coalesces native file events and uses 12s audits when covered, 4s if not', async () => {
+    // Normal source watchers remain healthy; otherwise their own 12s
+    // filesystem fallback would correctly trigger a separate collection.
+    fake.health = { local: 'active' };
     const baseline = snapshot(NOW, [source('local', [session('p', 'unknown', NOW)])]);
     vi.mocked(collect).mockResolvedValue(baseline);
     service = new MonitorService(() => undefined, () => undefined,
