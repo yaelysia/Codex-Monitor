@@ -154,6 +154,7 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
         status === 'interrupted' || status === 'failed' ? status : 'unknown',
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
       finishedToken: typeof entry.finishedToken === 'string' ? entry.finishedToken : null,
+      interruptedToken: typeof entry.interruptedToken === 'string' ? entry.interruptedToken : null,
       waitingToken: typeof entry.waitingToken === 'string' ? entry.waitingToken : null,
       pendingQuestionToken: typeof entry.pendingQuestionToken === 'string' ?
         entry.pendingQuestionToken.slice(0, 300) : null,

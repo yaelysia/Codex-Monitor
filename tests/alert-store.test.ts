@@ -60,6 +60,30 @@ describe('persisted minimal notification inbox', () => {
     expect(fresh.observe(snap({...completed, ageAtSourceMs:100}, NOW + 30_000),
       NOW + 30_000)).toHaveLength(0);
   });
+  it('restores interruption alerts and dedupe IDs without saving conversation text', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snap(session('working'), NOW), NOW);
+    const interrupted = {...session('interrupted'), updatedAt: NOW + 10_000,
+      interruptedToken: 'abort|turn-a'};
+    const emitted = tracker.observe(snap(interrupted, NOW + 12_000), NOW + 12_000);
+    expect(emitted.map(alert => alert.kind)).toEqual(['interrupted']);
+    const root = dir();
+    const store = new AlertStateStore(root);
+    store.update(tracker.snapshot(), NOW + 12_000);
+    store.flush();
+    const raw = fs.readFileSync(path.join(root, 'alert-state.json'), 'utf8');
+    expect(raw).not.toMatch(/PRIVATE_PROMPT_TITLE|PRIVATE_WORKSPACE|PRIVATE_REASON/);
+    const restored = new AlertTracker();
+    restored.restore(new AlertStateStore(root).load(NOW + 13_000));
+    expect(restored.getAlerts()[0]).toMatchObject({
+      kind: 'interrupted', read: false, title: '已保存的任务提醒',
+    });
+    restored.acknowledge(emitted[0]!.id);
+    expect(restored.getAlerts()[0]?.read).toBe(true);
+    restored.observe(snap(session('working'), NOW + 20_000), NOW + 20_000);
+    expect(restored.observe(snap(interrupted, NOW + 24_000), NOW + 24_000)).toEqual([]);
+  });
+
   it('drops corrupted, extra-field and expired entries safely', () => {
     const root = dir();
     fs.writeFileSync(path.join(root, 'alert-state.json'), '{not json');

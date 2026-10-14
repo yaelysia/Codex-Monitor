@@ -37,6 +37,8 @@ export interface SessionRecord {
   statusReason: string;
   /** Persisted terminal/approval event fingerprint when present; helps dedupe notifications. */
   finishedToken?: string | null;
+  /** Fingerprint of a persisted turn_aborted event, distinct from successful completion. */
+  interruptedToken?: string | null;
   waitingToken?: string | null;
   /** Stable ID for an unanswered persisted question/approval call or async AgentMessage. */
   pendingQuestionToken?: string | null;
@@ -85,7 +87,7 @@ export interface ConfigResponse {
   distros: string[];
 }
 
-export type AlertKind = 'finished' | 'waiting';
+export type AlertKind = 'finished' | 'waiting' | 'interrupted';
 export type FloatingSide = 'left' | 'right';
 export type SignalAppearance = 'moonsea' | 'ember' | 'mist';
 export type FloatingCompactSize = 'micro' | 'compact';

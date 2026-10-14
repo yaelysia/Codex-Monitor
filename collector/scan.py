@@ -397,6 +397,7 @@ def details(head, tail, filename, clipped, modified, now):
     last_terminal_turn_id = None
     awaiting = False
     finished_token = None
+    interrupted_token = None
     waiting_token = None
     checkpoint_after_boundary = False
     parsed_rows = list(rows(tail, clipped))
@@ -411,6 +412,7 @@ def details(head, tail, filename, clipped, modified, now):
             phase = 'submitted'
             active_turn_id = None
             awaiting, finished_token, waiting_token = False, None, None
+            interrupted_token = None
             checkpoint_after_boundary = False
         if is_compaction_checkpoint(row, payload):
             checkpoint_after_boundary = True
@@ -427,7 +429,8 @@ def details(head, tail, filename, clipped, modified, now):
             if event in START:
                 phase, active_turn_id = 'started', turn_id or None
                 awaiting, waiting_token = False, None
-                finished_token, checkpoint_after_boundary = None, False
+                finished_token, interrupted_token = None, None
+                checkpoint_after_boundary = False
             elif event in END or event in ABORT:
                 # Late turn-a completion cannot terminate a newer running turn-b.
                 if active_turn_id and turn_id != active_turn_id:
@@ -439,6 +442,7 @@ def details(head, tail, filename, clipped, modified, now):
                          'failed' if payload.get('error') is not None else 'finished')
                 awaiting, finished_token, waiting_token = (
                     False, marker if phase == 'finished' else None, None)
+                interrupted_token = marker if phase == 'interrupted' else None
                 checkpoint_after_boundary = False
                 last_terminal_turn_id = turn_id or active_turn_id
                 active_turn_id = None
@@ -494,6 +498,7 @@ def details(head, tail, filename, clipped, modified, now):
         'status': status,
         'statusReason': reason,
         'finishedToken': finished_token if terminal and not pending_token else None,
+        'interruptedToken': interrupted_token if status == 'interrupted' else None,
         'waitingToken': pending_token if question['blocking'] and pending_token
                         else waiting_token if awaiting else None,
         'pendingQuestionToken': pending_token,

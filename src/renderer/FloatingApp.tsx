@@ -4,6 +4,7 @@ import { recentParentCompletions } from '../shared/monitor-view';
 import { windowWasActivated } from '../shared/window-navigation';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
+import { alertKindLabel } from '../shared/alert-presentation';
 import { useVisibleInterval } from './useVisibleInterval';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
@@ -153,9 +154,9 @@ export default function FloatingApp() {
               if (!alert.read) acknowledge(alert.id);
               openOriginal(alert.sessionKey);
             }}>
-              <span className={'signal-dock-alert-dot' + (alert.kind === 'waiting' ? ' waiting' : '')}/>
+              <span className={'signal-dock-alert-dot ' + alert.kind}/>
               <span><strong>{alert.title}</strong><small title={alert.questionText || undefined}>
-                {alert.kind === 'waiting' ? alert.questionText || '可能需要回答/确认' : '本轮回复已结束'} · {alert.sourceLabel}
+                {alert.kind === 'waiting' ? alert.questionText || '可能需要回答/确认' : alertKindLabel(alert.kind)} · {alert.sourceLabel}
               </small></span>
             </button>
             {!alert.read && <button type="button" className="signal-dock-ack"

@@ -115,7 +115,7 @@
 .signal-float .signal-dock-alert-main{display:flex;align-items:center;gap:8px;min-width:0;
   flex:1;border:0;background:transparent;color:var(--f-text);padding:12px 3px;text-align:left}
 .signal-float .signal-dock-alert-dot{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:var(--f-accent)}
-.signal-float .signal-dock-alert-dot.waiting{background:var(--f-warn)}
+.signal-float .signal-dock-alert-dot.waiting,.signal-float .signal-dock-alert-dot.interrupted{background:var(--f-warn)}
 .signal-float .signal-dock-alert-main > span:last-child{display:flex;flex-direction:column;gap:6px;min-width:0;flex:1}
 .signal-float .signal-dock-alert-main strong{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .signal-float .signal-dock-alert-main small{font-size:10px;color:var(--f-muted);

@@ -32,6 +32,28 @@ class TestLinuxCollector(unittest.TestCase):
             'type': 'session_meta', 'payload': {'source': 'vscode'}})), 'unknown')
 
 
+    def test_interruption_fingerprint_changes_per_aborted_turn(self):
+        now = 1_800_000_000_000
+
+        def boundary(kind, turn, timestamp):
+            return {'type': 'event_msg', 'timestamp': timestamp,
+                    'payload': {'type': kind, 'turn_id': turn}}
+
+        first = [boundary('turn_started', 'a', '2026-10-12T10:00:00Z'),
+                 boundary('turn_aborted', 'a', '2026-10-12T10:00:03Z')]
+        def parse(records):
+            return scanner.details('', '\n'.join(map(json.dumps, records)),
+                                   'x.jsonl', False, now - 1000, now)
+
+        self.assertEqual(parse(first)['status'], 'interrupted')
+        self.assertEqual(parse(first)['interruptedToken'], '2026-10-12T10:00:03Z|a')
+        second = first + [boundary('turn_started', 'b', '2026-10-12T10:00:04Z'),
+                          boundary('turn_aborted', 'b', '2026-10-12T10:00:05Z')]
+        self.assertEqual(parse(second)['interruptedToken'], '2026-10-12T10:00:05Z|b')
+        resumed = second + [boundary('turn_started', 'c', '2026-10-12T10:00:06Z')]
+        self.assertEqual(parse(resumed)['status'], 'working')
+        self.assertIsNone(parse(resumed)['interruptedToken'])
+
     def test_desktop_paginated_user_message_and_late_turn_completion(self):
         now = 1_800_000_000_000
         row = lambda kind, payload: {'type': kind, 'payload': payload,
