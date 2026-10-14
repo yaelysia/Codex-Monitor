@@ -167,6 +167,7 @@ export type OriginalWindowFocusResult = {
 };
 
 export interface MonitorApi {
+  readonly windowChrome: 'overlay' | 'native';
   getConfig(): Promise<ConfigResponse>;
   getResidentOptions(): Promise<ResidentOptions>;
   setResidentOptions(options: Pick<ResidentOptions, 'keepRunningOnClose' | 'launchAtLogin'>): Promise<ResidentOptions>;
