@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
-import { filterSessions, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
+import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 
 type View = 'board' | 'sessions' | 'locations' | 'chronicle';
@@ -20,7 +20,7 @@ function readViewPreferences(): StoredViewPreferences {
     const validFilter = ['all', 'working', 'waiting', 'abnormal', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
     return { view: validView ? row.view : 'board',
       recentOnly: typeof row.recentOnly === 'boolean' ? row.recentOnly : true,
-      filter: validFilter ? row.filter : 'all',
+      filter: row.view === 'sessions' && validFilter ? row.filter : 'all',
       showSubagents: row.showSubagents === true };
   } catch { return fallback; }
 }
@@ -347,7 +347,7 @@ export default function App() {
   }, [refresh]);
   useEffect(() => {
     try { localStorage.setItem(VIEW_PREFERENCES_KEY,
-      JSON.stringify({ view, filter, recentOnly, showSubagents })); }
+      JSON.stringify({ view, filter: view === 'sessions' ? filter : 'all', recentOnly, showSubagents })); }
     catch { /* storage permission or quota: viewing and monitoring still work */ }
   }, [view, filter, recentOnly, showSubagents]);
 
@@ -371,9 +371,9 @@ export default function App() {
     scan?.sources.flatMap(source => source.sessions) ?? [], showSubagents)
     .sort((a, b) => b.updatedAt - a.updatedAt), [scan, showSubagents]);
   const sourceGroups = useMemo(() => groupByExecutionLocation(allSessions), [allSessions]);
-  const shown = useMemo(() => filterSessions(allSessions, {
+  const shown = useMemo(() => filterSessionsForView(allSessions, view, {
     query, status: filter, recentOnly, sourceId, workspaceId,
-  }, now), [allSessions, query, filter, recentOnly, sourceId, workspaceId, now]);
+  }, now), [allSessions, view, query, filter, recentOnly, sourceId, workspaceId, now]);
   const groups = useMemo(() => groupByExecutionLocation(shown), [shown]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
@@ -431,6 +431,11 @@ export default function App() {
     .find(group => group.key === workspaceId);
   const { pending, abnormal, working: running } = useMemo(
     () => summarizeDashboardSessions(shown), [shown]);
+  const statusNames: Record<ViewFilter['status'], string> = {
+    all: '全部', working: '可能执行中', waiting: '可能待处理',
+    abnormal: '失败 / 中断', finished: '本轮完成',
+    interrupted: '中断', failed: '失败', unknown: '未知',
+  };
   const recentAlerts = visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at);
   const unreadCount = recentAlerts.filter(item => !item.read).length;
   async function updateAppearance(next: SignalAppearance): Promise<void> {
@@ -451,11 +456,15 @@ export default function App() {
     setConfig(next);
     await refresh();
   }
+  /** Moving between primary views must discard session-only drill-down state. */
+  function navigate(next: View) {
+    setFilter('all');
+    setView(next);
+  }
   function selectScope(nextSource: string | null, nextWorkspace: string | null = null) {
     setSourceId(nextSource);
     setWorkspaceId(nextWorkspace);
-    setView('board');
-    setFilter('all');
+    navigate('board');
   }
   function showStatusSessions(status: ViewFilter['status']) {
     setFilter(status);
@@ -502,7 +511,7 @@ export default function App() {
       <nav className={'signal-nav nav-' + view} aria-label="主视图">
         {([['board', '决策台'], ['locations', '机器矩阵'], ['chronicle', '事件轨迹']] as const)
           .map(([id, label], index) => <button key={id} type="button" aria-current={view === id ? 'page' : undefined}
-            className={view === id ? 'active' : ''} onClick={() => setView(id)}>
+            className={view === id ? 'active' : ''} onClick={() => navigate(id)}>
             <span>{'0' + (index + 1)}</span>{label}</button>)}
       </nav>
       <div className="signal-chrome-right">
@@ -587,12 +596,16 @@ export default function App() {
         </div>
 
         <div className="signal-toolbar" aria-label="筛选与快捷操作">
-          <label>状态 <select aria-label="运行状态筛选" value={filter}
+          {view === 'sessions' && <button type="button" className="signal-back-button"
+            onClick={() => navigate('board')}>
+            <Icon name="chevron-left" size={15}/> 返回决策台
+          </button>}
+          {view === 'sessions' && <label>状态 <select aria-label="运行状态筛选" value={filter}
             onChange={event => setFilter(event.target.value as ViewFilter['status'])}>
             <option value="all">全部</option><option value="working">可能执行中</option>
             <option value="waiting">可能待处理</option><option value="abnormal">失败 / 中断</option><option value="finished">本轮完成</option>
             <option value="failed">失败</option><option value="interrupted">中断</option>
-            <option value="unknown">未知</option></select></label>
+            <option value="unknown">未知</option></select></label>}
           <label>位置 <select aria-label="执行位置筛选" value={sourceId ?? ''}
             onChange={event => { setSourceId(event.target.value || null); setWorkspaceId(null); }}>
             <option value="">所有位置</option>
@@ -608,7 +621,7 @@ export default function App() {
               .then(value => setFloatingVisible(value.visible)).catch(cause => setError(describeError(cause)))}>
             <Icon name="monitor" size={14}/>{floatingVisible ? '隐藏悬浮窗' : '显示悬浮窗'}
           </button>
-          <button type="button" onClick={() => setView('sessions')}
+          <button type="button" onClick={() => navigate('sessions')}
             className={'signal-toolbar-button' + (view === 'sessions' ? ' active' : '')}>全部会话 <span>{totals.all}</span></button>
           <button type="button" className="signal-toolbar-button" disabled={busy}
             onClick={() => void refresh()}><Icon name="refresh" size={14}/>{busy ? '刷新中' : '刷新'}</button>
@@ -665,7 +678,7 @@ export default function App() {
             </section>}
             <section className="signal-panel signal-running" aria-label="可能执行中的会话">
               <div className="signal-panel-heading"><div><h2>可能执行中</h2><small>最新状态与活动证据</small></div>
-                <button type="button" onClick={() => {setView('sessions');setFilter('working');}}>查看全部 <Icon name="chevron-right" size={14}/></button></div>
+                <button type="button" onClick={() => showStatusSessions('working')}>查看全部 <Icon name="chevron-right" size={14}/></button></div>
               <div className="signal-task-list">{running.slice(0, 6).map(session =>
                 <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
                 {!running.length && <div className="signal-list-empty"><Icon name="activity" size={23}/>
@@ -676,10 +689,10 @@ export default function App() {
           <div className="signal-bottom-grid">
             <section className="signal-panel signal-locations">
               <div className="signal-panel-heading"><h2>执行位置</h2>
-                <button type="button" onClick={() => setView('locations')}>查看机器矩阵 <Icon name="chevron-right" size={14}/></button></div>
+                <button type="button" onClick={() => navigate('locations')}>查看机器矩阵 <Icon name="chevron-right" size={14}/></button></div>
               <div className="signal-location-tiles">
                 {groups.slice(0, 4).map(group => <button type="button" key={group.sourceId}
-                  onClick={() => { setSourceId(group.sourceId); setWorkspaceId(null); setView('locations'); }}>
+                  onClick={() => { setSourceId(group.sourceId); setWorkspaceId(null); navigate('locations'); }}>
                   <span className="signal-location-head"><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={17}/>
                     <small>{group.sourceId.startsWith('ssh:') ? 'SSH' : group.sourceId.startsWith('wsl:') ? 'WSL' : 'WIN'}</small></span>
                   <strong title={group.sourceLabel}>{group.sourceLabel}</strong>
@@ -689,7 +702,7 @@ export default function App() {
             </section>
             <section className="signal-panel signal-changes">
               <div className="signal-panel-heading"><h2>最近变化</h2><button type="button"
-                onClick={() => setView('chronicle')}>查看事件轨迹 <Icon name="chevron-right" size={14}/></button></div>
+                onClick={() => navigate('chronicle')}>查看事件轨迹 <Icon name="chevron-right" size={14}/></button></div>
               <div className="signal-event-list">
                 {recentAlerts.length ? recentAlerts.slice(0, 4).map(alert =>
                   <button type="button" key={alert.id} className="signal-event" onClick={() => {
@@ -724,7 +737,7 @@ export default function App() {
               {group.workspaces.slice(0, 5).map(workspace =>
                 <button type="button" key={workspace.key}
                   title={workspace.workspace || '未记录工作目录'}
-                  onClick={() => { setSourceId(group.sourceId);setWorkspaceId(workspace.key);setView('sessions'); }}>
+                  onClick={() => { setSourceId(group.sourceId);setWorkspaceId(workspace.key);navigate('sessions'); }}>
                   <Icon name="folder" size={13}/>{workspaceName(workspace.workspace)}
                   <span>{workspace.sessions.length}</span>
                 </button>)}
@@ -734,7 +747,7 @@ export default function App() {
               {!group.count && <p className="signal-empty">当前没有会话</p>}
             </div>
             <button type="button" className="signal-machine-foot" onClick={() => {
-              setSourceId(group.sourceId);setWorkspaceId(null);setView('sessions'); }}>
+              setSourceId(group.sourceId);setWorkspaceId(null);navigate('sessions'); }}>
               查看该机器的所有会话 <Icon name="arrow-up-right" size={15}/></button>
           </section>)}
           {!groups.length && <p className="signal-empty">没有符合当前筛选条件的执行位置</p>}
@@ -771,7 +784,7 @@ export default function App() {
             {(['working','waiting','finished','interrupted','failed','unknown'] as const).map(status => {
               const count = shown.filter(item => item.status === status).length;
               return <button type="button" className="signal-status-distribution" key={status}
-                onClick={() => {setFilter(status);setView('sessions');}}>
+                onClick={() => showStatusSessions(status)}>
                 <span className={'signal-mini-dot ' + status}/><span>{STATUS[status].text}</span><strong>{count}</strong>
               </button>;
             })}
@@ -779,7 +792,13 @@ export default function App() {
         </div>}
 
         {view === 'sessions' && <section className="records-panel signal-records">
-          <div className="panel-heading"><strong>全部会话</strong><span>按最近活动排序 · {shown.length} 条</span></div>
+          <div className="panel-heading"><strong>全部会话
+              {filter !== 'all' && <span className="signal-filter-tag">{statusNames[filter]}</span>}
+            </strong>
+            <span>按最近活动排序 · {shown.length} 条
+              {filter !== 'all' && <button type="button" className="signal-clear-filter"
+                onClick={() => setFilter('all')}>清除状态筛选</button>}
+            </span></div>
           <SessionTable sessions={shown} now={now} selectedKey={selectedKey} onSelect={openSession}/>
         </section>}
 
