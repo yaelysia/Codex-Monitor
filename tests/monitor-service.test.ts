@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { MonitorAlert, MonitorState, ScanResponse, SessionRecord, Settings, SourceResult } from '../src/shared/types';
 
 const fake = vi.hoisted(() => ({
@@ -286,5 +289,38 @@ describe('Desktop ownership metadata is broadcast even if status is unchanged', 
     expect(service.state().scan?.sources[0]?.sessions[0]?.desktopRuntimeObserved).toBeUndefined();
     expect(emitted.at(-1)?.scan?.sources[0]?.sessions[0]?.desktopRuntimeObserved).toBeUndefined();
     expect(collect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('notification state across Monitor process restarts', () => {
+  it('restores read flags and muted setting without replaying OS notifications', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-service-inbox-'));
+    try {
+      const running = snapshot(NOW, [source('ssh:one', [session('p', 'working', NOW)])]);
+      const done = snapshot(NOW + 12_000, [source('ssh:one', [
+        session('p', 'finished', NOW + 10_000),
+      ])]);
+      vi.mocked(collect).mockResolvedValueOnce(running).mockResolvedValueOnce(done);
+      const sent: MonitorAlert[] = [];
+      service = new MonitorService(() => undefined, alert => sent.push(alert),
+        () => {}, 'linux', dir);
+      await service.refresh(true);
+      vi.setSystemTime(NOW + 12_000);
+      await service.refresh(true);
+      expect(sent).toHaveLength(1);
+      expect(service.state().alerts).toHaveLength(1);
+      service.acknowledge(sent[0]!.id);
+      service.setMuted(true);
+      service.stop();
+      service = null;
+      const second = new MonitorService(() => undefined, alert => sent.push(alert),
+        () => {}, 'linux', dir);
+      try {
+        expect(second.state().muted).toBe(true);
+        expect(second.state().alerts).toMatchObject([{ read: true, kind: 'finished' }]);
+        expect(second.state().alerts[0]?.title).toBe('已保存的任务提醒');
+        expect(sent).toHaveLength(1);
+      } finally { second.stop(); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

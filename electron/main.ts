@@ -66,6 +66,7 @@ if (firstInstance) {
         }).catch(() => mainWindow?.show(key));
       }, id => { monitor?.acknowledge(id); }),
       snapshot => windowTracker?.observeScan(snapshot),
+      process.platform, app.getPath('userData'),
     );
     tray = new TrayController(mainWindow, floating, monitor, resident, () => app.quit());
     tray.start();

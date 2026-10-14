@@ -4,6 +4,7 @@ import { readSettings } from './config';
 import { refresh as collect, projectDesktopRuntime } from './collector';
 import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
+import { AlertStateStore } from './alert-store';
 
 const POLLING_FALLBACK_MS = 12_000;
 const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
@@ -33,6 +34,7 @@ function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): bool
 /** One state owner and event queue for all renderer windows and external hosts. */
 export class MonitorService {
   private tracker = new AlertTracker();
+  private readonly alertStore: AlertStateStore | null;
   private lastScan: ScanResponse | null = null;
   private rawLastScan: ScanResponse | null = null;
   private nativeAuditTimer: ReturnType<typeof setInterval> | null = null;
@@ -59,7 +61,15 @@ export class MonitorService {
     private readonly onAlert: (alert: MonitorAlert) => void,
     private readonly onScanned: (delta: ScanResponse) => void = () => {},
     private readonly platform = process.platform,
-  ) {}
+    storageDirectory?: string,
+  ) {
+    this.alertStore = storageDirectory ? new AlertStateStore(storageDirectory) : null;
+    if (this.alertStore) this.tracker.restore(this.alertStore.load());
+  }
+
+  private persistAlerts(): void {
+    this.alertStore?.update(this.tracker.snapshot());
+  }
 
   start(): void {
     if (this.running) return;
@@ -86,11 +96,14 @@ export class MonitorService {
     this.wakeTimer = null;
     this.pendingSources.clear();
     this.watchers.stop();
+    this.persistAlerts();
+    this.alertStore?.flush();
   }
 
   state(): MonitorState { return { ...this.tracker.state(this.lastScan), eventChannels: this.watchers.status() }; }
   setMuted(muted: boolean): MonitorState {
     this.tracker.setMuted(muted);
+    this.persistAlerts();
     this.onChange(this.state());
     return this.state();
   }
@@ -98,6 +111,7 @@ export class MonitorService {
   acknowledgeMany(ids: readonly string[]): MonitorState {
     if (!ids.length) return this.state();
     this.tracker.acknowledgeMany(ids);
+    this.persistAlerts();
     this.onChange(this.state());
     return this.state();
   }
@@ -220,6 +234,7 @@ export class MonitorService {
       };
       for (const source of delta.sources) this.lastSourceScan.set(source.id, delta.scannedAt);
       const alerts = this.tracker.observe(projectedDelta);
+      this.persistAlerts();
       if (!partial) {
         this.lastFullScanAt = delta.scannedAt;
         if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);
