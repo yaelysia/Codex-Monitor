@@ -679,3 +679,81 @@
   .signal-app .signal-records .panel-heading {flex-wrap:wrap}
   .signal-app .signal-records .panel-heading > span {justify-content:flex-start}
 }
+
+
+/* In-place decision-desk drill-down, with no cross-page status mutation. */
+.signal-app .signal-overview-overlay{
+  position:fixed;inset:0;z-index:58;display:flex;justify-content:flex-end;
+}
+.signal-app .signal-overview-veil{
+  position:absolute;inset:0;border:0;background:rgba(4,10,15,.57);
+  animation:signalBackdropIn .24s ease-out both;
+}
+.signal-app .signal-overview-drawer{
+  position:relative;z-index:1;display:flex;flex-direction:column;
+  width:min(465px,96vw);min-width:0;height:100%;overflow:hidden;
+  background:var(--s-panel);color:var(--s-text);
+  border-left:1px solid var(--s-stroke-strong);
+  box-shadow:-22px 0 75px var(--s-shadow);
+  animation:signalOverviewDrawerIn .36s cubic-bezier(.16,1,.3,1) both;
+}
+.signal-app .signal-overview-drawer-head{
+  display:flex;justify-content:space-between;gap:17px;
+  padding:28px 25px 21px;border-bottom:1px solid var(--s-stroke);
+}
+.signal-app .signal-overview-drawer-head > div{min-width:0}
+.signal-app .signal-overview-drawer-head small{
+  display:block;color:var(--s-accent);font:10px Consolas,monospace;
+  letter-spacing:.1em;margin-bottom:14px;
+}
+.signal-app .signal-overview-drawer-head h2{
+  display:flex;align-items:center;gap:12px;font-size:20px;
+  font-weight:610;letter-spacing:-.03em;margin:0 0 10px;
+}
+.signal-app .signal-overview-drawer-head h2 span{
+  font:600 17px Consolas,monospace;color:var(--s-accent);
+}
+.signal-app .signal-overview-drawer-head p{
+  font-size:11px;line-height:1.65;color:var(--s-muted);margin:0;
+}
+.signal-app .signal-overview-close{
+  display:grid;place-items:center;width:32px;height:32px;flex:0 0 auto;
+  border:1px solid var(--s-stroke);border-radius:9px;
+  background:var(--s-tint);color:var(--s-muted);
+}
+.signal-app .signal-overview-drawer-rows{
+  flex:1;min-height:0;overflow:auto;padding:10px 22px;
+}
+.signal-app .signal-overview-drawer-rows .signal-task{
+  padding:15px 4px;
+}
+.signal-app .signal-overview-empty{
+  min-height:220px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:12px;
+  text-align:center;color:var(--s-muted);font-size:11px;
+}
+.signal-app .signal-overview-empty strong{color:var(--s-text);font-size:13px}
+.signal-app .signal-overview-drawer-foot{
+  flex-shrink:0;display:flex;justify-content:space-between;
+  align-items:center;gap:10px;padding:16px 23px;
+  border-top:1px solid var(--s-stroke);font-size:11px;color:var(--s-muted);
+}
+.signal-app .signal-overview-drawer-foot button{
+  display:flex;align-items:center;gap:7px;padding:10px 12px;
+  background:var(--s-accent);color:var(--s-ink);border:0;
+  border-radius:8px;white-space:nowrap;font-size:11px;font-weight:620;
+}
+@keyframes signalOverviewDrawerIn{
+  from{opacity:.7;transform:translate3d(27px,0,0)}
+  to{opacity:1;transform:translate3d(0,0,0)}
+}
+@media(max-width:650px){
+  .signal-app .signal-overview-drawer-head{padding:24px 17px 17px}
+  .signal-app .signal-overview-drawer-rows{padding:8px 14px}
+  .signal-app .signal-overview-drawer-foot{padding:13px 15px}
+}
+@media(prefers-reduced-motion:reduce){
+  .signal-app .signal-overview-drawer,.signal-app .signal-overview-veil{
+    animation:none!important;
+  }
+}
