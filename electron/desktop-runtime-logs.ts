@@ -26,6 +26,10 @@ export async function findDesktopLogRoots(localAppData: string): Promise<string[
 
 export interface DesktopLogSummary {
   events: Map<string, DesktopLogEvent>;
+  /** Every completion observed this scan, including ones followed by turn/start
+   * in the same thread. No raw log lines or conversation text.
+   */
+  completions?: DesktopLogEvent[];
   logFilesRead: number;
   signalCount: number;
   metrics?: DesktopAuditMetrics;
@@ -66,9 +70,16 @@ export async function inspectDesktopLogSignals(now = Date.now(),
     recentCandidateCount: found.files.length,
   };
   const events: DesktopLogEvent[] = [];
+  const completions: DesktopLogEvent[] = [];
   const tracked = await follower.scan(found.files, line => {
     const event = parseDesktopLogEvent(line, now);
-    if (event) events.push(event);
+    if (event) {
+      events.push(event);
+      if (event.type === 'turn-displayed-complete') {
+        if (completions.length >= 128) completions.shift();
+        completions.push(event);
+      }
+    }
   });
   const latestAt = events.reduce((max, event) => Math.max(max, event.at), 0);
   const after = catalog.stats();
@@ -86,6 +97,7 @@ export async function inspectDesktopLogSignals(now = Date.now(),
   if (catalog === liveDirectoryCache) latestAuditMetrics = metrics;
   return {
     events: newestDesktopEvents(events),
+    completions,
     metrics,
     // Followed files remain readable even when they have not grown this tick.
     logFilesRead: tracked.trackedFiles,

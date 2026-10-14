@@ -186,6 +186,19 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
   });
 });
 
+describe('all native completion signals in a fast resumed turn', () => {
+  it('keeps completion even when a newer same-thread start supersedes it', async () => {
+    const root = temp();
+    write(root, [accepted(-10), completed(-4), accepted(-1)]);
+    const signal = await inspectDesktopLogSignals(NOW, root,
+      new DesktopLogFollower(), new DesktopDirectoryCache());
+    expect(signal.events.get(SESSION)?.type).toBe('turn-start-accepted');
+    expect(signal.completions?.map(x => x.type))
+      .toEqual(['turn-displayed-complete']);
+    expect(signal.completions?.[0]?.turnId).toBe(TURN);
+  });
+});
+
 describe('incremental Desktop log follow under heavy output', () => {
   it('captures a start overwritten in the moving tail by 650 KiB of later messages', async () => {
     const root = temp();

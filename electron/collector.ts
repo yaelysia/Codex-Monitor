@@ -25,6 +25,10 @@ export function isInternalWslDistro(name: string): boolean {
 // outside our bounded scan window. Keep the observation transient and tentative.
 const activityTracker = new SessionActivityTracker();
 const desktopLogCache = new DesktopLogEventCache();
+/** Bounded ephemeral completion queue covers finish -> immediate new start,
+ * which a latest-per-thread lifecycle map alone cannot represent.
+ */
+let completionQueue: DesktopLogEvent[] = [];
 let desktopEvidenceStore: DesktopEvidenceStore | null = null;
 
 /** Run once after Electron's app.whenReady(), before the first scan. */
@@ -44,9 +48,14 @@ export function flushDesktopEvidenceStorage(): void {
  * notification layer gates events to Monitor's current running lifetime.
  */
 export function recentDesktopCompletions(now = Date.now()): DesktopLogEvent[] {
-  return desktopLogCache.snapshot(now).filter(event =>
-    event.type === 'turn-displayed-complete' &&
-    now >= event.at && now - event.at <= 120_000);
+  const latest = desktopLogCache.snapshot(now);
+  const unique = new Map<string, DesktopLogEvent>();
+  for (const event of [...latest, ...completionQueue]) {
+    if (event.type !== 'turn-displayed-complete' || !event.turnId ||
+        now < event.at || now - event.at > 120_000) continue;
+    unique.set(event.threadId + '/' + event.turnId, event);
+  }
+  return [...unique.values()];
 }
 
 /** One shared activity timeline across Windows, WSL and SSH, without changing the file adapters. */
@@ -232,6 +241,15 @@ export async function projectDesktopRuntime(
   }));
   const eventCache = dependencies.cache ?? desktopLogCache;
   const evidence = eventCache.observe(inspected.events, now);
+  if (!dependencies.cache) {
+    const unique = new Map<string, DesktopLogEvent>();
+    for (const event of [...completionQueue, ...(inspected.completions ?? [])]) {
+      if (event.type !== 'turn-displayed-complete' || !event.turnId ||
+          now < event.at || now - event.at > 120_000) continue;
+      unique.set(event.threadId + '/' + event.turnId, event);
+    }
+    completionQueue = [...unique.values()].slice(-128);
+  }
   // Prevent a Monitor restart from losing an already observed accepted start
   // after Codex Desktop's verbose log rotates the original line away.
   if (!dependencies.cache) desktopEvidenceStore?.update(eventCache.snapshot(now));

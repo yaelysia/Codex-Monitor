@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { projectDesktopRuntime } from '../electron/collector';
+import { projectDesktopRuntime, recentDesktopCompletions } from '../electron/collector';
 import { DesktopLogEventCache, type DesktopLogEvent } from '../src/shared/desktop-log-status';
 import type { DesktopLogSummary } from '../electron/desktop-runtime-logs';
 import type { ScanResponse, SessionRecord } from '../src/shared/types';
@@ -165,5 +165,26 @@ describe('end-to-end Desktop runtime evidence projection', () => {
       status: 'working', statusReason: 'rollout turn-started',
       desktopRuntimeObserved: true,
     });
+  });
+});
+
+// Regression: a Desktop completion followed quickly by another accepted
+// turn/start is still retained for an independent completion notification.
+describe('native completion signal queue', () => {
+  it('retains a completed turn after a later start in the same thread', async () => {
+    const early = event('turn-displayed-complete', NOW - 4000);
+    const later = event('turn-start-accepted', NOW - 1000);
+    const inspected = async (): Promise<DesktopLogSummary> => ({
+      events: new Map([[ID, later]]), completions: [early],
+      logFilesRead: 1, signalCount: 2,
+      discovery: { validLocalAppData: true, rootCount: 1,
+        existingRootCount: 1, readableDayFolders: 1, matchingLogNames: 1,
+        recentCandidateCount: 1 },
+    });
+    await projectDesktopRuntime(snapshot(thread()), NOW, {
+      platform: 'win32', inspect,
+    });
+    expect(recentDesktopCompletions(NOW).some(x => x.threadId === ID &&
+      x.turnId === TURN && x.type === 'turn-displayed-complete')).toBe(true);
   });
 });
