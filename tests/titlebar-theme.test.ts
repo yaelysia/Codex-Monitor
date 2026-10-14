@@ -10,7 +10,7 @@ describe('Signal Studio native Windows caption palette', () => {
     } as const;
     for (const [appearance, [color, symbolColor]] of Object.entries(expected)) {
       const overlay = titlebarPalette(appearance as keyof typeof expected);
-      expect(overlay).toEqual({ color, symbolColor, height: 40 });
+      expect(overlay).toEqual({ color, symbolColor, height: 60 });
       expect(overlay.color).toMatch(/^#[0-9a-f]{6}$/);
     }
   });
