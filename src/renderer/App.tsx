@@ -747,6 +747,15 @@ export default function App() {
             </div>
             <div className="signal-machine-figures"><span><b>{String(group.working).padStart(2,'0')}</b><small>活动线索</small></span>
               <span><b>{group.workspaces.length}</b><small>工作目录</small></span></div>
+            <div className="signal-machine-workspaces" aria-label="工作目录">
+              {group.workspaces.slice(0, 5).map(workspace =>
+                <button type="button" key={workspace.key}
+                  title={workspace.workspace || '未记录工作目录'}
+                  onClick={() => { setSourceId(group.sourceId);setWorkspaceId(workspace.key);setView('sessions'); }}>
+                  <Icon name="folder" size={13}/>{workspaceName(workspace.workspace)}
+                  <span>{workspace.sessions.length}</span>
+                </button>)}
+            </div>
             <div className="signal-machine-sessions">{group.workspaces.flatMap(workspace => workspace.sessions).slice(0, 6)
               .map(session => <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
               {!group.count && <p className="signal-empty">当前没有会话</p>}
