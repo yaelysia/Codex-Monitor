@@ -584,3 +584,67 @@
   position:fixed;inset:0;z-index:60;border:0;
   background:rgba(2,9,13,.56);
 }
+
+
+/* Compact, truthful status overview. The anomalous terminal statuses never
+ * share a count with waiting requests, and all numbers navigate to the
+ * corresponding filtered sessions rather than a single arbitrary detail. */
+.signal-app .signal-overview-stats{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;margin:4px 0 15px;
+}
+.signal-app .signal-overview-stat{
+  min-width:0;min-height:80px;display:flex;align-items:center;gap:11px;
+  text-align:left;border:1px solid var(--s-stroke-strong);
+  background:var(--s-panel);border-radius:12px;padding:15px 16px;
+  color:var(--s-text);box-shadow:0 6px 20px var(--s-shadow);
+  transition:background .22s ease,transform .25s cubic-bezier(.16,1,.3,1),border-color .22s ease;
+}
+.signal-app .signal-overview-stat:hover{
+  background:var(--s-panel-elev);border-color:var(--s-accent);
+  transform:translate3d(0,-2px,0);
+}
+.signal-app .signal-overview-stat > svg:last-child{
+  color:var(--s-dim);flex-shrink:0;
+}
+.signal-app .signal-overview-icon{
+  width:36px;height:36px;display:grid;place-items:center;flex-shrink:0;
+  border:1px solid var(--s-stroke-strong);background:var(--s-tint);
+  border-radius:10px;color:var(--s-accent);
+}
+.signal-app .signal-overview-stat.pending .signal-overview-icon{color:var(--s-warn)}
+.signal-app .signal-overview-stat.abnormal .signal-overview-icon{color:var(--s-danger)}
+.signal-app .signal-overview-copy{
+  min-width:0;flex:1;display:flex;flex-direction:column;gap:7px;
+}
+.signal-app .signal-overview-copy strong{font-size:12px;font-weight:640;white-space:nowrap}
+.signal-app .signal-overview-copy small{
+  color:var(--s-muted);font-size:10px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.signal-app .signal-overview-count{
+  font:600 25px/1 Consolas,monospace;letter-spacing:-.06em;
+  color:var(--s-text);font-variant-numeric:tabular-nums;
+}
+.signal-app .signal-main-grid{grid-template-columns:minmax(0,1fr);min-height:0;gap:15px}
+.signal-app .signal-main-grid.has-pending{grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr)}
+.signal-app .signal-running,.signal-app .signal-pending{
+  min-height:210px;padding:20px 23px;overflow:hidden;
+}
+.signal-app .signal-pending .signal-task-list{max-height:270px}
+.signal-app .signal-pending .signal-task-state{max-width:85px}
+.signal-app .signal-pending .signal-task-state span{max-width:85px}
+.signal-app .signal-view .signal-pending{
+  animation:signalCardIn .56s cubic-bezier(.16,1,.3,1) both;
+}
+@media(max-width:950px){
+  .signal-app .signal-main-grid.has-pending{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:750px){
+  .signal-app .signal-overview-stats{grid-template-columns:minmax(0,1fr);gap:8px}
+  .signal-app .signal-overview-stat{min-height:65px;padding:11px 14px}
+  .signal-app .signal-overview-count{font-size:22px}
+}
+@media(prefers-reduced-motion:reduce){
+  .signal-app .signal-overview-stat{transition:none}
+}
