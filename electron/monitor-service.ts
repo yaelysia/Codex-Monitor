@@ -6,6 +6,7 @@ import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 import { AlertStateStore } from './alert-store';
 import { getDesktopLogMetrics } from './desktop-runtime-logs';
+import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
 
 const POLLING_FALLBACK_MS = 12_000;
 const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
@@ -228,7 +229,8 @@ export class MonitorService {
     const scanStartedAt = performance.now();
     const task = (async () => {
       const settings = await readSettings();
-      const delta = await collect(settings, partial ? sourceIds : undefined);
+      const delta = await collect(settings, partial ? sourceIds : undefined,
+        pinnedRolloutsBySource(this.lastScan));
       if (delta.sources.length === 0 && partial && this.lastScan) return this.lastScan;
       // Use only freshly scanned sources for auto-window correlation: merging cached
       // sources would shift remote-clock ages and could create false associations.

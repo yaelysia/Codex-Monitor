@@ -9,6 +9,7 @@ import { inspectDesktopLogSignals } from './desktop-runtime-logs';
 import { applyDesktopLogEvidence, DesktopLogEventCache, isActiveDesktopStart,
   type DesktopLogEvent } from '../src/shared/desktop-log-status';
 import { DesktopEvidenceStore } from './desktop-evidence-store';
+import { validPinnedRolloutPath, MAX_PINNED_ROLLOUTS } from '../src/shared/pinned-rollouts';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
 const MAX_STDOUT = 5 * 1024 * 1024;
@@ -166,20 +167,25 @@ async function sourceResult(id: string, label: string, kind: SourceKind, scan: (
 }
 
 /** Passing sourceIds scans only the changed host; empty/omitted means all hosts. */
-export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string>): Promise<ScanResponse> {
+export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string>,
+  pinnedPaths: ReadonlyMap<string, readonly string[]> = new Map()): Promise<ScanResponse> {
   const wanted = (id: string): boolean => !sourceIds || sourceIds.has(id);
   const distros = await listWslDistros();
   const remoteScript = await script().catch(() => '');
   const scans: Promise<SourceResult>[] = [];
   if (wanted('local')) scans.push(sourceResult('local', 'Windows', 'local',
-    () => scanLocal(resolveLocalRoot(settings.localRoot))));
+    () => scanLocal(resolveLocalRoot(settings.localRoot),
+      'local', 'Windows', Date.now(), pinnedPaths.get('local') ?? [])));
   for (const distro of distros) {
     const id = `wsl:${distro}`;
     if (!wanted(id)) continue;
     const label = `${distro} · WSL`;
     scans.push(sourceResult(id, label, 'wsl', async () => {
       if (!remoteScript) throw new Error('Collector script not found');
-      const rows = await runCollector('wsl.exe', ['-d', distro, '--', 'python3', '-'], remoteScript, settings.wslRoots[distro] || '');
+      const pins = [...new Set(pinnedPaths.get(id) ?? [])].filter(validPinnedRolloutPath)
+        .slice(0, MAX_PINNED_ROLLOUTS);
+      const rows = await runCollector('wsl.exe', ['-d', distro, '--', 'python3', '-'],
+        remoteScript, settings.wslRoots[distro] || '', { pinnedPaths: pins });
       return normalizeRemote(rows, id, label);
     }));
   }
@@ -192,7 +198,8 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
       const rows = await runCollector('ssh', [
         '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ConnectionAttempts=1',
         host.alias, 'python3', '-'
-      ], remoteScript, host.root);
+      ], remoteScript, host.root, { pinnedPaths: [...new Set(pinnedPaths.get(id) ?? [])]
+        .filter(validPinnedRolloutPath).slice(0, MAX_PINNED_ROLLOUTS) });
       return normalizeRemote(rows, id, label);
     }));
   }

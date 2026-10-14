@@ -6,6 +6,7 @@ import { extractFirstUserTitle, extractSessionId, extractWorkspace, extractLastU
 import { enrichLocalTitles } from './titles';
 import { extractSessionClientKind, extractSessionOrigin } from '../src/shared/session-origin';
 import { LocalScanCache } from '../src/shared/local-scan-cache';
+import { MAX_PINNED_ROLLOUTS, validPinnedRolloutPath } from '../src/shared/pinned-rollouts';
 
 const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 192 * 1024;
@@ -91,7 +92,9 @@ async function mapLimited<T, R>(items: T[], limit: number, map: (item: T) => Pro
   return result;
 }
 
-export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 'Windows', now = Date.now()): Promise<SessionRecord[]> {
+export async function scanLocal(root: string, sourceId = 'local',
+  sourceLabel = 'Windows', now = Date.now(),
+  pinnedPaths: readonly string[] = []): Promise<SessionRecord[]> {
   const sessionsDir = path.join(root, 'sessions');
   const files = await findRollouts(sessionsDir, { count: MAX_DISCOVERED });
   const stats = await mapLimited(files, 24, async (file) => {
@@ -100,7 +103,24 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
   });
   const newest = stats.filter((s): s is NonNullable<typeof s> => !!s)
     .sort((a, b) => b.mtime - a.mtime).slice(0, MAX_RETURNED);
-  const sessions = await mapLimited(newest, 12, async ({ file, mtime, size }): Promise<SessionRecord | null> => {
+  const included = new Set(newest.map(item => path.normalize(item.file)));
+  const extras = await mapLimited([...new Set(pinnedPaths)]
+    .filter(validPinnedRolloutPath).slice(0, MAX_PINNED_ROLLOUTS), 8, async relative => {
+    const file = path.resolve(sessionsDir, ...relative.split('/'));
+    if (included.has(file)) return null;
+    try {
+      // A symlink under sessions must not redirect the pinned reader outside.
+      const actual = await fs.realpath(file);
+      const rel = path.relative(await fs.realpath(sessionsDir), actual);
+      if (rel.startsWith('..' + path.sep) || rel === '..' || path.isAbsolute(rel)) return null;
+      const stat = await fs.stat(actual);
+      if (!stat.isFile() || stat.size < 1) return null;
+      included.add(file);
+      return { file, mtime: stat.mtimeMs, size: stat.size };
+    } catch { return null; }
+  });
+  const selected = [...newest, ...extras.filter((row): row is NonNullable<typeof row> => !!row)];
+  const sessions = await mapLimited(selected, 12, async ({ file, mtime, size }): Promise<SessionRecord | null> => {
     try {
       const stored = cache.get(file, mtime, size, now);
       if (stored) return stored;
@@ -139,7 +159,7 @@ export async function scanLocal(root: string, sourceId = 'local', sourceLabel = 
     seen.add(s.id);
     return true;
   });
-  cache.retain(new Set(newest.map(item => item.file)));
+  cache.retain(new Set(selected.map(item => item.file)));
   await enrichLocalTitles(root, unique);
   return unique;
 }
