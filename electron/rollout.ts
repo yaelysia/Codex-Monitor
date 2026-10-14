@@ -143,6 +143,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   status: SessionStatus;
   statusReason: string;
   finishedToken: string | null;
+  interruptedToken: string | null;
   waitingToken: string | null;
   pendingQuestionToken: string | null;
   questionText: string | null;
@@ -152,6 +153,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   let lastTerminalTurnId: string | null = null;
   let awaiting = false;
   let finishedToken: string | null = null;
+  let interruptedToken: string | null = null;
   let waitingToken: string | null = null;
   let checkpointAfterBoundary = false;
   const parsedRows = jsonlRows(tail, clippedStart);
@@ -165,6 +167,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
       activeTurnId = null;
       awaiting = false;
       finishedToken = null;
+      interruptedToken = null;
       waitingToken = null;
       checkpointAfterBoundary = false;
     }
@@ -185,7 +188,8 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     if (START_EVENTS.has(event)) {
       phase = 'started'; activeTurnId = turnId;
       awaiting = false; waitingToken = null;
-      finishedToken = null; checkpointAfterBoundary = false;
+      finishedToken = null; interruptedToken = null;
+      checkpointAfterBoundary = false;
     } else if (END_EVENTS.has(event) || ABORT_EVENTS.has(event)) {
       // A late turn-a completion must never close currently running turn-b.
       if (activeTurnId && turnId !== activeTurnId) continue;
@@ -197,6 +201,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
         payload?.error == null ? 'finished' : 'failed';
       awaiting = false;
       finishedToken = phase === 'finished' ? token : null;
+      interruptedToken = phase === 'interrupted' ? token : null;
       waitingToken = null;
       checkpointAfterBoundary = false;
       lastTerminalTurnId = turnId ?? activeTurnId;
@@ -214,6 +219,8 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   const pendingQuestionToken = questionFresh ? question.token : null;
   const tokenFields = {
     finishedToken: terminal && !question.blocking ? finishedToken : null,
+    interruptedToken: phase === 'interrupted' && !checkpointAfterBoundary &&
+      !question.blocking ? interruptedToken : null,
     waitingToken: question.blocking && pendingQuestionToken ? pendingQuestionToken :
       awaiting ? waitingToken : null,
     pendingQuestionToken,

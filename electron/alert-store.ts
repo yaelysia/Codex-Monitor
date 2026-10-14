@@ -20,7 +20,8 @@ function validAlertId(id: unknown, key?: string, kind?: string): id is string {
     const parsed: unknown = JSON.parse(id);
     if (!Array.isArray(parsed) || parsed.length !== 3 ||
         !validString(parsed[0], 350) ||
-        (parsed[1] !== 'finished' && parsed[1] !== 'waiting') ||
+        (parsed[1] !== 'finished' && parsed[1] !== 'waiting' &&
+         parsed[1] !== 'interrupted') ||
         !validString(parsed[2], 500)) return false;
     return (!key || parsed[0] === key) && (!kind || parsed[1] === kind);
   } catch { return false; }
@@ -29,7 +30,8 @@ function validRecord(value: unknown, now: number): SavedAlert | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
   if (!validString(row.sessionKey, 350) || !validString(row.sessionId, 128) ||
-      (row.kind !== 'finished' && row.kind !== 'waiting') ||
+      (row.kind !== 'finished' && row.kind !== 'waiting' &&
+       row.kind !== 'interrupted') ||
       !validAlertId(row.id, row.sessionKey, row.kind) ||
       typeof row.at !== 'number' || !Number.isSafeInteger(row.at) ||
       row.at <= 0 || row.at > now + 60_000 || now - row.at > MAX_AGE_MS ||

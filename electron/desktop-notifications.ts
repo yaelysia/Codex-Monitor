@@ -1,5 +1,6 @@
 import { Notification } from 'electron';
 import type { MonitorAlert } from '../src/shared/types';
+import { alertKindLabel } from '../src/shared/alert-presentation';
 
 const activeNotices = new Set<Notification>();
 
@@ -13,7 +14,8 @@ export function showDesktopAlert(
   if (!Notification.isSupported()) return;
   try {
     const notice = new Notification({
-      title: alert.kind === 'finished' ? 'Codex · 本轮回复已结束' : 'Codex · 等待用户处理',
+      title: alert.kind === 'waiting' ? 'Codex · 等待用户处理' :
+        'Codex · ' + alertKindLabel(alert.kind),
       body: [alert.title, alert.questionText, alert.sourceLabel]
         .filter(Boolean).join(' · ').slice(0, 240),
       actions: [{ type: 'button', text: '✓ 标记已读' }],

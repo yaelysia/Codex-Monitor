@@ -3,9 +3,24 @@ import { createElement } from 'react';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import App from '../src/renderer/App';
+import { alertKindLabel } from '../src/shared/alert-presentation';
 
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('notification copy across renderer and Windows surfaces', () => {
+  it('makes interruption distinct from completion and waiting', () => {
+    expect(alertKindLabel('finished')).toBe('本轮回复已结束');
+    expect(alertKindLabel('waiting')).toBe('可能待处理');
+    expect(alertKindLabel('interrupted')).toBe('本轮已中断');
+    const main = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    const floating = readFileSync(new URL('../src/renderer/FloatingApp.tsx', import.meta.url), 'utf8');
+    const native = readFileSync(new URL('../electron/desktop-notifications.ts', import.meta.url), 'utf8');
+    expect(main).toContain('alertKindLabel(alert.kind)');
+    expect(floating).toContain('alertKindLabel(alert.kind)');
+    expect(native).toContain('alertKindLabel(alert.kind)');
+  });
+});
 
 describe('reusable SignalSelect controls', () => {
   it('uses a styled combobox rather than an unthemed Windows native select', () => {

@@ -99,6 +99,26 @@ describe('terminal turn status accuracy', () => {
     const result = inferStatus(tail, NOW - 1000, NOW);
     expect(result.status).toBe('interrupted');
     expect(result.finishedToken).toBeNull();
+    expect(result.interruptedToken).toBe('|t1');
+  });
+  it('tracks distinct aborted turns and clears their fingerprints after a new start', () => {
+    const boundary = (kind: string, turnId: string, at: string) => JSON.stringify({
+      type: 'event_msg', timestamp: at, payload: { type: kind, turn_id: turnId },
+    });
+    const first = [boundary('turn_started', 'a', '2026-10-12T10:00:00Z'),
+      boundary('turn_aborted', 'a', '2026-10-12T10:00:03Z')];
+    expect(inferStatus(first.join('\n'), NOW - 1000, NOW)).toMatchObject({
+      status: 'interrupted', interruptedToken: '2026-10-12T10:00:03Z|a',
+    });
+    const second = [...first, boundary('turn_started', 'b', '2026-10-12T10:00:04Z'),
+      boundary('turn_aborted', 'b', '2026-10-12T10:00:05Z')];
+    expect(inferStatus(second.join('\n'), NOW - 1000, NOW)).toMatchObject({
+      status: 'interrupted', interruptedToken: '2026-10-12T10:00:05Z|b',
+    });
+    const resumed = [...second, boundary('turn_started', 'c', '2026-10-12T10:00:06Z')];
+    expect(inferStatus(resumed.join('\n'), NOW - 1000, NOW)).toMatchObject({
+      status: 'working', interruptedToken: null,
+    });
   });
   it('detects a completed turn with a non-null error as a failure instead of success', () => {
     const text = JSON.stringify({ type: 'event_msg', payload: {

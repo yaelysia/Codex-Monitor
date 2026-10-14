@@ -56,11 +56,12 @@ describe('remote status normalization', () => {
   it('preserves abnormal terminal states for WSL/SSH without turning them into unknown', () => {
     const entries = [
       { id: 'completed', status: 'finished', updatedAt: 1000, finishedToken: 'done|1' },
-      { id: 'cancelled', status: 'interrupted', updatedAt: 1001 },
+      { id: 'cancelled', status: 'interrupted', updatedAt: 1001, interruptedToken: 'abort|2' },
       { id: 'failed', status: 'failed', updatedAt: 1002 },
       { id: 'invalid', status: 'nonsense', updatedAt: 1003 },
     ];
     const rows = normalizeRemote(entries, 'ssh:server', 'Server');
     expect(rows.map(row => row.status)).toEqual(['finished', 'interrupted', 'failed', 'unknown']);
+    expect(rows[1]?.interruptedToken).toBe('abort|2');
   });
 });

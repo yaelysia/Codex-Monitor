@@ -1,4 +1,4 @@
-import type { MonitorAlert, MonitorState, ScanResponse, SessionRecord } from './types';
+import type { AlertKind, MonitorAlert, MonitorState, ScanResponse, SessionRecord } from './types';
 import type { DesktopLogEvent } from './desktop-log-status';
 
 const RECENT_EVENT_MS = 120_000;
@@ -9,7 +9,7 @@ export interface SavedAlert {
   id: string;
   sessionKey: string;
   sessionId: string;
-  kind: 'finished' | 'waiting';
+  kind: AlertKind;
   at: number;
   read: boolean;
 }
@@ -21,8 +21,8 @@ export interface AlertTrackerPersistence {
 }
 
 type KnownSession = Pick<SessionRecord,
-  'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'waitingToken' |
-  'pendingQuestionToken' | 'isSubagent'>;
+  'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'interruptedToken' |
+  'waitingToken' | 'pendingQuestionToken' | 'isSubagent'>;
 
 /** Compare file mtime with the clock of the machine that owns it, not with Windows. */
 function recentAtSource(session: SessionRecord, now: number): boolean {
@@ -198,16 +198,19 @@ export class AlertTracker {
         // An asynchronous question may be unanswered while Codex continues
         // working or after its current turn finished. Such a request deserves
         // a waiting notification, not a fabricated process-waiting state.
-        const kind: 'finished' | 'waiting' | null =
+        const kind: AlertKind | null =
           questionToken ? 'waiting' :
           session.status === 'finished' ? 'finished' :
+          session.status === 'interrupted' ? 'interrupted' :
           session.status === 'waiting' ? 'waiting' : null;
 
         if (kind && knownBefore) {
           const token = kind === 'finished' ? session.finishedToken :
-            (questionToken || session.waitingToken);
+            kind === 'interrupted' ? session.interruptedToken :
+              (questionToken || session.waitingToken);
           const priorToken = prior && (kind === 'finished' ? prior.finishedToken :
-            (prior.pendingQuestionToken || prior.waitingToken));
+            kind === 'interrupted' ? prior.interruptedToken :
+              (prior.pendingQuestionToken || prior.waitingToken));
           const changed = prior ? fileOrEventChanged(prior, session, token, priorToken) : true;
           const newTerminal = !prior || (questionToken
             ? questionToken !== prior.pendingQuestionToken
@@ -246,7 +249,8 @@ export class AlertTracker {
         current.set(session.key, {
           status: session.status, updatedAt: session.updatedAt,
           byteSize: session.byteSize, isSubagent: session.isSubagent,
-          finishedToken: session.finishedToken, waitingToken: session.waitingToken,
+          finishedToken: session.finishedToken, interruptedToken: session.interruptedToken,
+          waitingToken: session.waitingToken,
           pendingQuestionToken: session.pendingQuestionToken,
         });
       }

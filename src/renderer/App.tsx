@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
+import { alertKindLabel } from '../shared/alert-presentation';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
@@ -610,8 +611,8 @@ export default function App() {
               if (session) openSession(session);
               setShowAlerts(false);
             }}>
-              <span className={'signal-mini-dot ' + (alert.kind === 'waiting' ? 'warning' : '')}/>
-              <span><strong>{alert.title}</strong><small>{alert.kind === 'waiting' ? '可能待处理' : '本轮回复已结束'} · {alert.sourceLabel}</small></span>
+              <span className={'signal-mini-dot ' + alert.kind}/>
+              <span><strong>{alert.title}</strong><small>{alertKindLabel(alert.kind)} · {alert.sourceLabel}</small></span>
             </button>
             {!alert.read && <button type="button" className="signal-alert-ack"
               onClick={() => void acknowledgeAlert(alert.id)} title="标记已读"
@@ -769,8 +770,8 @@ export default function App() {
                     const session = allSessions.find(item => item.key === alert.sessionKey);
                     if (session) openSession(session);
                   }}>
-                    <span className={'signal-mini-dot' + (alert.kind === 'waiting' ? ' warning' : '')}/>
-                    <span><strong>{alert.kind === 'waiting' ? '会话可能需要处理' : '本轮回复已结束'}</strong>
+                    <span className={'signal-mini-dot ' + alert.kind}/>
+                    <span><strong>{alertKindLabel(alert.kind)}</strong>
                       <small>{alert.title}</small></span><time>{formatTime(alert.at)}</time></button>) :
                   shown.slice(0, 4).map(session => <button type="button" key={session.key}
                     className="signal-event" onClick={() => openSession(session)}>
@@ -819,9 +820,9 @@ export default function App() {
               <small>通知来自真实结束、待处理证据；最近活动来自会话元数据</small></div></div>
             <div className="signal-timeline">
               {recentAlerts.slice(0, 30).map(alert => <div className="signal-timeline-entry" key={alert.id}>
-                <span className={'signal-timeline-pin' + (alert.kind === 'waiting' ? ' warning' : '')}/>
+                <span className={'signal-timeline-pin ' + alert.kind}/>
                 <time>{formatTime(alert.at)}</time>
-                <div><strong>{alert.kind === 'waiting' ? '可能需要用户处理' : '本轮回复已结束'}</strong>
+                <div><strong>{alertKindLabel(alert.kind)}</strong>
                   <p>{alert.title}</p><small>{alert.sourceLabel}</small></div>
                 <div className="signal-timeline-actions">
                   <button type="button" onClick={() => {

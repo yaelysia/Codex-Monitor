@@ -165,6 +165,63 @@ describe('remote SSH and WSL completion alerts', () => {
 });
 
 
+describe('interrupted turn notifications', () => {
+  it('reports a newly interrupted turn once, not as waiting or finished', () => {
+    const tracker = new AlertTracker();
+    const interrupted = row('interrupted', NOW + 10_000, {
+      byteSize: 120, ageAtSourceMs: 1000, interruptedToken: 'abort|turn-a',
+    });
+    expect(tracker.observe(snapshot(NOW, [interrupted]), NOW)).toEqual([]);
+    tracker.observe(snapshot(NOW + 1_000, [row('working', NOW + 1_000, {
+      byteSize: 100, ageAtSourceMs: 0,
+    })]), NOW + 1_000);
+    const alerts = tracker.observe(snapshot(NOW + 12_000, [interrupted]), NOW + 12_000);
+    expect(alerts).toMatchObject([{kind: 'interrupted', statusReason: 'from rollout',
+      read: false, questionText: null}]);
+    expect(tracker.observe(snapshot(NOW + 24_000, [
+      {...interrupted, updatedAt: NOW + 22_000, byteSize: 140},
+    ]), NOW + 24_000)).toEqual([]);
+    expect(tracker.getAlerts()).toHaveLength(1);
+  });
+
+  it('distinguishes aborted turns with identical file mtime and size', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, {byteSize: 200})]), NOW);
+    const first = row('interrupted', NOW, {
+      byteSize: 200, interruptedToken: 'abort|a', ageAtSourceMs: 1000,
+    });
+    const second = {...first, interruptedToken: 'abort|b'};
+    expect(tracker.observe(snapshot(NOW + 12_000, [first]), NOW + 12_000)
+      .map(item => item.kind)).toEqual(['interrupted']);
+    expect(tracker.observe(snapshot(NOW + 24_000, [second]), NOW + 24_000)
+      .map(item => item.kind)).toEqual(['interrupted']);
+    expect(tracker.observe(snapshot(NOW + 36_000, [second]), NOW + 36_000)).toEqual([]);
+    expect(tracker.getAlerts()).toHaveLength(2);
+  });
+
+  it('requires changed evidence and suppresses stale SSH reconnect events', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, {byteSize: 50})]), NOW);
+    expect(tracker.observe(snapshot(NOW + 12_000, [
+      row('interrupted', NOW, {byteSize: 50, ageAtSourceMs: 0}),
+    ]), NOW + 12_000)).toEqual([]);
+    tracker.observe(snapshot(NOW + 24_000, [], 'SSH disconnected'), NOW + 24_000);
+    expect(tracker.observe(snapshot(NOW + 600_000, [
+      row('interrupted', NOW + 10_000, {byteSize: 80,
+        ageAtSourceMs: 500_000, interruptedToken: 'abort|stale'}),
+    ]), NOW + 600_000)).toEqual([]);
+  });
+
+  it('suppresses a child interruption even when a later scan loses the child flag', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, {isSubagent: true, byteSize: 10})]), NOW);
+    const child = row('interrupted', NOW + 10_000, {
+      isSubagent: undefined, byteSize: 20, interruptedToken: 'abort|child',
+    });
+    expect(tracker.observe(snapshot(NOW + 12_000, [child]), NOW + 12_000)).toEqual([]);
+  });
+});
+
 describe('subagent completion notification policy', () => {
   const parent = '00000000-0000-4000-8000-000000000001';
   const child = '00000000-0000-4000-8000-000000000002';
