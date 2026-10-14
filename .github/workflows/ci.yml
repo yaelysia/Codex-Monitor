@@ -1,0 +1,71 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - run: npm run test:probe
+      - name: Compile Windows window observer without desktop interaction
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode verify
+      - name: Compile Desktop window-state guard without interacting with any GUI
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/desktop-window-guard.ps1 -Mode verify
+      - name: Smoke-test Windows foreground output without driving any GUI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $result = @(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode sample)
+          if ($LASTEXITCODE -ne 0) { throw "Native observer sample command failed" }
+          $item = $result | Where-Object { $_ -match '"type":"foreground"' } | Select-Object -First 1
+          if (-not $item) { throw "Native observer returned no foreground evidence" }
+          $parsed = $item | ConvertFrom-Json
+          if ($parsed.type -ne 'foreground' -or -not $parsed.at -or -not $parsed.hwnd) {
+            throw "Native observer foreground shape invalid"
+          }
+      - name: Check read-only MobaXterm tab diagnostic output shape
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $result = @(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File collector/window-tracker.ps1 -Mode inspect-tabs)
+          if ($LASTEXITCODE -ne 0) { throw "MobaXterm tab inspection failed" }
+          $item = $result | Where-Object { $_ -match '"type":"tab-probe"' } | Select-Object -First 1
+          if (-not $item) { throw "Missing tab probe summary" }
+          $parsed = $item | ConvertFrom-Json
+          if ($parsed.type -ne 'tab-probe' -or $parsed.count -lt 0 -or
+              $parsed.provider -notin @('msaa', 'uia', 'none') -or
+              $parsed.mainCandidates -lt 0 -or
+              $parsed.candidates -isnot [array]) {
+            throw "Unexpected native tab probe fields"
+          }
+      - name: Smoke-test read-only memory sampling of a Windows process tree
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = @(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/diagnose-memory.ps1 -RootPid $PID -Duration 0)
+          if ($LASTEXITCODE -ne 0) { throw "Memory sampler failed" }
+          $sample = ($output -join "`n") | ConvertFrom-Json
+          if ($sample.diagnosticVersion -ne 1 -or $sample.before.processCount -lt 1 -or
+              $sample.after.workingMB -lt 0 -or $sample.after.privateMB -lt 0) {
+            throw "Memory sampler returned invalid metadata"
+          }
+      - run: npm run typecheck
+      - run: npm run build
+      - run: python -m unittest discover -s tests -p 'test_*.py'

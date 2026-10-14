@@ -1,0 +1,126 @@
+:root{
+  font-family:"Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+  color:#e8e0f0;color-scheme:dark; font-synthesis:none;
+  -webkit-font-smoothing:antialiased;
+}
+*{box-sizing:border-box}
+html,body,#root{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+button{font:inherit;cursor:pointer}
+button:focus-visible{outline:2px solid #d3b5fa;outline-offset:-2px}
+.float-shell{
+  width:100%;height:100%;display:flex;align-items:center;gap:10px;overflow:hidden;
+  justify-content:flex-end;pointer-events:none;
+}
+.float-shell.side-right{flex-direction:row}
+.float-shell.side-left{flex-direction:row-reverse}
+.dock-rail,.dock-panel{pointer-events:auto}
+.dock-rail{
+  flex:0 0 55px;width:55px;height:276px;padding:11px 0 8px;
+  border:1px solid #6d5882;border-radius:13px;
+  display:flex;align-items:center;flex-direction:column;gap:9px;
+  background:#241e30;box-shadow:0 11px 28px #080712ab;
+  position:relative;
+}
+.rail-grab{
+  height:31px;width:31px;flex-shrink:0;display:grid;place-items:center;
+  border-radius:9px;color:#231933;background:#b89bdd;
+  font-size:17px;font-weight:800;cursor:move;-webkit-app-region:drag;
+}
+.rail-rule{height:1px;width:24px;background:#5c4b69;margin:1px 0}
+.rail-tab{
+  height:32px;width:34px;border:0;background:transparent;
+  border-radius:8px;color:#c3b3d4;display:grid;place-items:center;
+  position:relative;flex-shrink:0;-webkit-app-region:no-drag;
+}
+.rail-tab:hover,.rail-tab.selected{color:#f0deff;background:#4a3b60}
+.rail-badge{
+  position:absolute;top:-4px;right:-7px;min-width:17px;line-height:17px;
+  padding:0 3px;text-align:center;border-radius:8px;color:#28192d;
+  font-size:10px;font-weight:750;
+}
+.rail-badge.green{background:#87dec0}
+.rail-badge.amber{background:#f3c78e}
+.rail-mini-dot{
+  position:absolute;top:0;right:-1px;width:5px;height:5px;
+  border-radius:50%;background:#b7a9d0;
+}
+.rail-spacer{flex:1}
+.rail-hide{height:18px;opacity:.63;margin-top:-5px}
+.rail-hide:hover,.rail-hide:focus-visible{opacity:1}
+.rail-collapse svg{transform:rotate(180deg)}
+.float-shell.side-left .rail-collapse svg{transform:rotate(0deg)}
+.float-shell.expanded.side-right .rail-collapse svg{transform:rotate(0deg)}
+.float-shell.expanded.side-left .rail-collapse svg{transform:rotate(180deg)}
+.dock-panel{
+  width:calc(100% - 65px);height:271px;flex:1;min-width:0;
+  background:#231f30;border:1px solid #695775;border-radius:13px;
+  display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 13px 35px #0706129c;
+}
+.dock-head{
+  display:flex;align-items:center;gap:8px;flex:0 0 auto;
+  padding:14px 14px 7px;min-height:37px;
+}
+.dock-head strong{font-size:12px;font-weight:670;white-space:nowrap;flex:1}
+.dock-head small{font-size:10px;color:#a49bb8;white-space:nowrap}
+.small-dot{
+  width:7px;height:7px;border-radius:50%;background:#a99dc2;flex-shrink:0;
+}
+.small-dot.green{background:#77d8ac}
+.small-dot.amber{background:#f1bf86}
+.small-dot.gray{background:#a5adbf}
+.dock-description{
+  color:#9f96b3;font-size:10px;line-height:1.4;margin:0 14px 9px;flex-shrink:0;
+}
+.dock-rows{
+  min-height:0;overflow-y:auto;flex:1;padding:0 9px 6px;
+  scrollbar-width:thin;scrollbar-color:#635271 transparent;
+}
+.dock-task{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  padding:10px 8px;margin:0 0 6px;border-radius:8px;
+  background:#302a3c;border:1px solid #4b3d59;color:#e8e0ef;min-width:0;
+}
+.dock-task:hover{border-color:#a48abf;background:#3b314b}
+.dock-task svg{color:#988caa;flex-shrink:0}
+.task-info{display:flex;flex-direction:column;min-width:0;flex:1;gap:3px}
+.task-info strong{font-size:11px;font-weight:640;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-info small{font-size:10px;line-height:1.3;color:#aaa0bd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dock-empty{
+  font-size:11px;color:#a6a0b8;text-align:center;line-height:1.7;
+  margin:20px 4px;padding:12px 6px;border:1px dashed #51445f;border-radius:8px;
+}
+.alert-item{
+  display:flex;gap:4px;align-items:center;padding:0 4px 0 0;
+  margin:0 0 6px;background:#322b3d;border:1px solid #584764;border-radius:8px;
+}
+.alert-item.is-read{opacity:.62}
+.alert-body{
+  background:transparent;border:0;padding:10px 8px;
+  color:#eee5f5;flex:1;display:flex;align-items:center;gap:8px;text-align:left;min-width:0;
+}
+.ack-button{
+  color:#cbb5e3;background:transparent;border:1px solid #665476;
+  width:25px;height:25px;display:grid;place-items:center;border-radius:6px;
+}
+.ack-button:hover{color:white;background:#59466c}
+.dock-foot{
+  border-top:1px solid #4c405a;min-height:38px;flex:0 0 38px;
+  display:flex;align-items:center;gap:3px;padding:4px 9px;
+}
+.dock-foot button{
+  display:flex;align-items:center;gap:4px;color:#b5a4c8;
+  background:transparent;border:0;border-radius:5px;
+  padding:6px;font-size:10px;
+}
+.dock-foot button:hover{background:#473756;color:#eee0ff}
+.dock-foot button:first-child{flex:1}
+
+/* Direct one-tap acknowledgement on the collapsed dock, without entering inbox.
+ * The read action is independent of the bell navigation surface. */
+.rail-alert-shortcut{width:34px;height:32px;flex-shrink:0;position:relative;-webkit-app-region:no-drag}
+.rail-alert-shortcut>.rail-tab{width:34px;height:32px}
+.rail-quick-ack{width:17px;height:17px;position:absolute;bottom:-6px;right:-7px;
+  display:grid;place-items:center;padding:0;border:1px solid #705638;border-radius:6px;
+  background:#efcb95;color:#30283b;z-index:2;-webkit-app-region:no-drag}
+.rail-quick-ack:hover,.rail-quick-ack:focus-visible{background:#ffe4b8;color:#1c1721}

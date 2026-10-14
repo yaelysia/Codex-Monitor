@@ -1,0 +1,142 @@
+namespace CodexMonitor {
+  using System;
+  using System.Text;
+  using System.Windows.Automation;
+  // Never reads tab labels, terminal content, process command lines or file paths.
+  // Runtime IDs identify UIA objects only while the original GUI window survives.
+  public static class TabProbe {
+    public sealed class Snapshot {
+      public string Id;
+      public int Count;
+      public Snapshot(string id, int count) { Id = id; Count = count; }
+    }
+    const int MaxTabs = 80;
+
+    public static string EncodeRuntimeId(int[] id) {
+      if (id == null || id.Length < 1 || id.Length > 20) return null;
+      StringBuilder result = new StringBuilder("rid:");
+      for (int i = 0; i < id.Length; i++) {
+        if (i > 0) result.Append('.');
+        result.Append(id[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
+      }
+      return result.Length <= 192 ? result.ToString() : null;
+    }
+
+    public static bool VerifyTokenEncoding() {
+      return EncodeRuntimeId(new int[] { 42, -7, 3 }) == "rid:42.-7.3" &&
+        EncodeRuntimeId(new int[] { 123 }) == "rid:123" &&
+        EncodeRuntimeId(new int[0]) == null;
+    }
+
+    static string Token(AutomationElement element) {
+      try { return EncodeRuntimeId(element.GetRuntimeId()); }
+      catch { return null; }
+    }
+
+    static AutomationElementCollection Items(IntPtr hwnd) {
+      AutomationElement root = AutomationElement.FromHandle(hwnd);
+      if (root == null) return null;
+      return root.FindAll(TreeScope.Descendants,
+        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+    }
+
+    static bool Selected(AutomationElement element, out SelectionItemPattern selection) {
+      selection = null;
+      try {
+        selection = element.GetCurrentPattern(SelectionItemPattern.Pattern)
+          as SelectionItemPattern;
+        return selection != null && selection.Current.IsSelected;
+      } catch { return false; }
+    }
+
+    public static Snapshot Read(IntPtr hwnd) {
+      // MobaXterm's UIA tree can report an unrelated settings/sidebar tab,
+      // while the actual SSH tab strip is exposed via legacy MSAA. Prefer an
+      // unambiguous multi-tab MSAA group specifically for that application.
+      // Both providers are read-only; a single unrelated TabItem is not proof.
+      Snapshot legacy = null;
+      if (MobaTabProbe.IsMobaWindow(hwnd)) {
+        legacy = MobaTabProbe.Read(hwnd);
+        if (legacy.Id != null && legacy.Count >= 2) return legacy;
+      }
+      Snapshot uia = ReadUia(hwnd);
+      if (uia.Id != null && uia.Count >= 2) return uia;
+      return new Snapshot(null, Math.Max(uia.Count, legacy == null ? 0 : legacy.Count));
+    }
+
+    public static Snapshot InspectUia(IntPtr hwnd) { return ReadUia(hwnd); }
+
+    private static Snapshot ReadUia(IntPtr hwnd) {
+      try {
+        AutomationElementCollection items = Items(hwnd);
+        if (items == null || items.Count == 0) return new Snapshot(null, 0);
+        if (items.Count > MaxTabs) return new Snapshot(null, MaxTabs + 1);
+        string selected = null;
+        int selectedCount = 0;
+        foreach (AutomationElement item in items) {
+          SelectionItemPattern pattern;
+          if (!Selected(item, out pattern)) continue;
+          selectedCount++;
+          selected = Token(item);
+        }
+        // Several tab bars in the same GUI may report independent selections.
+        // Ambiguous (or unimplemented) providers must NOT yield a tab identity.
+        return new Snapshot(selectedCount == 1 ? selected : null, items.Count);
+      } catch { return new Snapshot(null, 0); }
+    }
+
+    /** Verify against the SAME UIA provider whose runtime token was bound.
+     * MobaXterm may also expose a legacy MSAA tab list; comparing a UIA RID
+     * with the preferred MSAA ID would falsely claim a correct switch failed.
+     */
+    static bool SelectedUiaToken(IntPtr hwnd, string id) {
+      return String.Equals(ReadUia(hwnd).Id, id, StringComparison.Ordinal);
+    }
+
+    public static bool Select(IntPtr hwnd, string id) {
+      if (String.IsNullOrEmpty(id) || id.Length > 192) return false;
+      if (id.StartsWith("msaa:", StringComparison.Ordinal))
+        return MobaTabProbe.Select(hwnd, id);
+      if (!id.StartsWith("rid:", StringComparison.Ordinal)) return false;
+      try {
+        AutomationElementCollection items = Items(hwnd);
+        if (items == null || items.Count < 2 || items.Count > MaxTabs) return false;
+        AutomationElement target = null;
+        SelectionItemPattern selection = null;
+        int matches = 0;
+        foreach (AutomationElement item in items) {
+          if (!String.Equals(Token(item), id, StringComparison.Ordinal)) continue;
+          target = item;
+          matches++;
+          try {
+            selection = item.GetCurrentPattern(SelectionItemPattern.Pattern)
+              as SelectionItemPattern;
+          } catch { selection = null; }
+        }
+        if (matches != 1 || target == null) return false;
+        if (SelectedUiaToken(hwnd, id)) return true;
+
+        // Some Moba UIA providers support Select but silently ignore it.
+        try {
+          if (selection != null) selection.Select();
+        } catch { /* Fall back only to an exact, verified tab action. */ }
+        System.Threading.Thread.Sleep(120);
+        if (SelectedUiaToken(hwnd, id)) return true;
+
+        // Managed UIAutomationClient 2.0 lacks the LegacyIAccessiblePattern
+        // class. MobaTabProbe handles real native MSAA separately. For a UIA
+        // runtime-ID target, only attempt the standard managed InvokePattern.
+        if (!MobaTabProbe.IsMobaWindow(hwnd)) return false;
+        try {
+          InvokePattern invoke = target.GetCurrentPattern(
+            InvokePattern.Pattern) as InvokePattern;
+          if (invoke != null) {
+            invoke.Invoke();
+            System.Threading.Thread.Sleep(120);
+          }
+        } catch { /* Do not invent keyboard shortcuts or tab indices. */ }
+        return SelectedUiaToken(hwnd, id);
+      } catch { return false; }
+    }
+  }
+}
