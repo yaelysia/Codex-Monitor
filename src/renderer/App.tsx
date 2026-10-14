@@ -480,7 +480,8 @@ export default function App() {
   const scopeSource = scan?.sources.find(source => source.id === sourceId);
   const currentWorkspace = sourceGroups.flatMap(group => group.workspaces)
     .find(group => group.key === workspaceId);
-  const attention = shown.filter(item => item.status === 'waiting' || item.status === 'failed' || item.status === 'interrupted');
+  const attention = shown.filter(item => item.status === 'waiting' || item.status === 'failed' ||
+    item.status === 'interrupted' || !!item.pendingQuestionToken);
   const running = shown.filter(item => item.status === 'working');
   const recentAlerts = visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at);
   const unreadCount = recentAlerts.filter(item => !item.read).length;
@@ -510,6 +511,12 @@ export default function App() {
     setFilter('all');
   }
   function openSession(session: SessionRecord) {
+    // Notifications may refer to sessions outside the current filters. Keep the
+    // inspector usable instead of auto-dismissing it on the next filtered render.
+    if (!shown.some(item => item.key === session.key)) {
+      setQuery(''); setFilter('all'); setRecentOnly(false);
+      setSourceId(null); setWorkspaceId(null);
+    }
     setSelectedKey(session.key);
     setDetailOpen(true);
   }
@@ -603,7 +610,7 @@ export default function App() {
 
     <div className="signal-scroll">
       <div className="signal-status-line">
-        <span><i className="signal-live-pulse"/> {totals.errors ? totals.errors + ' 个数据源异常' : '监控已连接'}
+        <span><i className="signal-live-pulse"/> {!scan ? '正在连接数据源' : totals.errors ? totals.errors + ' 个数据源异常' : '采集可用'}
           <em>·</em> {scan?.sources.filter(source => !source.error).length ?? 0} 个数据源
           <em>·</em> 只读监控</span>
         <span>最近扫描 <b>{scan ? formatTime(scan.scannedAt) : '等待首次扫描'}</b>
@@ -698,13 +705,13 @@ export default function App() {
               <div className="signal-panel-heading"><h2>执行位置</h2>
                 <button type="button" onClick={() => setView('locations')}>查看机器矩阵 <Icon name="chevron-right" size={14}/></button></div>
               <div className="signal-location-tiles">
-                {sourceGroups.slice(0, 4).map(group => <button type="button" key={group.sourceId}
+                {groups.slice(0, 4).map(group => <button type="button" key={group.sourceId}
                   onClick={() => { setSourceId(group.sourceId); setWorkspaceId(null); setView('locations'); }}>
                   <span className="signal-location-head"><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={17}/>
                     <small>{group.sourceId.startsWith('ssh:') ? 'SSH' : group.sourceId.startsWith('wsl:') ? 'WSL' : 'WIN'}</small></span>
                   <strong title={group.sourceLabel}>{group.sourceLabel}</strong>
                   <small>{group.count} 个会话 · {group.working} 条活动线索</small></button>)}
-                {!sourceGroups.length && <span className="signal-empty">等待发现执行位置…</span>}
+                {!groups.length && <span className="signal-empty">没有符合筛选条件的执行位置</span>}
               </div>
             </section>
             <section className="signal-panel signal-changes">
