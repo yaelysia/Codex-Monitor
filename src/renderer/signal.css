@@ -753,3 +753,45 @@
     animation:none!important;
   }
 }
+
+
+/* Final-pass rendering budget: the SVG glow is opacity-composited rather than
+ * repeatedly repainting a dashed stroke through a drop-shadow filter. */
+.signal-app .signal-ambient svg{animation:none}
+.signal-app .signal-ribbon-tracer{
+  filter:none;
+  stroke-dashoffset:0;
+  animation:signalTracerFade 7s ease-in-out infinite alternate;
+}
+@keyframes signalTracerFade{
+  from{opacity:.24}
+  to{opacity:.7}
+}
+/* Background/minimized Electron window: retain position, pause decorative work.
+ * Status collection and notifications live in the main process, unaffected. */
+.signal-app.signal-paused::before,
+.signal-app.signal-paused .signal-ambient svg,
+.signal-app.signal-paused .signal-ribbon-body,
+.signal-app.signal-paused .signal-ribbon-tracer,
+.signal-app.signal-paused .signal-focus::before,
+.signal-app.signal-paused .signal-focus::after,
+.signal-app.signal-paused .signal-live-pulse::after{
+  animation-play-state:paused!important;
+}
+/* Bound table DOM size instead of rendering every collected row at once. */
+.signal-app .signal-session-load-more{
+  display:flex;align-items:center;justify-content:center;gap:17px;
+  flex-wrap:wrap;padding:17px 12px;border-top:1px solid var(--s-stroke);
+  font-size:11px;color:var(--s-muted);
+}
+.signal-app .signal-session-load-more button{
+  display:flex;align-items:center;gap:7px;padding:9px 13px;
+  border:1px solid var(--s-stroke-strong);border-radius:8px;
+  background:var(--s-tint);color:var(--s-text);font-size:11px;
+}
+.signal-app .signal-session-load-more button:hover{
+  border-color:var(--s-accent);background:var(--s-panel-elev);
+}
+@media(prefers-reduced-motion:reduce){
+  .signal-app .signal-ribbon-tracer{animation:none!important}
+}
