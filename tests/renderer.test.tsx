@@ -28,7 +28,13 @@ describe('desktop UI rendering smoke', () => {
     expect(html).toContain('事件轨迹');
     expect(html).toContain('全部会话');
     expect(html).toContain('执行位置');
-    expect(html).toContain('需要你的关注');
+    expect(html).toContain('可能待处理');
+    expect(html).toContain('失败 / 中断');
+    expect(html).toContain('当前没有待处理会话');
+    expect(html).toContain('查看可能待处理会话，共 0 条');
+    expect(html).toContain('查看失败和中断会话，共 0 条');
+    expect(html).not.toContain('件待处理');
+    expect(html).not.toContain('signal-focus');
     expect(html).toContain('最近变化');
     expect(html).toContain('数据源设置');
     expect(html).toContain('常驻设置');
