@@ -1,0 +1,190 @@
+
+/* Signal Studio native floating dock: one renderer with truly small native bounds. */
+.float-shell.signal-float {
+  --f-bg:#0b1922;--f-panel:#10232b;--f-elev:#172d35;--f-stroke:rgba(173,220,220,.18);
+  --f-text:#e9f5f6;--f-muted:#90aab2;--f-dim:#647f88;--f-accent:#9fe5d0;--f-ink:#082c24;
+  --f-warn:#edbd90;--f-tint:rgba(151,218,201,.11);--f-shadow:rgba(0,0,0,.37);
+  font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
+  width:100%;height:100%;display:flex;gap:8px;align-items:center;overflow:hidden;pointer-events:none;
+  color:var(--f-text);font-synthesis:none;
+}
+.float-shell.signal-float.scene-ember {
+  --f-bg:#1b1412;--f-panel:#2a201d;--f-elev:#352a26;--f-stroke:rgba(237,199,168,.2);
+  --f-text:#f5eae2;--f-muted:#b9a298;--f-dim:#927b70;--f-accent:#eec09b;--f-ink:#331d14;
+  --f-warn:#efb87f;--f-tint:rgba(238,192,155,.11);--f-shadow:rgba(0,0,0,.48);
+}
+.float-shell.signal-float.scene-mist {
+  --f-bg:#edf6f3;--f-panel:#ffffff;--f-elev:#e8f2f0;--f-stroke:rgba(37,104,100,.18);
+  --f-text:#18373b;--f-muted:#62817f;--f-dim:#88a09d;--f-accent:#276f68;--f-ink:#fff;
+  --f-warn:#bd8554;--f-tint:rgba(39,111,104,.08);--f-shadow:rgba(20,67,63,.16);
+  color-scheme:light;
+}
+.signal-float .dock-rail,.signal-float .dock-panel{pointer-events:auto;box-sizing:border-box}
+.signal-float.side-right{flex-direction:row;justify-content:flex-end}
+.signal-float.side-left{flex-direction:row-reverse;justify-content:flex-end}
+.signal-float .dock-rail{
+  position:relative;display:flex;flex-direction:column;align-items:center;flex:0 0 auto;
+  border:1px solid var(--f-stroke);border-radius:14px;background:
+    linear-gradient(160deg,var(--f-tint),transparent 66%),var(--f-bg);
+  box-shadow:0 12px 31px var(--f-shadow),inset 0 1px rgba(255,255,255,.07);
+  color:var(--f-muted);overflow:visible;
+}
+.signal-float .rail-grab{display:block;position:relative;background:transparent;
+  cursor:move;-webkit-app-region:drag;border-radius:5px;flex:0 0 auto;width:70%;color:var(--f-muted)}
+.signal-float .rail-grab::before{content:"";position:absolute;left:32%;right:32%;top:50%;height:2px;
+  background:var(--f-muted);opacity:.5;border-radius:3px;transform:translateY(-50%)}
+.signal-float .rail-tab{position:relative;display:grid;place-items:center;flex:0 0 auto;
+  background:transparent;color:var(--f-muted);border:0;border-radius:9px;-webkit-app-region:no-drag;padding:0}
+.signal-float .rail-tab:hover,.signal-float .rail-tab.selected{background:var(--f-tint);color:var(--f-accent)}
+.signal-float .rail-alert-shortcut{flex:0 0 auto;position:relative;-webkit-app-region:no-drag}
+.signal-float .rail-alert-shortcut .rail-tab{width:100%;height:100%}
+.signal-float .rail-badge{position:absolute;display:grid;place-items:center;top:-3px;right:0;
+  min-width:15px;height:15px;line-height:1;padding:0 2px;border:1px solid var(--f-bg);
+  border-radius:8px;font:700 9px Consolas,monospace;color:var(--f-ink)}
+.signal-float .rail-badge.green{background:var(--f-accent)}
+.signal-float .rail-badge.amber{background:var(--f-warn);color:#301c13}
+.signal-float .rail-quick-ack{
+  position:absolute;right:-1px;bottom:-3px;height:17px;width:17px;display:grid;place-items:center;
+  padding:0;background:var(--f-warn);color:#251812;border:1px solid var(--f-bg);
+  border-radius:6px;z-index:2;-webkit-app-region:no-drag}
+.signal-float .rail-quick-ack:hover{background:#ffe2bd}
+.signal-float.collapsed.size-micro .dock-rail{width:38px;height:78px;padding:4px 2px;gap:3px;border-radius:12px}
+.signal-float.collapsed.size-micro .rail-grab{height:7px}
+.signal-float.collapsed.size-micro .rail-tab{width:31px;height:27px}
+.signal-float.collapsed.size-micro .rail-alert-shortcut{width:31px;height:27px}
+.signal-float.collapsed.size-micro .rail-badge{min-width:12px;height:12px;font-size:8px;right:0}
+.signal-float.collapsed.size-micro .rail-quick-ack{height:14px;width:14px;right:-1px;bottom:-3px}
+.signal-float.collapsed.size-micro .rail-quick-ack svg{width:10px;height:10px}
+.signal-float.collapsed.size-compact .dock-rail{width:42px;height:120px;padding:5px 3px;gap:3px;border-radius:13px}
+.signal-float.collapsed.size-compact .rail-grab{height:21px}
+.signal-float.collapsed.size-compact .rail-grab::after{content:"";position:absolute;top:5px;left:50%;
+  transform:translateX(-50%);height:13px;width:13px;border:1px solid var(--f-accent);
+  border-radius:5px;opacity:.5}
+.signal-float.collapsed.size-compact .rail-tab{width:34px;height:26px}
+.signal-float.collapsed.size-compact .rail-alert-shortcut{width:34px;height:26px}
+.signal-float.expanded .dock-rail{width:48px;height:360px;padding:9px 5px;gap:11px}
+.signal-float.expanded .rail-grab{height:27px;width:30px;border-radius:8px;background:var(--f-tint)}
+.signal-float.expanded .rail-grab::before{opacity:.8}
+.signal-float.expanded .rail-tab{height:35px;width:36px}
+.signal-float.expanded .rail-alert-shortcut{height:35px;width:36px}
+.signal-float.expanded .rail-gap{flex:1;width:25px;border-top:1px solid var(--f-stroke);margin-top:8px}
+.signal-float.expanded .rail-hide{opacity:.66}
+.signal-float .rail-collapse svg{transform:rotate(180deg)}
+.signal-float.side-left .rail-collapse svg{transform:rotate(0)}
+.signal-float .dock-panel{
+  flex:1 1 auto;min-width:0;height:476px;width:calc(100% - 56px);max-height:100%;
+  display:flex;flex-direction:column;overflow:hidden;border-radius:17px;
+  background:linear-gradient(160deg,var(--f-tint),transparent 36%),var(--f-bg);
+  border:1px solid var(--f-stroke);box-shadow:0 24px 50px var(--f-shadow);
+  animation:signalDockEnter .22s cubic-bezier(.16,1,.3,1) both;
+}
+.signal-float .signal-dock-top{display:flex;align-items:center;justify-content:space-between;gap:6px;
+  height:52px;flex:0 0 52px;padding:0 17px;color:var(--f-accent)}
+.signal-float .signal-dock-top strong{font:10px Consolas,monospace;letter-spacing:.13em;white-space:nowrap}
+.signal-float .signal-dock-top > div{display:flex;align-items:center;gap:8px}
+.signal-float .signal-dock-top button{padding:5px;border:0;background:none;color:var(--f-muted);border-radius:6px}
+.signal-float .signal-dock-top button:hover{background:var(--f-tint);color:var(--f-accent)}
+.signal-float .signal-dock-intro{padding:4px 17px 16px;border-bottom:1px solid var(--f-stroke)}
+.signal-float .signal-dock-intro h1{font-size:23px;font-weight:510;letter-spacing:-.045em;margin:0 0 8px;color:var(--f-text)}
+.signal-float .signal-dock-intro p{display:flex;align-items:center;gap:6px;color:var(--f-muted);font-size:10px;line-height:1.5;margin:0}
+.signal-float .signal-dock-live{display:inline-block;width:5px;height:5px;background:var(--f-accent);border-radius:50%}
+.signal-float .signal-dock-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;padding:9px 12px;
+  border-bottom:1px solid var(--f-stroke)}
+.signal-float .signal-dock-tabs button{border:0;border-radius:8px;background:transparent;color:var(--f-muted);
+  font-size:10px;white-space:nowrap;padding:10px 3px}
+.signal-float .signal-dock-tabs button.active{color:var(--f-ink);background:var(--f-accent)}
+.signal-float .signal-dock-tabs button span{font:10px Consolas,monospace;opacity:.85;margin-left:2px}
+.signal-float .signal-dock-content{flex:1;min-height:0;overflow:auto;padding:14px 13px 9px;scrollbar-width:thin;
+  scrollbar-color:var(--f-stroke) transparent}
+.signal-float .signal-dock-section-title{font-size:10px;color:var(--f-dim);padding:0 4px 9px}
+.signal-float .signal-dock-session{width:100%;border:0;border-bottom:1px solid var(--f-stroke);
+  display:flex;align-items:center;gap:10px;padding:12px 2px;background:transparent;text-align:left;
+  min-width:0;color:var(--f-text)}
+.signal-float .signal-dock-session:hover,.signal-float .signal-dock-alert:hover{background:var(--f-tint)}
+.signal-float .signal-dock-session-icon{width:29px;height:29px;display:grid;place-items:center;flex:0 0 auto;
+  background:var(--f-tint);border:1px solid var(--f-stroke);border-radius:8px;color:var(--f-accent)}
+.signal-float .signal-dock-session-icon.warn{color:var(--f-warn)}
+.signal-float .signal-dock-session-icon.done{color:var(--f-muted)}
+.signal-float .signal-dock-session-info{display:flex;flex-direction:column;flex:1;min-width:0;gap:6px}
+.signal-float .signal-dock-session-info strong{font-size:11px;font-weight:610;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signal-float .signal-dock-session-info small{font-size:10px;color:var(--f-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signal-float .signal-dock-session > svg:last-child{flex:0 0 auto;color:var(--f-dim)}
+.signal-float .signal-dock-empty{font-size:11px;color:var(--f-muted);padding:24px 7px;text-align:center;line-height:1.5}
+.signal-float .signal-dock-alert{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--f-stroke)}
+.signal-float .signal-dock-alert.is-read{opacity:.56}
+.signal-float .signal-dock-alert-main{display:flex;align-items:center;gap:8px;min-width:0;
+  flex:1;border:0;background:transparent;color:var(--f-text);padding:12px 3px;text-align:left}
+.signal-float .signal-dock-alert-dot{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:var(--f-accent)}
+.signal-float .signal-dock-alert-dot.waiting{background:var(--f-warn)}
+.signal-float .signal-dock-alert-main > span:last-child{display:flex;flex-direction:column;gap:6px;min-width:0;flex:1}
+.signal-float .signal-dock-alert-main strong{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.signal-float .signal-dock-alert-main small{font-size:10px;color:var(--f-muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.signal-float .signal-dock-ack{display:grid;place-items:center;width:27px;height:27px;
+  border:1px solid var(--f-stroke);border-radius:8px;background:var(--f-tint);color:var(--f-accent)}
+.signal-float .signal-dock-foot{flex:0 0 46px;height:46px;border-top:1px solid var(--f-stroke);
+  display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 13px}
+.signal-float .signal-dock-foot button{display:flex;align-items:center;gap:7px;border:0;background:transparent;
+  font-size:10px;color:var(--f-muted);padding:5px}
+.signal-float .signal-dock-foot button:last-child{color:var(--f-accent)}
+.signal-float button:focus-visible{outline:2px solid var(--f-accent);outline-offset:-2px}
+@keyframes signalDockEnter{from{opacity:.5;transform:translateX(9px)}to{opacity:1;transform:translateX(0)}}
+@media(prefers-reduced-motion:reduce){
+  .signal-float *{animation:none!important;transition:none!important}
+}
+
+
+/* Native resize motion: keep the rail visually fixed at its saved screen edge.
+ * Only the popover grows beside it; never stretch or re-center the rail.
+ * Renderer content waits until the HWND finishes expanding, then fades in.
+ */
+.float-shell.signal-float{align-items:flex-start}
+.signal-float.expanded.size-micro .dock-rail{
+  width:38px;height:78px;padding:4px 2px;gap:3px;border-radius:12px
+}
+.signal-float.expanded.size-compact .dock-rail{
+  width:42px;height:120px;padding:5px 3px;gap:3px;border-radius:13px
+}
+.signal-float.expanded.size-micro .rail-grab{
+  width:70%;height:7px;border-radius:5px;background:transparent
+}
+.signal-float.expanded.size-compact .rail-grab{
+  width:70%;height:21px;border-radius:5px;background:transparent
+}
+.signal-float.expanded.size-micro .rail-tab{
+  width:31px;height:27px
+}
+.signal-float.expanded.size-compact .rail-tab{
+  width:34px;height:26px
+}
+.signal-float.expanded.size-micro .rail-alert-shortcut{
+  width:31px;height:27px
+}
+.signal-float.expanded.size-compact .rail-alert-shortcut{
+  width:34px;height:26px
+}
+.signal-float.expanded.size-micro .rail-badge{
+  min-width:12px;height:12px;font-size:8px;right:0
+}
+.signal-float.expanded.size-micro .rail-quick-ack{
+  height:14px;width:14px;right:-1px;bottom:-3px
+}
+.signal-float.expanded.size-micro .rail-quick-ack svg{width:10px;height:10px}
+.signal-float.expanded .rail-grab::before{opacity:.5}
+.signal-float .dock-panel{
+  margin-top:6px;max-height:calc(100% - 12px);
+  transition:opacity .15s ease,transform .18s cubic-bezier(.16,1,.3,1)
+}
+.signal-float.motion-expanding .dock-panel{
+  opacity:0;visibility:hidden;pointer-events:none;
+  transform:translate3d(10px,0,0);animation:none
+}
+.signal-float.motion-collapsing .dock-panel{
+  opacity:0;pointer-events:none;
+  transform:translate3d(10px,0,0);animation:none
+}
+.signal-float.side-left.motion-expanding .dock-panel,
+.signal-float.side-left.motion-collapsing .dock-panel{transform:translate3d(-10px,0,0)}
+@media(prefers-reduced-motion:reduce){
+  .signal-float .dock-panel{transition:none!important}
+}

@@ -3,7 +3,7 @@ import { workspaceGroupKey } from './grouping';
 
 export interface ViewFilter {
   query: string;
-  status: SessionStatus | 'all';
+  status: SessionStatus | 'all' | 'abnormal';
   recentOnly: boolean;
   sourceId: string | null;
   workspaceId: string | null;
@@ -27,13 +27,40 @@ export function filterSessions(rows: SessionRecord[], options: ViewFilter, now: 
     // "Recent only" must not hide its execution row solely by file mtime.
     if (options.recentOnly && row.status !== 'working' &&
         now - row.updatedAt > LAST_WEEK_MS) return false;
-    if (options.status !== 'all' && row.status !== options.status) return false;
+    if (options.status === 'abnormal' &&
+        row.status !== 'failed' && row.status !== 'interrupted') return false;
+    if (options.status !== 'all' && options.status !== 'abnormal' &&
+        row.status !== options.status) return false;
     if (options.sourceId && row.sourceId !== options.sourceId) return false;
     if (options.workspaceId && workspaceGroupKey(row.sourceId, row.workspace) !== options.workspaceId) return false;
     if (!query) return true;
     return [row.title, row.workspace, row.sourceLabel, row.id].some(value =>
       value?.toLocaleLowerCase().includes(query));
   });
+}
+
+/** "待处理" is only a waiting status, not any prior failed/interrupted turn.
+ * Each group is disjoint, so the board never overstates requests for input.
+ */
+export function summarizeDashboardSessions(rows: SessionRecord[]) {
+  return {
+    pending: rows.filter(row => row.status === 'waiting'),
+    abnormal: rows.filter(row => row.status === 'failed' || row.status === 'interrupted'),
+    working: rows.filter(row => row.status === 'working'),
+  };
+}
+
+/** Only the flat session list has a status filter. In every overview or
+ * location view, status counters must reflect the complete selected scope.
+ * Search, recency, source and workspace remain shared filters.
+ */
+export function filterSessionsForView(
+  rows: SessionRecord[],
+  view: 'board' | 'sessions' | 'locations' | 'chronicle',
+  options: ViewFilter,
+  now: number,
+): SessionRecord[] {
+  return filterSessions(rows, { ...options, status: view === 'sessions' ? options.status : 'all' }, now);
 }
 
 /** Unknown is never treated as pending approval; both remain visibly distinct. */

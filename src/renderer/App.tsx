@@ -1,14 +1,31 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus } from '../shared/types';
+import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
-import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
-import { visibleSessions } from '../shared/session-visibility';
+import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
+import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
+import SignalSelect, { type SignalSelectOption } from './SignalSelect';
+import { useVisibleInterval } from './useVisibleInterval';
 
-type View = 'board' | 'sessions' | 'locations';
+type View = 'board' | 'sessions' | 'locations' | 'chronicle';
 
-type StoredViewPreferences = { view: View; recentOnly: boolean; filter: SessionStatus | 'all'; showSubagents: boolean };
+const ALL_SOURCES_VALUE = '@all-sources';
+const STATUS_OPTIONS: readonly SignalSelectOption<ViewFilter['status']>[] = [
+  { value: 'all', label: '全部状态' },
+  { value: 'working', label: '可能执行中' },
+  { value: 'waiting', label: '可能待处理' },
+  { value: 'abnormal', label: '失败 / 中断' },
+  { value: 'finished', label: '本轮完成' },
+  { value: 'failed', label: '失败' },
+  { value: 'interrupted', label: '中断' },
+  { value: 'unknown', label: '未知' },
+];
+type OverviewStatus = 'waiting' | 'abnormal' | 'working';
+const SESSION_PAGE_SIZE = 100;
+const AGE_REFRESH_MS = 15_000;
+
+type StoredViewPreferences = { view: View; recentOnly: boolean; filter: ViewFilter['status']; showSubagents: boolean };
 const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
 function readViewPreferences(): StoredViewPreferences {
   const fallback: StoredViewPreferences = { view: 'board', recentOnly: true, filter: 'all', showSubagents: false };
@@ -16,18 +33,18 @@ function readViewPreferences(): StoredViewPreferences {
     if (typeof localStorage === 'undefined') return fallback;
     const row = JSON.parse(localStorage.getItem(VIEW_PREFERENCES_KEY) || 'null');
     if (!row || typeof row !== 'object') return fallback;
-    const validView = row.view === 'board' || row.view === 'sessions' || row.view === 'locations';
-    const validFilter = ['all', 'working', 'waiting', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
+    const validView = row.view === 'board' || row.view === 'sessions' || row.view === 'locations' || row.view === 'chronicle';
+    const validFilter = ['all', 'working', 'waiting', 'abnormal', 'finished', 'interrupted', 'failed', 'unknown'].includes(row.filter);
     return { view: validView ? row.view : 'board',
       recentOnly: typeof row.recentOnly === 'boolean' ? row.recentOnly : true,
-      filter: validFilter ? row.filter : 'all',
+      filter: row.view === 'sessions' && validFilter ? row.filter : 'all',
       showSubagents: row.showSubagents === true };
   } catch { return fallback; }
 }
 
 
 type GlyphName = 'grid' | 'list' | 'folder' | 'monitor' | 'server' | 'search' | 'refresh' | 'settings' |
-  'copy' | 'clock' | 'check' | 'alert' | 'close' | 'chevron-right' | 'chevron-down' | 'chevron-left' | 'activity' | 'sliders';
+  'copy' | 'clock' | 'check' | 'alert' | 'close' | 'chevron-right' | 'chevron-down' | 'chevron-left' | 'activity' | 'sliders' | 'bell' | 'palette' | 'arrow-up-right';
 
 const STATUS: Record<SessionStatus, { text: string; className: string; short: string }> = {
   working: { text: '可能执行中', className: 'working', short: '执行中 · 推断' },
@@ -37,9 +54,6 @@ const STATUS: Record<SessionStatus, { text: string; className: string; short: st
   failed: { text: '本轮失败', className: 'failed', short: '失败' },
   unknown: { text: '状态未知', className: 'unknown', short: '状态未知' },
 };
-const REFRESH_MS = 12_000;
-const MAX_SIDEBAR_FOLDERS = 6;
-const BATCH_SIZE = 8;
 
 const ICONS: Record<GlyphName, ReactNode> = {
   grid: <><rect x="3" y="3" width="7" height="7" rx="1.3"/><rect x="14" y="3" width="7" height="7" rx="1.3"/><rect x="3" y="14" width="7" height="7" rx="1.3"/><rect x="14" y="14" width="7" height="7" rx="1.3"/></>,
@@ -60,6 +74,9 @@ const ICONS: Record<GlyphName, ReactNode> = {
   'chevron-down': <path d="m5 9 7 7 7-7"/>,
   'chevron-left': <path d="m15 5-7 7 7 7"/>,
   activity: <path d="M2 12h4l3-7 5 14 3-7h5"/>,
+  bell: <><path d="M18 8a6 6 0 0 0-12 0c0 8-3 8-3 10h18c0-2-3-2-3-10M10 21h4"/></>,
+  palette: <><path d="M12 3a9 9 0 1 0 0 18h2a2.5 2.5 0 0 0 1-4.8 2 2 0 0 1 .9-3.8H19a2 2 0 0 0 2-2c0-4-4-7.4-9-7.4Z"/><path d="M7.5 11h.01M9 7h.01M14 6.5h.01M17.4 9.5h.01" strokeWidth="2.8"/></>,
+  'arrow-up-right': <path d="M6 18 18 6M8 6h10v10"/>, 
 };
 function Icon({ name, size = 16 }: { name: GlyphName; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -72,9 +89,13 @@ function ageText(timestamp: number, now: number): string {
   if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时前';
   return Math.floor(seconds / 86400) + ' 天前';
 }
+// DateTimeFormat construction is expensive; session tables reuse one formatter.
+const DISPLAY_DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit', day: '2-digit', hour: '2-digit',
+  minute: '2-digit', second: '2-digit',
+});
 function formatTime(value: number): string {
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit',
-    minute: '2-digit', second: '2-digit' }).format(value);
+  return DISPLAY_DATE_FORMATTER.format(value);
 }
 function workspaceName(value: string | null): string {
   if (!value) return '未记录目录';
@@ -88,25 +109,20 @@ function StatusPill({ status }: { status: SessionStatus }) {
   </span>;
 }
 
-function SessionCard({ session, now, selected, onSelect }: {
-  session: SessionRecord; now: number; selected: boolean; onSelect: (session: SessionRecord) => void;
+function SignalTaskRow({ session, now, onSelect }: {
+  session: SessionRecord; now: number; onSelect: (value: SessionRecord) => void;
 }) {
-  return <button type="button" className={'task-card status-' + session.status + (selected ? ' is-selected' : '')}
-    aria-pressed={selected} onClick={() => onSelect(session)}>
-    <div className="task-topline">
-      <span className="task-source">{session.sourceLabel}{session.isSubagent && <span className="child-badge"> · 子代理</span>}</span>
-      <span className="task-age">{ageText(session.updatedAt, now)}</span>
-    </div>
-    <div className="task-title">{session.title || '未命名会话'}</div>
-    {session.pendingQuestionToken && <div className="task-question" title={session.questionText || ''}>
-      <Icon name="alert" size={13}/>待回答：{session.questionText || '请查看 Codex 的问题'}
-    </div>}
-    <div className="task-path" title={session.workspace || '未记录工作目录'}>{session.workspace || '未记录工作目录'}</div>
-    <div className="task-footer"><span className="task-state"><span className="status-dot" />{STATUS[session.status].short}</span>
-      {session.status === 'working' && <span className="task-evidence" title={session.statusReason}>
-        {sessionEvidenceLabel(session)}</span>}
-      <Icon name="chevron-right" size={15}/>
-    </div>
+  const label = session.status === 'working' ? sessionEvidenceLabel(session) : STATUS[session.status].text;
+  return <button type="button" className={'signal-task status-' + session.status}
+    onClick={() => onSelect(session)} title={session.statusReason || label}>
+    <span className="signal-task-icon"><Icon name={session.status === 'waiting' ? 'alert' :
+      session.status === 'finished' ? 'check' : 'activity'} size={16}/></span>
+    <span className="signal-task-copy">
+      <strong>{session.title || '未命名会话'}{session.isSubagent && <small className="signal-child">子代理</small>}</strong>
+      <small title={session.workspace || ''}>{session.sourceLabel} · {workspaceName(session.workspace)}</small>
+    </span>
+    <span className="signal-task-state"><span>{label}</span><small>{ageText(session.updatedAt, now)}</small></span>
+    <Icon name="chevron-right" size={15}/>
   </button>;
 }
 
@@ -140,31 +156,6 @@ function SessionTable({ sessions, now, selectedKey, onSelect }: {
     </table>
     {!sessions.length && <EmptyState text="没有符合条件的会话" />}
   </div>;
-}
-
-function WorkspaceSection({ group, now, selectedKey, onSelect }: {
-  group: WorkspaceGroup; now: number; selectedKey: string | null;
-  onSelect: (session: SessionRecord) => void;
-}) {
-  const [expanded, setExpanded] = useState(group.working > 0 || group.waiting > 0);
-  useEffect(() => { if (group.working || group.waiting) setExpanded(true); }, [group.working, group.waiting]);
-  return <section className="workspace-section">
-    <button type="button" className="workspace-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-      <span className="workspace-identity"><strong>{workspaceName(group.workspace)}</strong>
-        <span className="mono truncate" title={group.workspace || ''}>{group.workspace || '未记录工作目录'}</span></span>
-      <span className="workspace-totals">{group.sessions.length} 会话{group.working ? ' · ' + group.working + ' 活动' : ''}</span>
-      <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16}/>
-    </button>
-    {expanded && <div className="workspace-rows">{group.sessions.map(item =>
-      <button key={item.key} type="button" className={'workspace-session' + (selectedKey === item.key ? ' is-selected' : '')}
-        onClick={() => onSelect(item)}>
-        <span className={'workspace-session-indicator status-' + item.status}/>
-        <span className="workspace-session-name">{item.title || '未命名会话'}</span>
-        <span className="workspace-session-time">{ageText(item.updatedAt, now)}</span>
-        <Icon name="chevron-right" size={14}/>
-      </button>
-    )}</div>}
-  </section>;
 }
 
 function EmptyState({ text }: { text: string }) {
@@ -251,20 +242,19 @@ function SettingsPanel({ config, onClose, onSave }: {
 export default function App() {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [scan, setScan] = useState<ScanResponse | null>(null);
-  const [eventChannels, setEventChannels] = useState<Record<string, 'active' | 'connecting' | 'fallback'>>({});
   const [performanceStats, setPerformanceStats] = useState<import('../shared/types').MonitorPerformance | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<SessionStatus | 'all'>(() => readViewPreferences().filter);
+  const [filter, setFilter] = useState<ViewFilter['status']>(() => readViewPreferences().filter);
   const [recentOnly, setRecentOnly] = useState(() => readViewPreferences().recentOnly);
   const [showSubagents, setShowSubagents] = useState(() => readViewPreferences().showSubagents);
   const [view, setView] = useState<View>(() => readViewPreferences().view);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [expandedSources, setExpandedSources] = useState<string[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [overviewStatus, setOverviewStatus] = useState<OverviewStatus | null>(null);
   const [replyVersion, setReplyVersion] = useState(0);
   const [originalWindow, setOriginalWindow] = useState<OriginalWindowStatus | null>(null);
   const [originalWindowMessage, setOriginalWindowMessage] = useState<string | null>(null);
@@ -282,10 +272,16 @@ export default function App() {
   const [floatingVisible, setFloatingVisible] = useState(false);
   const [floatingOpacity, setFloatingOpacity] = useState(1);
   const [floatingSide, setFloatingSide] = useState<'left' | 'right'>('right');
+  const [appearance, setAppearance] = useState<SignalAppearance>('moonsea');
+  const [compactSize, setCompactSize] = useState<FloatingCompactSize>('micro');
+  const [alerts, setAlerts] = useState<MonitorAlert[]>([]);
+  const [muted, setMuted] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
+  const [showPalette, setShowPalette] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [laneLimit, setLaneLimit] = useState<Record<string, number>>({
-    working: BATCH_SIZE, other: BATCH_SIZE, finished: BATCH_SIZE,
-  });
+  const [sessionLimit, setSessionLimit] = useState(SESSION_PAGE_SIZE);
+  const visible = useVisibleInterval(() => setNow(Date.now()), AGE_REFRESH_MS);
+  const pageScrollRef = useRef<HTMLDivElement>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -315,8 +311,9 @@ export default function App() {
     }).catch(err => { if (mounted.current) setResidentError(describeError(err)); });
     const unsubscribe = window.monitorApi.onMonitorState(state => {
       if (!mounted.current) return;
-      setEventChannels(state.eventChannels || {});
       setPerformanceStats(state.performance ?? null);
+      setAlerts(state.alerts);
+      setMuted(state.muted);
       if (state.scan) {
         setScan(state.scan);
         setNow(Date.now());
@@ -327,8 +324,14 @@ export default function App() {
       setFloatingVisible(state.visible);
       setFloatingOpacity(state.opacity);
       setFloatingSide(state.side);
+      setAppearance(state.appearance);
+      setCompactSize(state.compactSize);
     });
     const focusSession = (key: string) => {
+      // Native notification/deep-link navigation supersedes temporary drawers.
+      setOverviewStatus(null);
+      setShowAlerts(false);
+      setShowPalette(false);
       setSourceId(null);
       setWorkspaceId(null);
       setFilter('all');
@@ -347,32 +350,35 @@ export default function App() {
       setFloatingVisible(state.visible);
       setFloatingOpacity(state.opacity);
       setFloatingSide(state.side);
+      setAppearance(state.appearance);
+      setCompactSize(state.compactSize);
     }).catch(console.error);
     void window.monitorApi.getMonitorState().then(state => {
       if (!mounted.current) return;
-      setEventChannels(state.eventChannels || {});
       setPerformanceStats(state.performance ?? null);
+      setAlerts(state.alerts);
+      setMuted(state.muted);
       if (state.scan) setScan(state.scan);
     }).catch(console.error);
     void refresh();
-    const clock = setInterval(() => setNow(Date.now()), 5000);
     return () => {
       mounted.current = false;
       unsubscribe();
       unsubscribeFloating();
       unsubscribeFocus();
-      clearInterval(clock);
     };
   }, [refresh]);
   useEffect(() => {
     try { localStorage.setItem(VIEW_PREFERENCES_KEY,
-      JSON.stringify({ view, filter, recentOnly, showSubagents })); }
+      JSON.stringify({ view, filter: view === 'sessions' ? filter : 'all', recentOnly, showSubagents })); }
     catch { /* storage permission or quota: viewing and monitoring still work */ }
   }, [view, filter, recentOnly, showSubagents]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setDetailOpen(false);
+      if (event.key === 'Escape') {
+        setDetailOpen(false); setOverviewStatus(null); setShowAlerts(false); setShowPalette(false);
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         searchInput.current?.focus();
@@ -382,15 +388,31 @@ export default function App() {
     return () => window.removeEventListener('keydown', listener);
   }, []);
 
-  const allSessions = useMemo(() => visibleSessions(
-    scan?.sources.flatMap(source => source.sessions) ?? [], showSubagents)
-    .sort((a, b) => b.updatedAt - a.updatedAt), [scan, showSubagents]);
-  const sourceGroups = useMemo(() => groupByExecutionLocation(allSessions), [allSessions]);
-  const shown = useMemo(() => filterSessions(allSessions, {
+  useEffect(() => { if (pageScrollRef.current) pageScrollRef.current.scrollTop = 0; }, [view]);
+
+  // Paging stays stable across background scans; new filter/scope inputs reset it.
+  useEffect(() => setSessionLimit(SESSION_PAGE_SIZE),
+    [view, query, filter, recentOnly, showSubagents, sourceId, workspaceId]);
+
+  // Retain the unfiltered source records for child-alert suppression.
+  // Using the already hidden UI list here would lose the child identities.
+  const rawSessions = useMemo(() =>
+    scan?.sources.flatMap(source => source.sessions) ?? [], [scan]);
+  const allSessions = useMemo(() =>
+    visibleSessions(rawSessions, showSubagents)
+      .sort((a, b) => b.updatedAt - a.updatedAt), [rawSessions, showSubagents]);
+  // The full workspace tree is only needed when a workspace is selected.
+  const sourceGroups = useMemo(() => workspaceId ?
+    groupByExecutionLocation(allSessions) : [], [allSessions, workspaceId]);
+  // Only the seven-day boundary depends on wall clock time, not the seconds
+  // displayed by age labels. Avoid rescanning/regrouping all sessions every tick.
+  const recencyClock = Math.floor(now / 60_000) * 60_000;
+  const shown = useMemo(() => filterSessionsForView(allSessions, view, {
     query, status: filter, recentOnly, sourceId, workspaceId,
-  }, now), [allSessions, query, filter, recentOnly, sourceId, workspaceId, now]);
-  const groups = useMemo(() => groupByExecutionLocation(shown), [shown]);
-  const lanes = useMemo(() => makeStatusLanes(shown), [shown]);
+  }, recencyClock), [allSessions, view, query, filter, recentOnly, sourceId, workspaceId, recencyClock]);
+  // Session table and event chronology do not render execution-location groups.
+  const groups = useMemo(() => (view === 'board' || view === 'locations') ?
+    groupByExecutionLocation(shown) : [], [shown, view]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
 
@@ -429,36 +451,93 @@ export default function App() {
   }, [detailOpen, selected?.key, scan?.scannedAt]);
 
   useEffect(() => {
-    if (!shown.length) { setSelectedKey(null); setDetailOpen(false); return; }
+    // Keep an opened inspector anchored to its actual session even when a
+    // status/recency filter or a fresh scan removes the row from the list.
+    // Only close if that session itself is no longer visible to this user.
+    if (detailOpen) {
+      if (selectedKey && allSessions.some(session => session.key === selectedKey)) return;
+      setDetailOpen(false);
+    }
+    if (!shown.length) {
+      if (selectedKey !== null) setSelectedKey(null);
+      return;
+    }
     if (selectedKey && shown.some(session => session.key === selectedKey)) return;
     setSelectedKey((shown.find(session => session.status === 'working') ?? shown[0])?.key ?? null);
-  }, [shown, selectedKey]);
+  }, [allSessions, detailOpen, shown, selectedKey]);
 
   const totals = useMemo(() => ({
     all: allSessions.length,
-    working: allSessions.filter(item => item.status === 'working').length,
-    waiting: allSessions.filter(item => item.status === 'waiting').length,
-    finished: allSessions.filter(item => item.status === 'finished').length,
     errors: scan?.sources.filter(source => source.error).length ?? 0,
   }), [allSessions, scan]);
 
-  const scopeSource = scan?.sources.find(source => source.id === sourceId);
+  const sourceOptions = useMemo<SignalSelectOption<string>[]>(() => [
+    { value: ALL_SOURCES_VALUE, label: '所有位置' },
+    ...(scan?.sources ?? []).map(source => ({ value: source.id, label: source.label })),
+  ], [scan?.sources]);
   const currentWorkspace = sourceGroups.flatMap(group => group.workspaces)
     .find(group => group.key === workspaceId);
-  const title = view === 'board' ? '任务状态' : view === 'sessions' ? '全部会话' : '执行位置';
+  const { pending, abnormal, working: running } = useMemo(
+    () => summarizeDashboardSessions(shown), [shown]);
+  const overviewSessions = overviewStatus === 'waiting' ? pending :
+    overviewStatus === 'abnormal' ? abnormal : overviewStatus === 'working' ? running : [];
+  const overviewTitle = overviewStatus === 'waiting' ? '可能待处理' :
+    overviewStatus === 'abnormal' ? '失败 / 中断' : '可能执行中';
+  const statusNames: Record<ViewFilter['status'], string> = {
+    all: '全部', working: '可能执行中', waiting: '可能待处理',
+    abnormal: '失败 / 中断', finished: '本轮完成',
+    interrupted: '中断', failed: '失败', unknown: '未知',
+  };
+  const recentAlerts = useMemo(() =>
+    visibleAlerts(alerts, rawSessions, showSubagents).sort((a, b) => b.at - a.at),
+  [alerts, rawSessions, showSubagents]);
+  const unreadCount = recentAlerts.filter(item => !item.read).length;
+  async function updateAppearance(next: SignalAppearance): Promise<void> {
+    try { setAppearance(next); const saved = await window.monitorApi.setFloatingAppearance(next); setAppearance(saved.appearance); }
+    catch (cause) { setError(describeError(cause)); }
+  }
+  async function updateCompactSize(next: FloatingCompactSize): Promise<void> {
+    try { setCompactSize(next); const saved = await window.monitorApi.setFloatingCompactSize(next); setCompactSize(saved.compactSize); }
+    catch (cause) { setResidentError(describeError(cause)); }
+  }
+  async function acknowledgeAlert(id: string): Promise<void> {
+    try { const state = await window.monitorApi.acknowledgeAlert(id); setAlerts(state.alerts); }
+    catch (cause) { setError(describeError(cause)); }
+  }
 
   async function saveSettings(settings: Settings) {
     const next = await window.monitorApi.setConfig(settings);
     setConfig(next);
     await refresh();
   }
+  /** Moving between primary views must discard session-only drill-down state. */
+  function navigate(next: View) {
+    setOverviewStatus(null);
+    setFilter('all');
+    setView(next);
+  }
   function selectScope(nextSource: string | null, nextWorkspace: string | null = null) {
     setSourceId(nextSource);
     setWorkspaceId(nextWorkspace);
-    setView('board');
-    setFilter('all');
+    navigate('board');
+  }
+  function showStatusSessions(status: ViewFilter['status']) {
+    setOverviewStatus(null);
+    setFilter(status);
+    setView('sessions');
+  }
+  function openOverview(status: OverviewStatus) {
+    setShowAlerts(false);
+    setShowPalette(false);
+    setOverviewStatus(status);
   }
   function openSession(session: SessionRecord) {
+    // Notifications may refer to sessions outside the current filters. Keep the
+    // inspector usable instead of auto-dismissing it on the next filtered render.
+    if (!shown.some(item => item.key === session.key)) {
+      setQuery(''); setFilter('all'); setRecentOnly(false);
+      setSourceId(null); setWorkspaceId(null);
+    }
     setSelectedKey(session.key);
     setDetailOpen(true);
   }
@@ -470,9 +549,6 @@ export default function App() {
     } catch (error) {
       if (mounted.current) setOriginalWindowMessage('原窗口定位失败：' + describeError(error));
     }
-  }
-  function toggleSource(id: string) {
-    setExpandedSources(ids => ids.includes(id) ? ids.filter(entry => entry !== id) : [...ids, id]);
   }
   async function updateResidentOptions(next: ResidentOptions): Promise<void> {
     if (residentSaving) return;
@@ -488,204 +564,366 @@ export default function App() {
     }
   }
 
-  return <div className="monitor-layout">
-    <aside className="sidebar" aria-label="主导航和执行位置">
-      <div className="brand">
-        <div className="brand-mark">C<span>·</span></div>
-        <div><strong>Codex Monitor</strong><span>AGENT WORKSPACE</span></div>
-      </div>
-
-      <nav className="primary-nav" aria-label="页面">
-        <span className="nav-caption">工作台</span>
-        {([
-          ['board', '任务状态', 'grid'],
-          ['sessions', '全部会话', 'list'],
-          ['locations', '执行位置', 'folder'],
-        ] as const).map(([id, label, icon]) => <button key={id} type="button"
-          className={'nav-item' + (view === id ? ' active' : '')} onClick={() => setView(id)}
-          aria-current={view === id ? 'page' : undefined}>
-          <Icon name={icon}/><span>{label}</span>
-          {id === 'sessions' && <span className="nav-count">{totals.all}</span>}
-        </button>)}
-        <button type="button" className="nav-item settings-entry" onClick={() => setShowSettings(true)}
-          disabled={!config}><Icon name="settings"/><span>数据源设置</span></button>
+  return <div className={'monitor-layout signal-app scene-' + appearance +
+    (visible ? '' : ' signal-paused') +
+    (typeof window !== 'undefined' && window.monitorApi?.windowChrome === 'overlay'
+      ? ' signal-native-overlay' : '')}>
+    <header className="signal-chrome">
+      <div className="signal-brand">Codex Monitor</div>
+      <nav className={'signal-nav nav-' + view} aria-label="主视图">
+        {([['board', '决策台'], ['locations', '机器矩阵'], ['chronicle', '事件轨迹']] as const)
+          .map(([id, label], index) => <button key={id} type="button" aria-current={view === id ? 'page' : undefined}
+            className={view === id ? 'active' : ''} onClick={() => navigate(id)}>
+            <span>{'0' + (index + 1)}</span>{label}</button>)}
       </nav>
-
-      <div className="source-tree" aria-label="数据源及工作目录">
-        <div className="source-heading"><span>执行位置</span>
-          <button type="button" className="icon-btn" title="清除位置筛选" aria-label="清除位置筛选"
-            onClick={() => selectScope(null)}><Icon name="refresh" size={14}/></button>
-        </div>
-        <button type="button" className={'tree-all' + (!sourceId ? ' active' : '')}
-          onClick={() => selectScope(null)}><Icon name="grid" size={15}/><span>所有位置</span>
-          <span className="tree-count">{totals.all}</span></button>
-        {scan?.sources.map(source => {
-          const group = sourceGroups.find(item => item.sourceId === source.id);
-          const folders = group?.workspaces ?? [];
-          const watchMode = eventChannels[source.id] || 'fallback';
-          const watchText = watchMode === 'active' ? '文件事件监听中' :
-            watchMode === 'connecting' ? '正在连接事件通道' : '轮询兜底';
-          const expanded = expandedSources.includes(source.id);
-          const visible = expanded ? folders : folders.slice(0, MAX_SIDEBAR_FOLDERS);
-          return <div className="source-node" key={source.id}>
-            <button type="button" className={'tree-source' + (sourceId === source.id && !workspaceId ? ' active' : '')}
-              onClick={() => selectScope(source.id)} title={source.label + ' · ' +
-                (source.error ? source.error + ' · ' : '') + watchText}>
-              <Icon name={source.kind === 'ssh' ? 'server' : 'monitor'} size={15}/>
-              <span className="tree-label">{source.label}</span>
-              <span className={'watch-indicator ' + watchMode} aria-label={watchText} title={watchText}/>
-              <span className={'source-light ' + (source.error ? 'error' : 'ok')}/>
-              <span className="tree-count">{group?.count ?? 0}</span>
+      <div className="signal-chrome-right">
+        <label className="signal-search"><Icon name="search" size={15}/>
+          <input ref={searchInput} aria-label="搜索会话" value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="搜索会话、目录、ID"/><kbd>Ctrl K</kbd></label>
+        <button type="button" title="提醒收件箱" className={'signal-icon-button' + (showAlerts ? ' active' : '')}
+          onClick={() => { setShowAlerts(value => !value); setShowPalette(false); }}
+          aria-label={'提醒收件箱，' + unreadCount + ' 条未读'}>
+          <Icon name="bell"/>{unreadCount > 0 && <i className="signal-count-badge">{unreadCount}</i>}</button>
+        <button type="button" title="切换视觉氛围" className={'signal-icon-button' + (showPalette ? ' active' : '')}
+          onClick={() => { setShowPalette(value => !value); setShowAlerts(false); }}
+          aria-label="切换视觉氛围"><Icon name="palette"/></button>
+        <button type="button" title="设置" className="signal-icon-button"
+          onClick={() => setShowResident(true)} aria-label="常驻设置"><Icon name="settings"/></button>
+      </div>
+      {showPalette && <div className="signal-popover signal-theme-menu">
+        <strong>视觉氛围</strong>
+        {([['moonsea', '月海', '深海色 · 冷调玻璃'], ['ember', '岩铜', '暖黑金属 · 铜色高光'],
+          ['mist', '凝霜', '浅色陶瓷 · 轻盈留白']] as const).map(([id,label,detail]) =>
+          <button type="button" key={id} className={appearance === id ? 'active' : ''}
+            onClick={() => { void updateAppearance(id); setShowPalette(false); }}>
+            <span className={'signal-scene-swatch swatch-' + id}/><span><b>{label}</b><small>{detail}</small></span>
+            {appearance === id && <Icon name="check" size={15}/>}</button>)}
+      </div>}
+      {showAlerts && <aside className="signal-popover signal-alerts-menu" aria-label="提醒收件箱">
+        <div className="signal-popover-heading"><strong>提醒收件箱</strong><span>{unreadCount} 未读</span></div>
+        <div className="signal-popover-items">{recentAlerts.slice(0, 12).map(alert =>
+          <div key={alert.id} className={'signal-alert-row' + (alert.read ? ' read' : '')}>
+            <button type="button" onClick={() => {
+              if (!alert.read) void acknowledgeAlert(alert.id);
+              const session = allSessions.find(item => item.key === alert.sessionKey);
+              if (session) openSession(session);
+              setShowAlerts(false);
+            }}>
+              <span className={'signal-mini-dot ' + (alert.kind === 'waiting' ? 'warning' : '')}/>
+              <span><strong>{alert.title}</strong><small>{alert.kind === 'waiting' ? '可能待处理' : '本轮回复已结束'} · {alert.sourceLabel}</small></span>
             </button>
-            {visible.map(folder => <button type="button" key={folder.key}
-              title={folder.workspace || '未记录工作目录'}
-              className={'tree-folder' + (workspaceId === folder.key ? ' active' : '')}
-              onClick={() => selectScope(source.id, folder.key)}>
-              <Icon name="folder" size={14}/><span className="tree-label">{workspaceName(folder.workspace)}</span>
-              {folder.working > 0 && <span className="small-activity" title={folder.working + ' 个可能执行中的会话'}/>}
-              <span className="tree-count">{folder.sessions.length}</span>
-            </button>)}
-            {folders.length > MAX_SIDEBAR_FOLDERS && <button type="button" className="tree-more"
-              onClick={() => toggleSource(source.id)}>
-              {expanded ? '收起目录' : '更多 ' + (folders.length - MAX_SIDEBAR_FOLDERS) + ' 个目录'}
-              <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={13}/>
-            </button>}
-          </div>;
-        })}
-        {!scan && <div className="source-placeholder">正在发现 Windows、WSL 与 SSH…</div>}
-      </div>
-      <div className="sidebar-footer">
-        <span className="footer-state"><span className="live-dot"/>只读 · 本地运行</span>
-        <span>{scan ? formatTime(scan.scannedAt) : '尚未扫描'}</span>
-      </div>
-    </aside>
-
-    <main className="main-content">
-      <header className="topbar">
-        <div className="breadcrumbs">
-          <button type="button" onClick={() => selectScope(null)}>所有位置</button>
-          {scopeSource && <><Icon name="chevron-right" size={12}/>
-            <button type="button" onClick={() => selectScope(scopeSource.id)}>{scopeSource.label}</button></>}
-          {currentWorkspace && <><Icon name="chevron-right" size={12}/>
-            <span title={currentWorkspace.workspace || ''}>{workspaceName(currentWorkspace.workspace)}</span></>}
+            {!alert.read && <button type="button" className="signal-alert-ack"
+              onClick={() => void acknowledgeAlert(alert.id)} title="标记已读"
+              aria-label={'标记已读：' + alert.title}><Icon name="check" size={14}/></button>}
+          </div>)}
+          {!recentAlerts.length && <p className="signal-empty">暂无提醒</p>}
         </div>
-        <div className="header-actions">
-          <button type="button" className="header-button" onClick={() => setShowResident(true)}>
-            <Icon name="settings" size={15}/>常驻设置
-          </button>
-          <span className="read-only-mark"><span className="live-dot"/>只读模式</span>
-          <button type="button" className="header-button float-entry"
-            aria-pressed={floatingVisible}
+        <button type="button" className="signal-popover-foot" onClick={() =>
+          void window.monitorApi.setNotificationsMuted(!muted).then(state => setMuted(state.muted))
+            .catch(error => setError(describeError(error)))}>
+          {muted ? '恢复通知' : '静音通知'}</button>
+      </aside>}
+    </header>
+
+    <div className="signal-scroll" ref={pageScrollRef}>
+      <div className="signal-status-line">
+        <span><i className="signal-live-pulse"/> {!scan ? '正在连接数据源' : totals.errors ? totals.errors + ' 个数据源异常' : '采集可用'}
+          <em>·</em> {scan?.sources.filter(source => !source.error).length ?? 0} 个数据源
+          <em>·</em> 只读监控</span>
+        <span>最近扫描 <b>{scan ? formatTime(scan.scannedAt) : '等待首次扫描'}</b>
+          <em>·</em><span>状态以采集证据为准</span></span>
+      </div>
+      <main className="signal-body">
+        <div className="signal-ambient" aria-hidden="true"><svg viewBox="0 0 920 360" preserveAspectRatio="none">
+          <g className="signal-ribbon-body">
+            <path className="signal-ambient-band" d="M10 335 C220 305 205 45 415 111 S670 355 905 30"/>
+            <path d="M0 310 C210 275 235 70 420 127 S680 330 920 50"/>
+            <path d="M0 288 C210 250 235 95 430 140 S690 308 920 65"/>
+            <path d="M0 265 C218 235 250 115 442 149 S702 290 920 85"/>
+            <path d="M0 246 C220 223 270 135 462 164 S710 275 920 111"/>
+          </g>
+          <path className="signal-ribbon-tracer" d="M0 288 C210 250 235 95 430 140 S690 308 920 65"/>
+        </svg></div>
+
+        <div className="signal-page-title" data-current-view={view}>
+          <span className="signal-eyebrow">WORKSPACE / {view === 'board' ? 'MONITOR' :
+            view === 'locations' ? 'LOCATIONS' : view === 'chronicle' ? 'ACTIVITY' : 'SESSIONS'}</span>
+          <h1>{view === 'board' ? '任务概览' : view === 'locations' ? '机器矩阵' :
+            view === 'chronicle' ? '事件轨迹' : '全部会话'}</h1>
+          <p>{view === 'board' ? '优先关注待处理任务和活动线索' :
+            view === 'locations' ? '按执行机器与工作目录查看会话' :
+            view === 'chronicle' ? '通知事件与会话活动记录' :
+            '按最近活动排序 · 可定位原 Codex 窗口'}</p>
+        </div>
+
+        <div className="signal-toolbar" aria-label="筛选与快捷操作">
+          {view === 'sessions' && <button type="button" className="signal-back-button"
+            onClick={() => navigate('board')}>
+            <Icon name="chevron-left" size={15}/> 返回决策台
+          </button>}
+          {view === 'sessions' && <div className="signal-filter-field">状态
+            <SignalSelect label="运行状态筛选" appearance={appearance}
+              value={filter} options={STATUS_OPTIONS} onChange={setFilter}/>
+          </div>}
+          <div className="signal-filter-field location">位置
+            <SignalSelect label="执行位置筛选" appearance={appearance}
+              value={sourceId ?? ALL_SOURCES_VALUE} options={sourceOptions}
+              onChange={next => { setSourceId(next === ALL_SOURCES_VALUE ? null : next); setWorkspaceId(null); }}/>
+          </div>
+          <label className="signal-check"><input type="checkbox" checked={recentOnly}
+            onChange={event => setRecentOnly(event.target.checked)}/>近 7 天</label>
+          <label className="signal-check"><input type="checkbox" checked={showSubagents}
+            onChange={event => setShowSubagents(event.target.checked)}/>显示子代理</label>
+          <span className="signal-toolbar-spacer"/>
+          <button type="button" className="signal-toolbar-button"
             onClick={() => void window.monitorApi.setFloatingVisible(!floatingVisible)
-              .then(state => setFloatingVisible(state.visible)).catch(console.error)}>
-            <Icon name="monitor" size={15}/>{floatingVisible ? '隐藏悬浮窗' : '显示悬浮窗'}
+              .then(value => setFloatingVisible(value.visible)).catch(cause => setError(describeError(cause)))}>
+            <Icon name="monitor" size={14}/>{floatingVisible ? '隐藏悬浮窗' : '显示悬浮窗'}
           </button>
-          <button type="button" className="header-button" disabled={busy} onClick={() => void refresh()}>
-            <Icon name="refresh" size={15}/>{busy ? '扫描中…' : '刷新'}
-          </button>
+          <button type="button" onClick={() => navigate('sessions')}
+            className={'signal-toolbar-button' + (view === 'sessions' ? ' active' : '')}>全部会话 <span>{totals.all}</span></button>
+          <button type="button" className="signal-toolbar-button" disabled={busy}
+            onClick={() => void refresh()}><Icon name="refresh" size={14}/>{busy ? '刷新中' : '刷新'}</button>
+          <button type="button" className="signal-toolbar-button" onClick={() => setShowSettings(true)}
+            disabled={!config}><Icon name="sliders" size={14}/>数据源设置</button>
         </div>
-      </header>
-
-      <div className="main-scroll">
-        <div className="page-heading">
-          <div><span className="eyebrow">WORKSPACE / MONITOR</span>
-            <h1>{title}</h1>
-            <p>{view === 'board' ? '优先查看正在发生的工作；状态来自日志，可能并非实时进程状态。'
-              : view === 'sessions' ? '查看全部会话标题、执行位置、工作目录与状态。'
-              : '按实际执行机器和完整工作目录浏览会话。'}</p>
-          </div>
-          <div className="scan-meta"><span className={'scan-indicator' + (busy ? ' scanning' : '')}/>
-            {scan ? '最后扫描 ' + formatTime(scan.scannedAt) : '等待首次扫描'}</div>
-        </div>
-
-        <section className="metrics" aria-label="会话统计">
-          <div><strong>{totals.all}</strong><span>会话总数</span></div>
-          <div><strong className="positive">{totals.working}</strong><span>可能执行中</span></div>
-          <div><strong className="warm">{totals.waiting}</strong><span>可能待处理</span></div>
-          <div><strong>{scan?.sources.filter(source => !source.error).length ?? 0}</strong><span>有效数据源</span></div>
-        </section>
-
-        <div className="filterbar">
-          <div className="filter-tabs" role="group" aria-label="运行状态筛选">
-            {([['all', '全部'], ['working', '可能执行中'], ['waiting', '待处理'], ['finished', '本轮完成'], ['interrupted', '中断'], ['failed', '失败'], ['unknown', '未知']] as const)
-              .map(([id, label]) => <button type="button" key={id} className={filter === id ? 'active' : ''}
-                aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}
-          </div>
-          <div className="filter-tools">
-            <label className="recent-checkbox"><input type="checkbox" checked={recentOnly}
-              onChange={event => setRecentOnly(event.target.checked)}/>近 7 天</label>
-            <label className="recent-checkbox"><input type="checkbox"
-              checked={showSubagents} onChange={event => setShowSubagents(event.target.checked)}
-              aria-label="显示子代理"/>显示子代理</label>
-            <label className="search-box"><Icon name="search" size={15}/><input ref={searchInput}
-              aria-label="搜索会话" placeholder="搜索标题 / 工作目录 / ID" value={query}
-              onChange={event => setQuery(event.target.value)}/><kbd>Ctrl K</kbd></label>
-          </div>
-        </div>
-
         {error && <div className="error-banner" role="alert">{error}</div>}
-        {scan?.sources.filter(source => !!source.error).map(source => <div className="error-banner" role="alert"
-          key={source.id}><Icon name="alert" size={16}/><strong>{source.label}</strong>{source.error}</div>)}
-        {(sourceId || workspaceId) && <div className="scope-banner">
-          <Icon name="folder" size={15}/><span>当前位置筛选：
-            {scopeSource?.label || '全部'}{currentWorkspace ? ' / ' + (currentWorkspace.workspace || '未记录工作目录') : ''}</span>
-          <button type="button" onClick={() => selectScope(null)}>清除筛选 ×</button>
-        </div>}
+        {scan?.sources.filter(source => source.error).map(source =>
+          <div className="error-banner" role="alert" key={source.id}><Icon name="alert"/>{source.label}: {source.error}</div>)}
+        {workspaceId && <div className="scope-banner">工作目录：{currentWorkspace?.workspace || '未知'}
+          <button type="button" onClick={() => setWorkspaceId(null)}>清除 ×</button></div>}
 
-        {view === 'board' && <div className="board">
-          {lanes.map(lane => <section className={'board-lane lane-' + lane.id} key={lane.id}
-            aria-label={lane.label}>
-            <div className="lane-heading"><div><span className="lane-mark"/>
-              <strong>{lane.label}</strong></div><span className="lane-count">{lane.sessions.length}</span></div>
-            <div className="lane-subtitle">{lane.description}</div>
-            <div className="lane-body">{lane.sessions.slice(0, laneLimit[lane.id] ?? BATCH_SIZE).map(session =>
-              <SessionCard key={session.key} session={session} now={now}
-                selected={selectedKey === session.key} onSelect={openSession}/>)}
-              {!lane.sessions.length && <div className="lane-empty">
-                <Icon name={lane.id === 'working' ? 'activity' : lane.id === 'finished' ? 'check' : 'clock'} size={22}/>
-                <span>{lane.emptyLabel}</span></div>}
+        <div className={'signal-view view-' + view} aria-label="工作区内容">
+        {view === 'board' && <>
+          <div className="signal-overview-stats" aria-label="会话状态入口">
+            <button type="button" className="signal-overview-stat pending"
+              aria-label={'查看可能待处理会话，共 ' + pending.length + ' 条'}
+              onClick={() => openOverview('waiting')}>
+              <span className="signal-overview-icon"><Icon name="bell" size={17}/></span>
+              <span className="signal-overview-copy"><strong>可能待处理</strong>
+                <small>{pending.length ? '有会话等待处理 · 点击查看' : '当前没有待处理会话'}</small></span>
+              <span className="signal-overview-count">{String(pending.length).padStart(2, '0')}</span>
+              <Icon name="chevron-right" size={15}/>
+            </button>
+            <button type="button" className="signal-overview-stat abnormal"
+              aria-label={'查看失败和中断会话，共 ' + abnormal.length + ' 条'}
+              onClick={() => openOverview('abnormal')}>
+              <span className="signal-overview-icon"><Icon name="alert" size={17}/></span>
+              <span className="signal-overview-copy"><strong>失败 / 中断</strong>
+                <small>{abnormal.length ? '结束异常记录 · 不等于待处理' : '暂无异常结束记录'}</small></span>
+              <span className="signal-overview-count">{String(abnormal.length).padStart(2, '0')}</span>
+              <Icon name="chevron-right" size={15}/>
+            </button>
+            <button type="button" className="signal-overview-stat working"
+              aria-label={'查看可能执行中会话，共 ' + running.length + ' 条'}
+              onClick={() => openOverview('working')}>
+              <span className="signal-overview-icon"><Icon name="activity" size={17}/></span>
+              <span className="signal-overview-copy"><strong>可能执行中</strong>
+                <small>按最近活动与状态证据推断</small></span>
+              <span className="signal-overview-count">{String(running.length).padStart(2, '0')}</span>
+              <Icon name="chevron-right" size={15}/>
+            </button>
+          </div>
+          <div className={'signal-main-grid' + (pending.length ? ' has-pending' : '')}>
+            {pending.length > 0 && <section className="signal-panel signal-pending" aria-label="可能待处理会话">
+              <div className="signal-panel-heading">
+                <div><h2>可能待处理 · {pending.length}</h2><small>仅展示等待回答或确认的会话线索</small></div>
+                <button type="button" onClick={() => showStatusSessions('waiting')}>
+                  查看全部 <Icon name="chevron-right" size={14}/></button>
+              </div>
+              <div className="signal-task-list">{pending.slice(0, 4).map(session =>
+                <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
+              </div>
+            </section>}
+            <section className="signal-panel signal-running" aria-label="可能执行中的会话">
+              <div className="signal-panel-heading"><div><h2>可能执行中</h2><small>最新状态与活动证据</small></div>
+                <button type="button" onClick={() => showStatusSessions('working')}>查看全部 <Icon name="chevron-right" size={14}/></button></div>
+              <div className="signal-task-list">{running.slice(0, 6).map(session =>
+                <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
+                {!running.length && <div className="signal-list-empty"><Icon name="activity" size={23}/>
+                  <strong>暂无可能执行中的会话</strong><span>等待新的活动证据</span></div>}
+              </div>
+            </section>
+          </div>
+          <div className="signal-bottom-grid">
+            <section className="signal-panel signal-locations">
+              <div className="signal-panel-heading"><h2>执行位置</h2>
+                <button type="button" onClick={() => navigate('locations')}>查看机器矩阵 <Icon name="chevron-right" size={14}/></button></div>
+              <div className="signal-location-tiles">
+                {groups.slice(0, 4).map(group => <button type="button" key={group.sourceId}
+                  onClick={() => { setSourceId(group.sourceId); setWorkspaceId(null); navigate('locations'); }}>
+                  <span className="signal-location-head"><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={17}/>
+                    <small>{group.sourceId.startsWith('ssh:') ? 'SSH' : group.sourceId.startsWith('wsl:') ? 'WSL' : 'WIN'}</small></span>
+                  <strong title={group.sourceLabel}>{group.sourceLabel}</strong>
+                  <small>{group.count} 个会话 · {group.working} 条活动线索</small></button>)}
+                {!groups.length && <span className="signal-empty">没有符合筛选条件的执行位置</span>}
+              </div>
+            </section>
+            <section className="signal-panel signal-changes">
+              <div className="signal-panel-heading"><h2>最近变化</h2><button type="button"
+                onClick={() => navigate('chronicle')}>查看事件轨迹 <Icon name="chevron-right" size={14}/></button></div>
+              <div className="signal-event-list">
+                {recentAlerts.length ? recentAlerts.slice(0, 4).map(alert =>
+                  <button type="button" key={alert.id} className="signal-event" onClick={() => {
+                    const session = allSessions.find(item => item.key === alert.sessionKey);
+                    if (session) openSession(session);
+                  }}>
+                    <span className={'signal-mini-dot' + (alert.kind === 'waiting' ? ' warning' : '')}/>
+                    <span><strong>{alert.kind === 'waiting' ? '会话可能需要处理' : '本轮回复已结束'}</strong>
+                      <small>{alert.title}</small></span><time>{formatTime(alert.at)}</time></button>) :
+                  shown.slice(0, 4).map(session => <button type="button" key={session.key}
+                    className="signal-event" onClick={() => openSession(session)}>
+                    <span className="signal-mini-dot"/><span><strong>{session.title || '未命名会话'}</strong>
+                      <small>最近记录活动 · {sessionEvidenceLabel(session)}</small></span>
+                    <time>{ageText(session.updatedAt, now)}</time></button>)}
+                {!recentAlerts.length && !shown.length && <p className="signal-empty">暂无会话活动记录</p>}
+              </div>
+            </section>
+          </div>
+        </>}
+
+        {view === 'locations' && <div className="signal-matrix">
+          {groups.map(group => <section className="signal-panel signal-machine" key={group.sourceId}>
+            <div className="signal-machine-head">
+              <span className="signal-machine-symbol"><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={21}/></span>
+              <span><small>{group.sourceId.startsWith('ssh:') ? 'SSH / REMOTE' : group.sourceId.startsWith('wsl:') ? 'WSL / LINUX' : 'WINDOWS / LOCAL'}</small>
+                <h2>{group.sourceLabel}</h2></span>
+              <span className="signal-machine-count">{group.count} 会话</span>
             </div>
-            {lane.sessions.length > (laneLimit[lane.id] ?? BATCH_SIZE) && <button type="button" className="more-cards"
-              onClick={() => setLaneLimit(values => ({
-                ...values, [lane.id]: (values[lane.id] ?? BATCH_SIZE) + BATCH_SIZE,
-              }))}>再显示 {Math.min(BATCH_SIZE, lane.sessions.length - (laneLimit[lane.id] ?? BATCH_SIZE))} 个
-              <Icon name="chevron-down" size={14}/></button>}
+            <div className="signal-machine-figures"><span><b>{String(group.working).padStart(2,'0')}</b><small>活动线索</small></span>
+              <span><b>{group.workspaces.length}</b><small>工作目录</small></span></div>
+            <div className="signal-machine-workspaces" aria-label="工作目录">
+              {group.workspaces.slice(0, 5).map(workspace =>
+                <button type="button" key={workspace.key}
+                  title={workspace.workspace || '未记录工作目录'}
+                  onClick={() => { setSourceId(group.sourceId);setWorkspaceId(workspace.key);navigate('sessions'); }}>
+                  <Icon name="folder" size={13}/>{workspaceName(workspace.workspace)}
+                  <span>{workspace.sessions.length}</span>
+                </button>)}
+            </div>
+            <div className="signal-machine-sessions">{group.workspaces.flatMap(workspace => workspace.sessions).slice(0, 6)
+              .map(session => <SignalTaskRow key={session.key} session={session} now={now} onSelect={openSession}/>)}
+              {!group.count && <p className="signal-empty">当前没有会话</p>}
+            </div>
+            <button type="button" className="signal-machine-foot" onClick={() => {
+              setSourceId(group.sourceId);setWorkspaceId(null);navigate('sessions'); }}>
+              查看该机器的所有会话 <Icon name="arrow-up-right" size={15}/></button>
           </section>)}
+          {!groups.length && <p className="signal-empty">没有符合当前筛选条件的执行位置</p>}
         </div>}
 
-        {view === 'sessions' && <section className="records-panel">
-          <div className="panel-heading"><strong>全部会话</strong><span>按最近活动排序 · {shown.length} 条</span></div>
-          <SessionTable sessions={shown} now={now} selectedKey={selectedKey} onSelect={openSession}/>
+        {view === 'chronicle' && <div className="signal-chronicle">
+          <section className="signal-panel signal-chronicle-main">
+            <div className="signal-panel-heading"><div><h2>通知与近期活动</h2>
+              <small>通知来自真实结束、待处理证据；最近活动来自会话元数据</small></div></div>
+            <div className="signal-timeline">
+              {recentAlerts.slice(0, 30).map(alert => <div className="signal-timeline-entry" key={alert.id}>
+                <span className={'signal-timeline-pin' + (alert.kind === 'waiting' ? ' warning' : '')}/>
+                <time>{formatTime(alert.at)}</time>
+                <div><strong>{alert.kind === 'waiting' ? '可能需要用户处理' : '本轮回复已结束'}</strong>
+                  <p>{alert.title}</p><small>{alert.sourceLabel}</small></div>
+                <div className="signal-timeline-actions">
+                  <button type="button" onClick={() => {
+                    const session = allSessions.find(item => item.key === alert.sessionKey);
+                    if (session) openSession(session);
+                  }}>会话详情</button>
+                  {!alert.read && <button type="button" onClick={() => void acknowledgeAlert(alert.id)}>标记已读</button>}
+                </div></div>)}
+              {!recentAlerts.length && <p className="signal-list-empty">还没有真实通知事件。下面仅展示最近会话元数据变化。</p>}
+              {shown.slice(0, 24).map(session => <div className="signal-timeline-entry" key={'activity:' + session.key}>
+                <span className="signal-timeline-pin muted"/><time>{formatTime(session.updatedAt)}</time>
+                <div><strong>最近会话活动 · {STATUS[session.status].text}</strong>
+                  <p>{session.title || '未命名会话'}</p><small>{session.sourceLabel} · {sessionEvidenceLabel(session)}</small></div>
+                <div className="signal-timeline-actions"><button type="button" onClick={() => openSession(session)}>查看详情</button></div>
+              </div>)}
+            </div>
+          </section>
+          <aside className="signal-panel signal-chronicle-side">
+            <h2>状态分布</h2><p>当前会话快照，而非进程实时数量。</p>
+            {(['working','waiting','finished','interrupted','failed','unknown'] as const).map(status => {
+              const count = shown.filter(item => item.status === status).length;
+              return <button type="button" className="signal-status-distribution" key={status}
+                onClick={() => showStatusSessions(status)}>
+                <span className={'signal-mini-dot ' + status}/><span>{STATUS[status].text}</span><strong>{count}</strong>
+              </button>;
+            })}
+          </aside>
+        </div>}
+
+        {view === 'sessions' && <section className="records-panel signal-records">
+          <div className="panel-heading"><strong>全部会话
+              {filter !== 'all' && <span className="signal-filter-tag">{statusNames[filter]}</span>}
+            </strong>
+            <span>按最近活动排序 · {shown.length} 条
+              {filter !== 'all' && <button type="button" className="signal-clear-filter"
+                onClick={() => setFilter('all')}>清除状态筛选</button>}
+            </span></div>
+          <SessionTable sessions={shown.slice(0, sessionLimit)}
+            now={now} selectedKey={selectedKey} onSelect={openSession}/>
+          {shown.length > sessionLimit && <div className="signal-session-load-more">
+            <span>显示 {sessionLimit} / {shown.length} 条</span>
+            <button type="button" onClick={() => setSessionLimit(current =>
+              Math.min(current + SESSION_PAGE_SIZE, shown.length))}>
+              再显示 {Math.min(SESSION_PAGE_SIZE, shown.length - sessionLimit)} 条
+              <Icon name="chevron-down" size={14}/>
+            </button>
+          </div>}
         </section>}
 
-        {view === 'locations' && <div className="location-list">
-          {groups.map(group => <section key={group.sourceId} className="location-section">
-            <div className="location-heading"><div><Icon name={group.sourceId.startsWith('ssh:') ? 'server' : 'monitor'} size={18}/>
-              <div><strong>{group.sourceLabel}</strong>
-                <span>{group.workspaces.length} 个工作目录 · {group.count} 个会话</span></div></div>
-              {group.working > 0 && <span className="group-working">{group.working} 可能执行中</span>}</div>
-            <div className="location-workspaces">{group.workspaces.map(workspace =>
-              <WorkspaceSection key={workspace.key} group={workspace} now={now}
-                selectedKey={selectedKey} onSelect={openSession}/>)}</div>
-          </section>)}
-          {!groups.length && <EmptyState text="没有符合条件的执行位置"/>}
-        </div>}
+        </div>
 
-        <footer className="content-footer"><span>当前显示 {shown.length} / {totals.all} 条 · 每个来源最多采集 200 条</span>
-          <span title="最近一次采集统计；仅包含耗时和字节数，不含会话内容">
-            {performanceStats?.desktopAudit
-              ? '采集 ' + (performanceStats.sourceScanDurationMs ?? '-') + 'ms · Desktop ' +
-                performanceStats.desktopAudit.durationMs + 'ms / ' +
-                Math.round(performanceStats.desktopAudit.logBytesRead / 1024) + 'KiB · ' +
-                '目录缓存 ' + performanceStats.desktopAudit.directoryCacheHits + ' · ' +
-                '待追读 ' + performanceStats.desktopAudit.backlogFiles
-              : '事件优先，12 秒回退扫描 · 状态为保守推断'}</span></footer>
-      </div>
-    </main>
+        <footer className="signal-footer">
+          <span>Codex Monitor · 只读会话观察器 · {shown.length} / {totals.all} 条</span>
+          <span>{performanceStats?.desktopAudit
+            ? '采集 ' + (performanceStats.sourceScanDurationMs ?? '—') + 'ms · Desktop审计 ' + performanceStats.desktopAudit.durationMs + 'ms'
+            : '事件优先 · 兜底扫描 · 状态为保守推断'}</span>
+        </footer>
+      </main>
+    </div>
 
-    {detailOpen && <button type="button" aria-label="关闭会话详情" className="detail-veil"
-      onClick={() => setDetailOpen(false)}/>}
-    <aside className={'detail-panel' + (detailOpen ? ' detail-open' : '')} aria-label="会话详情">
+    {overviewStatus && <div className="signal-overview-overlay">
+      <button type="button" className="signal-overview-veil" aria-label="关闭状态列表"
+        onClick={() => setOverviewStatus(null)}/>
+      <aside role="dialog" aria-modal="true" aria-label={overviewTitle + '会话列表'}
+        className="signal-overview-drawer">
+        <header className="signal-overview-drawer-head">
+          <div><small>决策台 / 状态详情</small>
+            <h2>{overviewTitle} <span>{overviewSessions.length}</span></h2>
+            <p>{overviewStatus === 'waiting'
+              ? '等待回答或确认的会话线索，不包含失败和中断'
+              : overviewStatus === 'abnormal'
+                ? '本轮失败与已中断的记录，不表示正在等待回答'
+                : '根据近期活动和证据推断的执行状态'}</p>
+          </div>
+          <button type="button" className="signal-overview-close" aria-label="关闭状态列表"
+            onClick={() => setOverviewStatus(null)}><Icon name="close" size={18}/></button>
+        </header>
+        <div className="signal-overview-drawer-rows">
+          {overviewSessions.slice(0, 24).map(session =>
+            <SignalTaskRow key={session.key} session={session} now={now}
+              onSelect={item => {setOverviewStatus(null); openSession(item);}}/>)}
+          {!overviewSessions.length && <div className="signal-overview-empty">
+            <Icon name={overviewStatus === 'waiting' ? 'check' : 'search'} size={24}/>
+            <strong>{overviewStatus === 'waiting' ? '当前没有待处理会话' : '当前没有符合条件的会话'}</strong>
+            <span>你可以关闭此面板，继续查看决策台。</span>
+          </div>}
+        </div>
+        <footer className="signal-overview-drawer-foot">
+          <span>当前范围内共 {overviewSessions.length} 条</span>
+          <button type="button" onClick={() => showStatusSessions(overviewStatus)}>
+            在全部会话中查看 <Icon name="arrow-up-right" size={14}/>
+          </button>
+        </footer>
+      </aside>
+    </div>}
+
+    <button type="button" aria-label="关闭会话详情"
+      className={'detail-veil' + (detailOpen ? ' is-visible' : '')}
+      aria-hidden={!detailOpen} disabled={!detailOpen}
+      onClick={() => setDetailOpen(false)}/>
+    <aside className={'detail-panel' + (detailOpen ? ' detail-open' : '')}
+      aria-label="会话详情" aria-hidden={!detailOpen} inert={!detailOpen}>
       <div className="detail-header"><span>当前选中 / SESSION</span><button type="button"
         className="detail-close" title="关闭详情" aria-label="关闭详情"
         onClick={() => setDetailOpen(false)}><Icon name="close" size={16}/></button></div>
@@ -791,6 +1029,18 @@ export default function App() {
                 : '仅在正式打包的 Windows 版本中可设置；开发模式不会修改系统开机项。'}</small>
             </span>
           </label>
+          <section className="signal-compact-setting" aria-label="悬浮窗收起尺寸">
+            <div><strong>悬浮窗收起尺寸</strong>
+              <small>极简 38×78 px（默认）；紧凑 42×120 px。只改变收起时的原生窗口占用区域。</small></div>
+            <div className="signal-compact-buttons">
+              <button type="button" aria-pressed={compactSize === 'micro'}
+                className={compactSize === 'micro' ? 'active' : ''}
+                onClick={() => void updateCompactSize('micro')}>极简 38×78</button>
+              <button type="button" aria-pressed={compactSize === 'compact'}
+                className={compactSize === 'compact' ? 'active' : ''}
+                onClick={() => void updateCompactSize('compact')}>紧凑 42×120</button>
+            </div>
+          </section>
           <section className="resident-opacity" aria-label="悬浮窗透明度设置">
             <div className="resident-opacity-head"><strong>悬浮窗透明度</strong>
               <output htmlFor="floating-opacity-range">{Math.round(floatingOpacity * 100)}% 不透明度</output>
@@ -811,7 +1061,7 @@ export default function App() {
           </section>
           <div className="resident-position">
             <div><strong>停靠位置自动记忆</strong>
-              <small>当前：{floatingSide === 'left' ? '屏幕左侧' : '屏幕右侧'}。拖动悬浮窗顶部 C 标识可以更换位置；重启后恢复上次的屏幕、边缘和高度。</small>
+              <small>当前：{floatingSide === 'left' ? '屏幕左侧' : '屏幕右侧'}。拖动悬浮窗顶部把手可以更换位置；重启后恢复上次的屏幕、边缘和高度。</small>
             </div>
             <button type="button" className="secondary-button" onClick={() => {
               void window.monitorApi.resetFloatingPosition().then(state => {

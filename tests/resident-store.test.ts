@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ResidentStore, normalizeResident } from '../electron/resident-store';
-import { dockWindowBounds, findSavedDockDisplay, normalizeDockOpacity,
+import { dockWindowBounds, findSavedDockDisplay, interpolateDockBounds, normalizeDockOpacity,
   restoreMainBounds, type WorkArea } from '../src/shared/window-geometry';
 
 const created: string[] = [];
@@ -26,8 +26,8 @@ describe('resident window persistence and multi-display layout', () => {
   it('remembers dock edge, display and vertical offset without going offscreen', () => {
     const dock = normalizeResident({ dock: { side: 'left', displayId: 100,
       expanded: true, offsetY: 2000, visible: false } }).dock;
-    expect(dockWindowBounds(dock, area)).toEqual({ x: -1920, y: 804, width: 350, height: 276 });
-    expect(dockWindowBounds({ ...dock, side: 'right', expanded: false }, area).x).toBe(-55);
+    expect(dockWindowBounds(dock, area)).toEqual({ x: -1920, y: 592, width: 438, height: 488 });
+    expect(dockWindowBounds({ ...dock, side: 'right', expanded: false }, area).x).toBe(-38);
   });
 
   it('uses safe defaults for corrupted data and restores user-selected preferences', async () => {
@@ -74,8 +74,42 @@ describe('resident window persistence and multi-display layout', () => {
     const dock = normalizeResident({ dock: { side: 'right', opacity: 0.8,
       displayId: 200, displayX: -1920, displayY: 0, offsetY: 2000 } }).dock;
     expect(findSavedDockDisplay(dock, [area])?.id).toBe(100);
-    expect(dockWindowBounds(dock, area)).toEqual({ x: -55, y: 804, width: 55, height: 276 });
+    expect(dockWindowBounds(dock, area)).toEqual({ x: -38, y: 1002, width: 38, height: 78 });
     expect(findSavedDockDisplay({ ...dock, displayX: 9000 }, [area])).toBeNull();
+  });
+
+  it('eases native transitions without detached-edge or vertical overshoot', () => {
+    const initial = { x: 1882, y: 980, width: 38, height: 78 };
+    const expanded = { x: 1482, y: 592, width: 438, height: 488 };
+    expect(interpolateDockBounds(initial, expanded, 0)).toEqual(initial);
+    expect(interpolateDockBounds(initial, expanded, 1)).toEqual(expanded);
+    let previous = initial.width;
+    for (let step = 1; step < 20; step++) {
+      const middle = interpolateDockBounds(initial, expanded, step / 20);
+      expect(middle.x + middle.width).toBe(1920);
+      expect(middle.width).toBeGreaterThanOrEqual(previous);
+      expect(middle.y).toBeGreaterThanOrEqual(expanded.y);
+      expect(middle.y).toBeLessThanOrEqual(initial.y);
+      previous = middle.width;
+    }
+    const onLeft = interpolateDockBounds(
+      { x: -1920, y: 400, width: 42, height: 120 },
+      { x: -1920, y: 400, width: 438, height: 488 }, 0.5);
+    expect(onLeft.x).toBe(-1920);
+    expect(onLeft.width).toBeGreaterThan(42);
+    expect(onLeft.width).toBeLessThan(438);
+  });
+
+  it('normalizes and persists appearance and compact size with bounded native geometry', () => {
+    const micro = normalizeResident({ dock: {} }).dock;
+    expect(micro).toMatchObject({ appearance: 'moonsea', compactSize: 'micro' });
+    expect(dockWindowBounds(micro, area)).toMatchObject({ width: 38, height: 78 });
+    const compact = normalizeResident({ dock: { compactSize: 'compact', appearance: 'mist',
+      side: 'right', offsetY: 2200 } }).dock;
+    expect(compact).toMatchObject({ appearance: 'mist', compactSize: 'compact' });
+    expect(dockWindowBounds(compact, area)).toEqual({ x: -42, y: 960, width: 42, height: 120 });
+    expect(normalizeResident({ dock: { compactSize: 'nonsense', appearance: 'purple' } }).dock)
+      .toMatchObject({ compactSize: 'micro', appearance: 'moonsea' });
   });
 
 });

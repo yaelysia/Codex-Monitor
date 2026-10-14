@@ -99,6 +99,18 @@ export function registerIpcHandlers(monitor: MonitorService,
     }
     return floating.setOpacity(opacity);
   });
+  ipcMain.handle('floating:set-appearance', (_event, appearance: unknown) => {
+    if (appearance !== 'moonsea' && appearance !== 'ember' && appearance !== 'mist') {
+      throw new Error('Invalid floating appearance');
+    }
+    const updated = floating.setAppearance(appearance);
+    main.setTitlebarAppearance(appearance);
+    return updated;
+  });
+  ipcMain.handle('floating:set-compact-size', (_event, size: unknown) => {
+    if (size !== 'micro' && size !== 'compact') throw new Error('Invalid floating compact size');
+    return floating.setCompactSize(size);
+  });
   ipcMain.handle('floating:reset-position', () => floating.resetPosition());
   ipcMain.handle('monitor:consume-focus-key', () => main.consumePendingKey());
   ipcMain.handle('monitor:show-main', (_event, sessionKey?: unknown) => {

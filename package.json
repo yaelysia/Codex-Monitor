@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "@radix-ui/react-select": "^2.2.6"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
