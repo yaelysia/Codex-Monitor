@@ -87,6 +87,7 @@ export class MonitorService {
     if (this.running) return;
     this.running = true;
     this.startedAt = Date.now();
+    this.lastNativeAuditAt = this.startedAt;
     if (this.eventsEnabled) this.watchers.start();
     this.timer = setInterval(() => this.pollFallback(), POLLING_FALLBACK_MS);
     if (this.platform === 'win32' &&

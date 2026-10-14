@@ -182,7 +182,7 @@ describe('native completion signal queue', () => {
         recentCandidateCount: 1 },
     });
     await projectDesktopRuntime(snapshot(thread()), NOW, {
-      platform: 'win32', inspect,
+      platform: 'win32', inspect: inspected,
     });
     expect(recentDesktopCompletions(NOW).some(x => x.threadId === ID &&
       x.turnId === TURN && x.type === 'turn-displayed-complete')).toBe(true);

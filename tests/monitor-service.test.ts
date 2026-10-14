@@ -10,6 +10,8 @@ const fake = vi.hoisted(() => ({
   started: 0,
   stopped: 0,
   health: {} as Record<string, 'active' | 'connecting' | 'fallback'>,
+  desktopWake: null as null | (() => void),
+  desktopWatcherHealthy: false,
 }));
 
 vi.mock('../electron/config', () => ({
@@ -19,6 +21,14 @@ vi.mock('../electron/collector', () => ({
   refresh: vi.fn(),
   projectDesktopRuntime: vi.fn(async (snapshot: ScanResponse) => snapshot),
   recentDesktopCompletions: vi.fn(() => []),
+}));
+vi.mock('../electron/desktop-log-watch', () => ({
+  DesktopLogFolderWatcher: class {
+    constructor(wake: () => void) { fake.desktopWake = wake; }
+    get healthy() { return fake.desktopWatcherHealthy; }
+    reconcile() {}
+    close() { fake.desktopWake = null; }
+  },
 }));
 vi.mock('../electron/watchers', () => ({
   WatchCoordinator: class {
@@ -66,6 +76,8 @@ beforeEach(() => {
   fake.started = 0;
   fake.stopped = 0;
   fake.health = {};
+  fake.desktopWatcherHealthy = false;
+  fake.desktopWake = null;
 });
 afterEach(() => {
   service?.stop();
@@ -354,5 +366,33 @@ describe('native GUI completion notification orchestration', () => {
     await vi.advanceTimersByTimeAsync(4000);
     expect(delivered).toHaveLength(1);
     expect(service.state().alerts).toHaveLength(1);
+  });
+});
+
+describe('Desktop event-driven wakeups with bounded safety scans', () => {
+  it('coalesces native file events and uses 12s audits when covered, 4s if not', async () => {
+    const baseline = snapshot(NOW, [source('local', [session('p', 'unknown', NOW)])]);
+    vi.mocked(collect).mockResolvedValue(baseline);
+    service = new MonitorService(() => undefined, () => undefined,
+      () => undefined, 'win32');
+    // Healthy directory coverage is used only after log inspection succeeds.
+    fake.desktopWatcherHealthy = true;
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(projectDesktopRuntime).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(projectDesktopRuntime).toHaveBeenCalledTimes(1);
+    fake.desktopWake?.();
+    fake.desktopWake?.();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(projectDesktopRuntime).toHaveBeenCalledTimes(2);
+    // File wakeups never force a remote or filesystem rescan.
+    expect(collect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(projectDesktopRuntime).toHaveBeenCalledTimes(2);
+    fake.desktopWatcherHealthy = false;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(vi.mocked(projectDesktopRuntime).mock.calls.length).toBeGreaterThan(2);
+    expect(collect).toHaveBeenCalledTimes(1);
   });
 });
