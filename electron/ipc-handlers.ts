@@ -103,7 +103,9 @@ export function registerIpcHandlers(monitor: MonitorService,
     if (appearance !== 'moonsea' && appearance !== 'ember' && appearance !== 'mist') {
       throw new Error('Invalid floating appearance');
     }
-    return floating.setAppearance(appearance);
+    const updated = floating.setAppearance(appearance);
+    main.setTitlebarAppearance(appearance);
+    return updated;
   });
   ipcMain.handle('floating:set-compact-size', (_event, size: unknown) => {
     if (size !== 'micro' && size !== 'compact') throw new Error('Invalid floating compact size');
