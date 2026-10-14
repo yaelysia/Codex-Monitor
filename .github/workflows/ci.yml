@@ -55,6 +55,17 @@ jobs:
               $parsed.candidates -isnot [array]) {
             throw "Unexpected native tab probe fields"
           }
+      - name: Smoke-test read-only memory sampling of a Windows process tree
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = @(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/diagnose-memory.ps1 -RootPid $PID -Duration 0)
+          if ($LASTEXITCODE -ne 0) { throw "Memory sampler failed" }
+          $sample = ($output -join "`n") | ConvertFrom-Json
+          if ($sample.diagnosticVersion -ne 1 -or $sample.before.processCount -lt 1 -or
+              $sample.after.workingMB -lt 0 -or $sample.after.privateMB -lt 0) {
+            throw "Memory sampler returned invalid metadata"
+          }
       - run: npm run typecheck
       - run: npm run build
       - run: python -m unittest discover -s tests -p 'test_*.py'
