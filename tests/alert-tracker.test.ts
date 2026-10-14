@@ -325,6 +325,19 @@ describe('native Desktop completion alerts', () => {
       [native(NOW+200)], startedAt, NOW+1000)).toHaveLength(0);
   });
 
+  it('does not announce success while a question or failure remains outstanding', () => {
+    const tracker = new AlertTracker();
+    const start = NOW - 5000;
+    const pending = gui('working');
+    pending.pendingQuestionToken = 'async:unanswered';
+    expect(tracker.observeDesktopCompletions(guiSnapshot(pending),
+      [native(NOW)], start, NOW+500)).toHaveLength(0);
+    expect(tracker.observeDesktopCompletions(guiSnapshot(gui('failed')),
+      [native(NOW)], start, NOW+500)).toHaveLength(0);
+    expect(tracker.observeDesktopCompletions(guiSnapshot(gui('waiting')),
+      [native(NOW)], start, NOW+500)).toHaveLength(0);
+  });
+
   it('suppresses native duplicate when rollout already reported the same turn', () => {
     const tracker = new AlertTracker();
     const baseline = guiSnapshot(gui());

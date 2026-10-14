@@ -143,7 +143,11 @@ export class AlertTracker {
           event.at < startedAt || event.at > now + 5_000 ||
           now - event.at > 120_000) continue;
       const row = matching.get(event.threadId.toLowerCase());
-      if (!row || this.alreadyNotifiedTurn(row.key, event.turnId)) continue;
+      // A displayed turn completion does not resolve an outstanding
+      // asynchronous question, approval, failure or interruption.
+      if (!row || row.pendingQuestionToken || row.status === 'waiting' ||
+          row.status === 'failed' || row.status === 'interrupted' ||
+          this.alreadyNotifiedTurn(row.key, event.turnId)) continue;
       const id = JSON.stringify([row.key, 'finished', 'desktop:' + event.turnId]);
       if (this.seenAlertIds.has(id)) continue;
       this.seenAlertIds.add(id);
