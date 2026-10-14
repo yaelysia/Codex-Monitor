@@ -369,10 +369,11 @@
 /* Signal Studio finish pass: native caption, restrained dashboard, motion continuity.
    Transform/opacity animations avoid layout thrashing on long-running monitor sessions. */
 .signal-app .signal-chrome{
-  -webkit-app-region:drag;flex-basis:66px;min-height:66px;
+  flex-basis:60px;min-height:60px;
   padding:0 22px;gap:14px;
 }
 .signal-app.signal-native-overlay .signal-chrome{padding-right:152px}
+.signal-app.signal-native-overlay .signal-chrome{-webkit-app-region:drag}
 .signal-app .signal-chrome :is(button,input,select,.signal-nav,.signal-search,.signal-popover){
   -webkit-app-region:no-drag;
 }
@@ -553,4 +554,11 @@
   .signal-app .detail-panel,.signal-app .detail-veil,
   .signal-app .signal-nav::before{transition:none!important}
   .signal-app .signal-scroll{scroll-behavior:auto}
+}
+
+/* The veil must also cover the full window when the desktop is wider than
+   the original three-column layout breakpoint. */
+.signal-app .detail-veil{
+  position:fixed;inset:0;z-index:60;border:0;
+  background:rgba(2,9,13,.56);
 }
