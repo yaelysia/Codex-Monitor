@@ -23,7 +23,8 @@ function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): bool
       if (old.key !== fresh.key || old.status !== fresh.status ||
           old.statusReason !== fresh.statusReason ||
           old.finishedToken !== fresh.finishedToken ||
-          old.desktopRuntimeObserved !== fresh.desktopRuntimeObserved) return true;
+          old.desktopRuntimeObserved !== fresh.desktopRuntimeObserved ||
+          old.evidenceKind !== fresh.evidenceKind) return true;
     }
   }
   return false;

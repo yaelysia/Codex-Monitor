@@ -56,15 +56,21 @@ export class SessionActivityTracker {
         if (session.status === 'unknown') {
           if (growth) {
             session.status = 'working';
+            session.evidenceKind = 'recent-activity';
             session.statusReason = '相邻扫描中检测到会话日志文件增长，可能执行中；未获得客户端实时状态';
           } else if (previous && evidenceAt > 0 && now >= evidenceAt &&
             now - evidenceAt <= SILENCE_GRACE_MS) {
             session.status = 'working';
+            session.evidenceKind = 'retained-activity';
             session.statusReason =
               '此前观察到执行活动，但目前没有新日志；上下文压缩、长工具调用或网络等待期间可能持续静默。' +
               '仅临时维持「可能执行中」，静默超过 8 分钟后回退未知。';
           }
         }
+
+        // A rollout/remote scanner's "working" remains an inference.
+        if (session.status === 'working' && !session.evidenceKind)
+          session.evidenceKind = recentActivity ? 'recent-activity' : 'retained-activity';
 
         this.observed.set(session.key, {
           sourceId: source.id, modifiedAt: session.updatedAt, bytes, evidenceAt,

@@ -123,6 +123,7 @@ export function applyDesktopLogEvidence(
     if (row.status === 'working') continue; // Preserve existing, stronger evidence.
     row.status = 'working';
     row.finishedToken = null;
+    row.evidenceKind = isActiveDesktopStart(event, now) ? 'recent-start' : 'historical-start';
     row.statusReason = isActiveDesktopStart(event, now)
       ? 'Codex Desktop 自身日志确认本会话 turn/start 已被接受，尚未观察到匹配的结束信号；可能执行中（非实时订阅）'
       : 'Codex Desktop 曾确认本会话 turn/start，但已超过实时启动证据窗口，尚未发现可靠结束事件；长期任务可能仍执行中（未实时确认）';

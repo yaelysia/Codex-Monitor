@@ -1,4 +1,7 @@
 export type SessionStatus = 'working' | 'waiting' | 'finished' | 'interrupted' | 'failed' | 'unknown';
+/** Evidence provenance does not claim that a client process is currently alive. */
+export type SessionEvidenceKind =
+  'recent-start' | 'recent-activity' | 'retained-activity' | 'historical-start';
 export type SourceKind = 'local' | 'wsl' | 'ssh';
 export type SessionClientKind = 'desktop' | 'vscode' | 'terminal' | 'unknown';
 
@@ -28,6 +31,8 @@ export interface SessionRecord {
   /** Codex's user-facing thread name or title, with a first-user-message fallback. */
   title: string | null;
   status: SessionStatus;
+  /** Strength and provenance of the tentative status, independent of status. */
+  evidenceKind?: SessionEvidenceKind;
   /** User-facing evidence; no transcript contents are exposed. */
   statusReason: string;
   /** Persisted terminal/approval event fingerprint when present; helps dedupe notifications. */
