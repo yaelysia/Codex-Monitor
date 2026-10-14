@@ -16,6 +16,8 @@ export function normalizeDockOpacity(input: unknown): number {
   if (!isNumber(input)) return 1;
   return Math.round(Math.max(MIN_DOCK_OPACITY, Math.min(MAX_DOCK_OPACITY, input)) * 100) / 100;
 }
+export type DockAppearance = 'moonsea' | 'ember' | 'mist';
+export type DockCompactSize = 'micro' | 'compact';
 export interface SavedDock {
   side: DockSide;
   displayId: number | null;
@@ -23,6 +25,9 @@ export interface SavedDock {
   expanded: boolean;
   visible: boolean;
   opacity: number;
+  /** UI-only fields; older resident files normalize to their defaults. */
+  appearance?: DockAppearance;
+  compactSize?: DockCompactSize;
   /** Screen origin also survives Windows changing its display IDs after restart. */
   displayX?: number | null;
   displayY?: number | null;
@@ -38,6 +43,8 @@ export function normalizeDock(value: unknown): SavedDock {
     expanded: row.expanded === true,
     visible: row.visible !== false,
     opacity: normalizeDockOpacity(row.opacity),
+    appearance: row.appearance === 'ember' || row.appearance === 'mist' ? row.appearance : 'moonsea',
+    compactSize: row.compactSize === 'compact' ? 'compact' : 'micro',
     displayX: isNumber(row.displayX) ? row.displayX : null,
     displayY: isNumber(row.displayY) ? row.displayY : null,
   };
@@ -71,8 +78,10 @@ export function restoreMainBounds(saved: unknown, areas: WorkArea[], fallback: S
 }
 
 export function dockWindowBounds(dock: SavedDock, workArea: WorkArea): SavedBounds {
-  const width = Math.min(dock.expanded ? 350 : 55, workArea.width);
-  const height = Math.min(276, workArea.height);
+  // Native bounds must match the visible rail. A transparent 276px hit area
+  // would intercept clicks even if the CSS only painted a 78px capsule.
+  const width = Math.min(dock.expanded ? 438 : dock.compactSize === 'compact' ? 42 : 38, workArea.width);
+  const height = Math.min(dock.expanded ? 488 : dock.compactSize === 'compact' ? 120 : 78, workArea.height);
   return {
     width, height,
     x: dock.side === 'right' ? workArea.x + workArea.width - width : workArea.x,
