@@ -258,6 +258,7 @@ export default function App() {
   const [showAlerts, setShowAlerts] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const pageScrollRef = useRef<HTMLDivElement>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
   const searchInput = useRef<HTMLInputElement>(null);
@@ -352,7 +353,9 @@ export default function App() {
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setDetailOpen(false);
+      if (event.key === 'Escape') {
+        setDetailOpen(false); setShowAlerts(false); setShowPalette(false);
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         searchInput.current?.focus();
@@ -361,6 +364,8 @@ export default function App() {
     window.addEventListener('keydown', listener);
     return () => window.removeEventListener('keydown', listener);
   }, []);
+
+  useEffect(() => { if (pageScrollRef.current) pageScrollRef.current.scrollTop = 0; }, [view]);
 
   const allSessions = useMemo(() => visibleSessions(
     scan?.sources.flatMap(source => source.sessions) ?? [], showSubagents)
@@ -547,7 +552,7 @@ export default function App() {
       </aside>}
     </header>
 
-    <div className="signal-scroll">
+    <div className="signal-scroll" ref={pageScrollRef}>
       <div className="signal-status-line">
         <span><i className="signal-live-pulse"/> {!scan ? '正在连接数据源' : totals.errors ? totals.errors + ' 个数据源异常' : '采集可用'}
           <em>·</em> {scan?.sources.filter(source => !source.error).length ?? 0} 个数据源
@@ -768,7 +773,8 @@ export default function App() {
       className={'detail-veil' + (detailOpen ? ' is-visible' : '')}
       aria-hidden={!detailOpen} disabled={!detailOpen}
       onClick={() => setDetailOpen(false)}/>
-    <aside className={'detail-panel' + (detailOpen ? ' detail-open' : '')} aria-label="会话详情">
+    <aside className={'detail-panel' + (detailOpen ? ' detail-open' : '')}
+      aria-label="会话详情" aria-hidden={!detailOpen} inert={!detailOpen}>
       <div className="detail-header"><span>当前选中 / SESSION</span><button type="button"
         className="detail-close" title="关闭详情" aria-label="关闭详情"
         onClick={() => setDetailOpen(false)}><Icon name="close" size={16}/></button></div>
