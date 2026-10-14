@@ -10,8 +10,9 @@ describe('edge floating window renderer', () => {
     expect(html).toContain('Codex Monitor 边缘悬浮窗');
     expect(html).toContain('可能执行中');
     expect(html).toContain('未读提醒');
-    expect(html).toContain('最近完成');
-    expect(html).toContain('展开悬浮窗');
+    expect(html).not.toContain('最近完成'); // Micro dock uses only two shortcuts.
+    expect(html).toContain('展开可能执行中的会话');
+    expect(html).toContain('size-micro');
   });
 
   it('keeps a stable terminal event fingerprint distinct from last file modification', () => {
