@@ -113,6 +113,24 @@ function SessionCard({ session, now, selected, onSelect }: {
   </button>;
 }
 
+
+function SignalTaskRow({ session, now, onSelect }: {
+  session: SessionRecord; now: number; onSelect: (value: SessionRecord) => void;
+}) {
+  const label = session.status === 'working' ? sessionEvidenceLabel(session) : STATUS[session.status].text;
+  return <button type="button" className={'signal-task status-' + session.status}
+    onClick={() => onSelect(session)} title={session.statusReason || label}>
+    <span className="signal-task-icon"><Icon name={session.status === 'waiting' ? 'alert' :
+      session.status === 'finished' ? 'check' : 'activity'} size={16}/></span>
+    <span className="signal-task-copy">
+      <strong>{session.title || '未命名会话'}{session.isSubagent && <small className="signal-child">子代理</small>}</strong>
+      <small title={session.workspace || ''}>{session.sourceLabel} · {workspaceName(session.workspace)}</small>
+    </span>
+    <span className="signal-task-state"><span>{label}</span><small>{ageText(session.updatedAt, now)}</small></span>
+    <Icon name="chevron-right" size={15}/>
+  </button>;
+}
+
 function SessionTable({ sessions, now, selectedKey, onSelect }: {
   sessions: SessionRecord[]; now: number; selectedKey: string | null;
   onSelect: (session: SessionRecord) => void;
