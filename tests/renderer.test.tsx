@@ -7,6 +7,44 @@ import App from '../src/renderer/App';
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe('reusable SignalSelect controls', () => {
+  it('uses a styled combobox rather than an unthemed Windows native select', () => {
+    const html = renderToStaticMarkup(createElement(App));
+    expect(html).not.toContain('<select');
+    expect(html).not.toContain('<option');
+    expect(html).toContain('aria-label="执行位置筛选"');
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('signal-select-trigger');
+  });
+
+  it('uses the same dropdown component for status and source in the sessions view', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => JSON.stringify({
+        view: 'sessions', filter: 'waiting', recentOnly: true, showSubagents: false,
+      }),
+    });
+    const html = renderToStaticMarkup(createElement(App));
+    expect(html).toContain('aria-label="运行状态筛选"');
+    expect(html).toContain('aria-label="执行位置筛选"');
+    expect((html.match(/role="combobox"/g) || [])).toHaveLength(2);
+    expect(html).not.toContain('<select');
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('<SignalSelect label="运行状态筛选"');
+    expect(source).toContain('<SignalSelect label="执行位置筛选"');
+  });
+
+  it('supports animated, collision-aware menus with reduced-motion fallback', () => {
+    const component = readFileSync(new URL('../src/renderer/SignalSelect.tsx', import.meta.url), 'utf8');
+    const styles = readFileSync(new URL('../src/renderer/signal-select.css', import.meta.url), 'utf8');
+    expect(component).toContain('position="popper"');
+    expect(component).toContain('avoidCollisions');
+    expect(component).toContain('<Select.Portal>');
+    expect(styles).toContain('[data-state="open"]');
+    expect(styles).toContain('[data-highlighted]');
+    expect(styles).toContain('prefers-reduced-motion:reduce');
+  });
+});
+
 describe('decision desk and session drill-down interaction contract', () => {
   it('does not render session status filtering on the decision desk', () => {
     const html = renderToStaticMarkup(createElement(App));
