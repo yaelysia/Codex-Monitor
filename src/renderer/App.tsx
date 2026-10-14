@@ -7,6 +7,7 @@ import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } fr
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 
 type View = 'board' | 'sessions' | 'locations' | 'chronicle';
+type OverviewStatus = 'waiting' | 'abnormal' | 'working';
 
 type StoredViewPreferences = { view: View; recentOnly: boolean; filter: ViewFilter['status']; showSubagents: boolean };
 const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
@@ -234,6 +235,7 @@ export default function App() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [overviewStatus, setOverviewStatus] = useState<OverviewStatus | null>(null);
   const [replyVersion, setReplyVersion] = useState(0);
   const [originalWindow, setOriginalWindow] = useState<OriginalWindowStatus | null>(null);
   const [originalWindowMessage, setOriginalWindowMessage] = useState<string | null>(null);
@@ -354,7 +356,7 @@ export default function App() {
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setDetailOpen(false); setShowAlerts(false); setShowPalette(false);
+        setDetailOpen(false); setOverviewStatus(null); setShowAlerts(false); setShowPalette(false);
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -431,6 +433,10 @@ export default function App() {
     .find(group => group.key === workspaceId);
   const { pending, abnormal, working: running } = useMemo(
     () => summarizeDashboardSessions(shown), [shown]);
+  const overviewSessions = overviewStatus === 'waiting' ? pending :
+    overviewStatus === 'abnormal' ? abnormal : overviewStatus === 'working' ? running : [];
+  const overviewTitle = overviewStatus === 'waiting' ? '可能待处理' :
+    overviewStatus === 'abnormal' ? '失败 / 中断' : '可能执行中';
   const statusNames: Record<ViewFilter['status'], string> = {
     all: '全部', working: '可能执行中', waiting: '可能待处理',
     abnormal: '失败 / 中断', finished: '本轮完成',
@@ -458,6 +464,7 @@ export default function App() {
   }
   /** Moving between primary views must discard session-only drill-down state. */
   function navigate(next: View) {
+    setOverviewStatus(null);
     setFilter('all');
     setView(next);
   }
@@ -467,8 +474,14 @@ export default function App() {
     navigate('board');
   }
   function showStatusSessions(status: ViewFilter['status']) {
+    setOverviewStatus(null);
     setFilter(status);
     setView('sessions');
+  }
+  function openOverview(status: OverviewStatus) {
+    setShowAlerts(false);
+    setShowPalette(false);
+    setOverviewStatus(status);
   }
   function openSession(session: SessionRecord) {
     // Notifications may refer to sessions outside the current filters. Keep the
@@ -639,7 +652,7 @@ export default function App() {
           <div className="signal-overview-stats" aria-label="会话状态入口">
             <button type="button" className="signal-overview-stat pending"
               aria-label={'查看可能待处理会话，共 ' + pending.length + ' 条'}
-              onClick={() => showStatusSessions('waiting')}>
+              onClick={() => openOverview('waiting')}>
               <span className="signal-overview-icon"><Icon name="bell" size={17}/></span>
               <span className="signal-overview-copy"><strong>可能待处理</strong>
                 <small>{pending.length ? '有会话等待处理 · 点击查看' : '当前没有待处理会话'}</small></span>
@@ -648,7 +661,7 @@ export default function App() {
             </button>
             <button type="button" className="signal-overview-stat abnormal"
               aria-label={'查看失败和中断会话，共 ' + abnormal.length + ' 条'}
-              onClick={() => showStatusSessions('abnormal')}>
+              onClick={() => openOverview('abnormal')}>
               <span className="signal-overview-icon"><Icon name="alert" size={17}/></span>
               <span className="signal-overview-copy"><strong>失败 / 中断</strong>
                 <small>{abnormal.length ? '结束异常记录 · 不等于待处理' : '暂无异常结束记录'}</small></span>
@@ -657,7 +670,7 @@ export default function App() {
             </button>
             <button type="button" className="signal-overview-stat working"
               aria-label={'查看可能执行中会话，共 ' + running.length + ' 条'}
-              onClick={() => showStatusSessions('working')}>
+              onClick={() => openOverview('working')}>
               <span className="signal-overview-icon"><Icon name="activity" size={17}/></span>
               <span className="signal-overview-copy"><strong>可能执行中</strong>
                 <small>按最近活动与状态证据推断</small></span>
@@ -812,6 +825,42 @@ export default function App() {
         </footer>
       </main>
     </div>
+
+    {overviewStatus && <div className="signal-overview-overlay">
+      <button type="button" className="signal-overview-veil" aria-label="关闭状态列表"
+        onClick={() => setOverviewStatus(null)}/>
+      <aside role="dialog" aria-modal="true" aria-label={overviewTitle + '会话列表'}
+        className="signal-overview-drawer">
+        <header className="signal-overview-drawer-head">
+          <div><small>决策台 / 状态详情</small>
+            <h2>{overviewTitle} <span>{overviewSessions.length}</span></h2>
+            <p>{overviewStatus === 'waiting'
+              ? '等待回答或确认的会话线索，不包含失败和中断'
+              : overviewStatus === 'abnormal'
+                ? '本轮失败与已中断的记录，不表示正在等待回答'
+                : '根据近期活动和证据推断的执行状态'}</p>
+          </div>
+          <button type="button" className="signal-overview-close" aria-label="关闭状态列表"
+            onClick={() => setOverviewStatus(null)}><Icon name="close" size={18}/></button>
+        </header>
+        <div className="signal-overview-drawer-rows">
+          {overviewSessions.slice(0, 24).map(session =>
+            <SignalTaskRow key={session.key} session={session} now={now}
+              onSelect={item => {setOverviewStatus(null); openSession(item);}}/>)}
+          {!overviewSessions.length && <div className="signal-overview-empty">
+            <Icon name={overviewStatus === 'waiting' ? 'check' : 'search'} size={24}/>
+            <strong>{overviewStatus === 'waiting' ? '当前没有待处理会话' : '当前没有符合条件的会话'}</strong>
+            <span>你可以关闭此面板，继续查看决策台。</span>
+          </div>}
+        </div>
+        <footer className="signal-overview-drawer-foot">
+          <span>当前范围内共 {overviewSessions.length} 条</span>
+          <button type="button" onClick={() => showStatusSessions(overviewStatus)}>
+            在全部会话中查看 <Icon name="arrow-up-right" size={14}/>
+          </button>
+        </footer>
+      </aside>
+    </div>}
 
     <button type="button" aria-label="关闭会话详情"
       className={'detail-veil' + (detailOpen ? ' is-visible' : '')}
