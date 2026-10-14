@@ -29,22 +29,29 @@ export class DesktopDirectoryCache {
     this.enumerations = 0;
   }
   stats() { return { cacheHits: this.cacheHits, enumerations: this.enumerations }; }
-  async read(directory, now = Date.now()) {
+  async read(directory, now = Date.now(), mode = 'logs') {
     let stat;
     try { stat = await fs.stat(directory); }
     catch { this.entries.delete(directory); return null; }
     if (!stat.isDirectory()) { this.entries.delete(directory); return null; }
     const previous = this.entries.get(directory);
-    if (previous && previous.mtimeMs === stat.mtimeMs &&
+    if (previous && previous.mode === mode && previous.mtimeMs === stat.mtimeMs &&
         now >= previous.checkedAt && now - previous.checkedAt < 30_000) {
       this.cacheHits++;
       return previous.items;
     }
     try {
-      const items = await fs.readdir(directory, { withFileTypes: true });
+      const all = await fs.readdir(directory, { withFileTypes: true });
+      // Never retain thousands of unrelated MSIX apps or log-adjacent files
+      // for a cache whose only purpose is finding Codex Desktop logs.
+      const items = mode === 'packages'
+        ? all.filter(e => e.isDirectory() && PACKAGE.test(e.name))
+          .slice(0, MAX_PACKAGE_NAMES)
+        : all.filter(e => e.isFile() && /\.log$/i.test(e.name))
+          .slice(0, MAX_ENTRIES_PER_DIRECTORY);
       this.enumerations++;
       this.entries.delete(directory);
-      this.entries.set(directory, { mtimeMs: stat.mtimeMs, checkedAt: now, items });
+      this.entries.set(directory, { mtimeMs: stat.mtimeMs, checkedAt: now, mode, items });
       while (this.entries.size > 80) this.entries.delete(this.entries.keys().next().value);
       return items;
     } catch {
@@ -71,7 +78,7 @@ export async function desktopLogRoots(localAppData, appData = process.env.APPDAT
   }
   try {
     const packages = cache
-      ? (await cache.read(path.join(localAppData, 'Packages'), now)) ?? []
+      ? (await cache.read(path.join(localAppData, 'Packages'), now, 'packages')) ?? []
       : await fs.readdir(path.join(localAppData, 'Packages'), { withFileTypes: true });
     const matching = packages.filter(entry => entry.isDirectory() && PACKAGE.test(entry.name))
       .slice(0, MAX_PACKAGE_NAMES);

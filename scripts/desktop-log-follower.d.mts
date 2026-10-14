@@ -7,6 +7,7 @@ export interface DesktopLogFollowerReport {
   bytesRead: number;
   skippedUnchanged: number;
   coldFiles: number;
+  maxReadBytes: number;
 }
 export class DesktopLogFollower {
   scan(files: readonly DesktopLogCandidate[], onLine: (line: string) => void):

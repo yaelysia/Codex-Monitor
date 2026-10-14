@@ -23,6 +23,7 @@ export function discoverDesktopLogFiles(localAppData: string, now?: number, appD
 
 export interface DirectoryCacheStats { cacheHits: number; enumerations: number; }
 export class DesktopDirectoryCache {
-  read(directory: string, now?: number): Promise<import('node:fs').Dirent[] | null>;
+  read(directory: string, now?: number, mode?: 'packages' | 'logs'):
+    Promise<import('node:fs').Dirent[] | null>;
   stats(): DirectoryCacheStats;
 }

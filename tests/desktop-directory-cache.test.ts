@@ -32,6 +32,28 @@ describe('mtime-invalidation Desktop directory caching', () => {
     expect(next.files[0]?.size).toBeGreaterThan(first.files[0]!.size);
   });
 
+  it('retains only relevant, bounded directory entries in a noisy installation', async () => {
+    const root = temp();
+    const now = Date.now();
+    const folder = folderFor(root, now);
+    fs.mkdirSync(folder, {recursive:true});
+    for (let i = 0; i < 500; i++)
+      fs.writeFileSync(path.join(folder, 'unrelated-' + i + '.tmp'), '');
+    const valid = path.join(folder, 'codex-desktop-example.log');
+    fs.writeFileSync(valid, '2026-10-12T10:00:00Z info [noise] test\n');
+    const cache = new DesktopDirectoryCache();
+    const records = await cache.read(folder, now, 'logs');
+    expect(records).toHaveLength(1);
+    expect(records?.[0]?.name).toBe('codex-desktop-example.log');
+    const packages = path.join(root, 'Packages');
+    fs.mkdirSync(packages);
+    for (let i = 0; i < 250; i++) fs.mkdirSync(path.join(packages, 'UnrelatedApp_' + i));
+    fs.mkdirSync(path.join(packages, 'OpenAI.Codex_test'));
+    const packageRecords = await cache.read(packages, now, 'packages');
+    expect(packageRecords).toHaveLength(1);
+    expect(packageRecords?.[0]?.name).toBe('OpenAI.Codex_test');
+  });
+
   it('discovers a new log immediately on directory metadata change', async () => {
     const root = temp();
     const now = Date.now();

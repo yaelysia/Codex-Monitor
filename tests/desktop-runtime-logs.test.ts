@@ -241,6 +241,51 @@ describe('bounded runtime I/O metrics', () => {
   });
 });
 
+describe('streaming follower with strict memory bounds', () => {
+  it('reads multi-megabyte input in at most 64-KiB chunks without losing lifecycle', async () => {
+    const root = temp();
+    const file = write(root, [time(-10) + ' info [noise] initial']);
+    const follower = new DesktopLogFollower();
+    const catalog = new DesktopDirectoryCache();
+    await inspectDesktopLogSignals(NOW, root, follower, catalog);
+    const payload = accepted(1) + '\n' +
+      time(2) + ' info [noise] ' + 'x'.repeat(2 * 1024 * 1024) + '\n' +
+      accepted(3, OTHER) + '\n';
+    fs.appendFileSync(file, payload);
+    fs.utimesSync(file, new Date(NOW+3500), new Date(NOW+3500));
+    const rows: string[] = [];
+    const changed = await follower.scan((await import('../scripts/desktop-log-discovery.mjs'))
+      .discoverDesktopLogFiles(root, NOW + 4000), line => rows.push(line));
+    expect(changed.maxReadBytes).toBeLessThanOrEqual(65536);
+    expect(changed.bytesRead).toBeGreaterThan(2 * 1024 * 1024);
+    expect(rows).toHaveLength(2);
+    expect(rows.join('\n')).not.toContain('x'.repeat(100));
+  });
+
+  it('handles partial UTF-8 records over block boundaries without duplicates', async () => {
+    const root = temp();
+    const file = write(root, [time(-10) + ' info [noise] initial']);
+    const follower = new DesktopLogFollower();
+    const catalog = new DesktopDirectoryCache();
+    await inspectDesktopLogSignals(NOW, root, follower, catalog);
+    // Force a lifecycle event to straddle a 64-KiB read boundary.
+    const padding = time(1) + ' info [noise] ' + 'y'.repeat(65535) + '\n';
+    fs.appendFileSync(file, padding + accepted(2) + '\n');
+    fs.utimesSync(file, new Date(NOW+3000), new Date(NOW+3000));
+    const first = await inspectDesktopLogSignals(NOW+4000, root, follower, catalog);
+    expect(first.events.get(SESSION)?.type).toBe('turn-start-accepted');
+    fs.appendFileSync(file, accepted(5, OTHER));
+    fs.utimesSync(file, new Date(NOW+5000), new Date(NOW+5000));
+    const incomplete = await inspectDesktopLogSignals(NOW+6000, root, follower, catalog);
+    expect(incomplete.events.has(OTHER)).toBe(false);
+    fs.appendFileSync(file, '\n');
+    fs.utimesSync(file, new Date(NOW+7000), new Date(NOW+7000));
+    const completed = await inspectDesktopLogSignals(NOW+8000, root, follower, catalog);
+    expect(completed.events.get(OTHER)?.type).toBe('turn-start-accepted');
+    expect((await inspectDesktopLogSignals(NOW+9000, root, follower, catalog)).signalCount).toBe(0);
+  });
+});
+
 describe('remote sessions controlled by the Windows Desktop app', () => {
   it('matches a Desktop-origin SSH session by its exact UUID, not filesystem path', () => {
     const remote = row('unknown');
