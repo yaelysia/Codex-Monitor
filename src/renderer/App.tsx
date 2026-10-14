@@ -242,7 +242,6 @@ function SettingsPanel({ config, onClose, onSave }: {
 export default function App() {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [scan, setScan] = useState<ScanResponse | null>(null);
-  const [eventChannels, setEventChannels] = useState<Record<string, 'active' | 'connecting' | 'fallback'>>({});
   const [performanceStats, setPerformanceStats] = useState<import('../shared/types').MonitorPerformance | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -312,7 +311,6 @@ export default function App() {
     }).catch(err => { if (mounted.current) setResidentError(describeError(err)); });
     const unsubscribe = window.monitorApi.onMonitorState(state => {
       if (!mounted.current) return;
-      setEventChannels(state.eventChannels || {});
       setPerformanceStats(state.performance ?? null);
       setAlerts(state.alerts);
       setMuted(state.muted);
@@ -353,7 +351,6 @@ export default function App() {
     }).catch(console.error);
     void window.monitorApi.getMonitorState().then(state => {
       if (!mounted.current) return;
-      setEventChannels(state.eventChannels || {});
       setPerformanceStats(state.performance ?? null);
       setAlerts(state.alerts);
       setMuted(state.muted);
@@ -396,14 +393,18 @@ export default function App() {
   const allSessions = useMemo(() => visibleSessions(
     scan?.sources.flatMap(source => source.sessions) ?? [], showSubagents)
     .sort((a, b) => b.updatedAt - a.updatedAt), [scan, showSubagents]);
-  const sourceGroups = useMemo(() => groupByExecutionLocation(allSessions), [allSessions]);
+  // The full workspace tree is only needed when a workspace is selected.
+  const sourceGroups = useMemo(() => workspaceId ?
+    groupByExecutionLocation(allSessions) : [], [allSessions, workspaceId]);
   // Only the seven-day boundary depends on wall clock time, not the seconds
   // displayed by age labels. Avoid rescanning/regrouping all sessions every tick.
   const recencyClock = Math.floor(now / 60_000) * 60_000;
   const shown = useMemo(() => filterSessionsForView(allSessions, view, {
     query, status: filter, recentOnly, sourceId, workspaceId,
   }, recencyClock), [allSessions, view, query, filter, recentOnly, sourceId, workspaceId, recencyClock]);
-  const groups = useMemo(() => groupByExecutionLocation(shown), [shown]);
+  // Session table and event chronology do not render execution-location groups.
+  const groups = useMemo(() => (view === 'board' || view === 'locations') ?
+    groupByExecutionLocation(shown) : [], [shown, view]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
 
@@ -449,9 +450,6 @@ export default function App() {
 
   const totals = useMemo(() => ({
     all: allSessions.length,
-    working: allSessions.filter(item => item.status === 'working').length,
-    waiting: allSessions.filter(item => item.status === 'waiting').length,
-    finished: allSessions.filter(item => item.status === 'finished').length,
     errors: scan?.sources.filter(source => source.error).length ?? 0,
   }), [allSessions, scan]);
 
@@ -459,7 +457,6 @@ export default function App() {
     { value: ALL_SOURCES_VALUE, label: '所有位置' },
     ...(scan?.sources ?? []).map(source => ({ value: source.id, label: source.label })),
   ], [scan?.sources]);
-  const scopeSource = scan?.sources.find(source => source.id === sourceId);
   const currentWorkspace = sourceGroups.flatMap(group => group.workspaces)
     .find(group => group.key === workspaceId);
   const { pending, abnormal, working: running } = useMemo(
