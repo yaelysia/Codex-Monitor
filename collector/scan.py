@@ -531,8 +531,9 @@ def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None):
     # original date folder is outside the newest 10k discovered filenames.
     extra = []
     resolved_base = base.resolve()
-    for relative in list(dict.fromkeys(pinned_paths or []))[:MAX_PINNED * 2]:
-        if len(extra) >= MAX_PINN:
+    safe_candidates = [item for item in (pinned_paths or []) if isinstance(item, str)]
+    for relative in list(dict.fromkeys(safe_candidates))[:MAX_PINNED * 2]:
+        if len(extra) >= MAX_PINNED:
             break
         if not isinstance(relative, str) or not PINNED_PATH.fullmatch(relative) or '..' in relative:
             continue
