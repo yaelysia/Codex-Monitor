@@ -2,9 +2,8 @@ import path from 'node:path';
 import { BrowserWindow, screen } from 'electron';
 import { dockWindowBounds, findSavedDockDisplay, normalizeDockOpacity,
   type SavedDock, type WorkArea } from '../src/shared/window-geometry';
-import type { FloatingWindowState } from '../src/shared/types';
+import type { FloatingCompactSize, FloatingWindowState, SignalAppearance } from '../src/shared/types';
 
-const HEIGHT = 276;
 /** Hidden renderer can be released without affecting the resident tray monitor. */
 export const HIDDEN_RENDERER_IDLE_MS = 60_000;
 export class FloatingWindowController {
@@ -28,7 +27,8 @@ export class FloatingWindowController {
 
   state(): FloatingWindowState {
     return { visible: this.win?.isVisible() ?? false, expanded: this.dock.expanded,
-      side: this.dock.side, opacity: this.dock.opacity };
+      side: this.dock.side, opacity: this.dock.opacity,
+      appearance: this.dock.appearance ?? 'moonsea', compactSize: this.dock.compactSize ?? 'micro' };
   }
 
   get browserWindow(): BrowserWindow | null { return this.win; }
@@ -102,6 +102,21 @@ export class FloatingWindowController {
     return this.state();
   }
 
+  setAppearance(appearance: SignalAppearance): FloatingWindowState {
+    this.dock.appearance = appearance;
+    this.persist();
+    return this.state();
+  }
+
+  setCompactSize(size: FloatingCompactSize): FloatingWindowState {
+    this.dock.compactSize = size;
+    if (this.win && !this.win.isDestroyed() && !this.dock.expanded) {
+      this.place(this.bounds(this.display()));
+    }
+    this.persist();
+    return this.state();
+  }
+
   /** Recover a missing/off-screen dock even if the old display is unplugged. */
   resetPosition(): FloatingWindowState {
     const primary = screen.getPrimaryDisplay();
@@ -135,8 +150,9 @@ export class FloatingWindowController {
     this.dock.displayId = display.id;
     this.dock.displayX = display.workArea.x;
     this.dock.displayY = display.workArea.y;
+    const height = this.bounds(display).height;
     this.dock.offsetY = Math.max(0, Math.min(this.dock.offsetY,
-      Math.max(0, display.workArea.height - HEIGHT)));
+      Math.max(0, display.workArea.height - height)));
   }
 
   private bounds(display: Electron.Display): Electron.Rectangle {
@@ -199,7 +215,7 @@ export class FloatingWindowController {
     const area = display.workArea;
     this.dock.side = before.x + before.width / 2 < area.x + area.width / 2 ? 'left' : 'right';
     this.rememberDisplay(display);
-    this.dock.offsetY = Math.min(Math.max(0, before.y - area.y), Math.max(0, area.height - HEIGHT));
+    this.dock.offsetY = Math.min(Math.max(0, before.y - area.y), Math.max(0, area.height - before.height));
     const target = this.bounds(display);
     if (before.x !== target.x || before.y !== target.y || before.width !== target.width) {
       this.place(target);
