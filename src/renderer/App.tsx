@@ -6,6 +6,7 @@ import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from
 import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 import SignalSelect, { type SignalSelectOption } from './SignalSelect';
+import { useVisibleInterval } from './useVisibleInterval';
 
 type View = 'board' | 'sessions' | 'locations' | 'chronicle';
 
@@ -21,6 +22,8 @@ const STATUS_OPTIONS: readonly SignalSelectOption<ViewFilter['status']>[] = [
   { value: 'unknown', label: '未知' },
 ];
 type OverviewStatus = 'waiting' | 'abnormal' | 'working';
+const SESSION_PAGE_SIZE = 100;
+const AGE_REFRESH_MS = 15_000;
 
 type StoredViewPreferences = { view: View; recentOnly: boolean; filter: ViewFilter['status']; showSubagents: boolean };
 const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
@@ -86,9 +89,13 @@ function ageText(timestamp: number, now: number): string {
   if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时前';
   return Math.floor(seconds / 86400) + ' 天前';
 }
+// DateTimeFormat construction is expensive; session tables reuse one formatter.
+const DISPLAY_DATE_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit', day: '2-digit', hour: '2-digit',
+  minute: '2-digit', second: '2-digit',
+});
 function formatTime(value: number): string {
-  return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit',
-    minute: '2-digit', second: '2-digit' }).format(value);
+  return DISPLAY_DATE_FORMATTER.format(value);
 }
 function workspaceName(value: string | null): string {
   if (!value) return '未记录目录';
@@ -273,6 +280,8 @@ export default function App() {
   const [showAlerts, setShowAlerts] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [sessionLimit, setSessionLimit] = useState(SESSION_PAGE_SIZE);
+  const visible = useVisibleInterval(() => setNow(Date.now()), AGE_REFRESH_MS);
   const pageScrollRef = useRef<HTMLDivElement>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -351,13 +360,11 @@ export default function App() {
       if (state.scan) setScan(state.scan);
     }).catch(console.error);
     void refresh();
-    const clock = setInterval(() => setNow(Date.now()), 5000);
     return () => {
       mounted.current = false;
       unsubscribe();
       unsubscribeFloating();
       unsubscribeFocus();
-      clearInterval(clock);
     };
   }, [refresh]);
   useEffect(() => {
@@ -382,13 +389,20 @@ export default function App() {
 
   useEffect(() => { if (pageScrollRef.current) pageScrollRef.current.scrollTop = 0; }, [view]);
 
+  // Paging stays stable across background scans; new filter/scope inputs reset it.
+  useEffect(() => setSessionLimit(SESSION_PAGE_SIZE),
+    [view, query, filter, recentOnly, showSubagents, sourceId, workspaceId]);
+
   const allSessions = useMemo(() => visibleSessions(
     scan?.sources.flatMap(source => source.sessions) ?? [], showSubagents)
     .sort((a, b) => b.updatedAt - a.updatedAt), [scan, showSubagents]);
   const sourceGroups = useMemo(() => groupByExecutionLocation(allSessions), [allSessions]);
+  // Only the seven-day boundary depends on wall clock time, not the seconds
+  // displayed by age labels. Avoid rescanning/regrouping all sessions every tick.
+  const recencyClock = Math.floor(now / 60_000) * 60_000;
   const shown = useMemo(() => filterSessionsForView(allSessions, view, {
     query, status: filter, recentOnly, sourceId, workspaceId,
-  }, now), [allSessions, view, query, filter, recentOnly, sourceId, workspaceId, now]);
+  }, recencyClock), [allSessions, view, query, filter, recentOnly, sourceId, workspaceId, recencyClock]);
   const groups = useMemo(() => groupByExecutionLocation(shown), [shown]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
@@ -459,7 +473,9 @@ export default function App() {
     abnormal: '失败 / 中断', finished: '本轮完成',
     interrupted: '中断', failed: '失败', unknown: '未知',
   };
-  const recentAlerts = visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at);
+  const recentAlerts = useMemo(() =>
+    visibleAlerts(alerts, allSessions).sort((a, b) => b.at - a.at),
+  [alerts, allSessions]);
   const unreadCount = recentAlerts.filter(item => !item.read).length;
   async function updateAppearance(next: SignalAppearance): Promise<void> {
     try { setAppearance(next); const saved = await window.monitorApi.setFloatingAppearance(next); setAppearance(saved.appearance); }
@@ -534,6 +550,7 @@ export default function App() {
   }
 
   return <div className={'monitor-layout signal-app scene-' + appearance +
+    (visible ? '' : ' signal-paused') +
     (typeof window !== 'undefined' && window.monitorApi?.windowChrome === 'overlay'
       ? ' signal-native-overlay' : '')}>
     <header className="signal-chrome">
@@ -827,7 +844,16 @@ export default function App() {
               {filter !== 'all' && <button type="button" className="signal-clear-filter"
                 onClick={() => setFilter('all')}>清除状态筛选</button>}
             </span></div>
-          <SessionTable sessions={shown} now={now} selectedKey={selectedKey} onSelect={openSession}/>
+          <SessionTable sessions={shown.slice(0, sessionLimit)}
+            now={now} selectedKey={selectedKey} onSelect={openSession}/>
+          {shown.length > sessionLimit && <div className="signal-session-load-more">
+            <span>显示 {sessionLimit} / {shown.length} 条</span>
+            <button type="button" onClick={() => setSessionLimit(current =>
+              Math.min(current + SESSION_PAGE_SIZE, shown.length))}>
+              再显示 {Math.min(SESSION_PAGE_SIZE, shown.length - sessionLimit)} 条
+              <Icon name="chevron-down" size={14}/>
+            </button>
+          </div>}
         </section>}
 
         </div>
