@@ -10,7 +10,9 @@ afterEach(() => vi.unstubAllGlobals());
 describe('reusable SignalSelect controls', () => {
   it('uses a styled combobox rather than an unthemed Windows native select', () => {
     const html = renderToStaticMarkup(createElement(App));
-    expect(html).not.toContain('<select');
+    // Radix retains one visually hidden native select for form integration.
+    // The interactive trigger is a combobox; the native dropdown is never shown.
+    expect(html).toContain('<select aria-hidden="true"');
     expect(html).not.toContain('<option');
     expect(html).toContain('aria-label="执行位置筛选"');
     expect(html).toContain('role="combobox"');
@@ -27,7 +29,7 @@ describe('reusable SignalSelect controls', () => {
     expect(html).toContain('aria-label="运行状态筛选"');
     expect(html).toContain('aria-label="执行位置筛选"');
     expect((html.match(/role="combobox"/g) || [])).toHaveLength(2);
-    expect(html).not.toContain('<select');
+    expect((html.match(/<select aria-hidden="true"/g) || [])).toHaveLength(2);
     const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
     expect(source).toContain('<SignalSelect label="运行状态筛选"');
     expect(source).toContain('<SignalSelect label="执行位置筛选"');
