@@ -1,8 +1,52 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import App from '../src/renderer/App';
+
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('decision desk and session drill-down interaction contract', () => {
+  it('does not render session status filtering on the decision desk', () => {
+    const html = renderToStaticMarkup(createElement(App));
+    expect(html).toContain('signal-overview-stats');
+    expect(html).toContain('查看可能待处理会话，共 0 条');
+    expect(html).not.toContain('aria-label="运行状态筛选"');
+    expect(html).not.toContain('返回决策台');
+  });
+
+  it('offers one-click return and clearing for saved filtered session lists', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => JSON.stringify({
+        view: 'sessions', filter: 'waiting', recentOnly: true, showSubagents: false,
+      }),
+    });
+    const html = renderToStaticMarkup(createElement(App));
+    expect(html).toContain('aria-label="运行状态筛选"');
+    expect(html).toContain('返回决策台');
+    expect(html).toContain('清除状态筛选');
+    expect(html).toContain('signal-filter-tag');
+    expect(html).not.toContain('signal-overview-stats');
+  });
+
+  it('discard stale status after returning to a non-session saved view', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => JSON.stringify({
+        view: 'board', filter: 'waiting', recentOnly: true, showSubagents: false,
+      }),
+    });
+    const html = renderToStaticMarkup(createElement(App));
+    expect(html).toContain('signal-overview-stats');
+    expect(html).not.toContain('aria-label="运行状态筛选"');
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('filter: view === \'sessions\' ? filter : \'all\'');
+    expect(source).toContain("setFilter('all');");
+    expect(source).toContain("onClick={() => openOverview('waiting')}");
+    expect(source).toContain("onClick={() => openOverview('abnormal')}");
+    expect(source).toContain("onClick={() => openOverview('working')}");
+  });
+});
 
 describe('Signal Studio view switching contract', () => {
   it('uses one persistent title container while changing the view animation', () => {
