@@ -246,7 +246,9 @@ export class MonitorService {
       };
       for (const source of delta.sources) this.lastSourceScan.set(source.id, delta.scannedAt);
       const alerts = this.tracker.observe(projectedDelta);
-      this.persistAlerts();
+      // Only an actual new alert changes the persisted inbox here. Frequent
+      // no-change filesystem scans must not serialize the same 500 IDs.
+      if (alerts.length) this.persistAlerts();
       if (!partial) {
         this.lastFullScanAt = delta.scannedAt;
         if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);

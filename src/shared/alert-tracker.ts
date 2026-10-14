@@ -81,8 +81,16 @@ export class AlertTracker {
   }
 
   getAlerts(scan: ScanResponse | null = null): MonitorAlert[] {
-    const byKey = new Map(scan?.sources.flatMap(src => src.sessions)
-      .map(session => [session.key, session]) ?? []);
+    if (!this.alerts.length) return [];
+    // Most alerts already carry current public metadata. Build a session
+    // lookup only when restoring a redacted historical inbox, not on every
+    // foreground update or four-second Desktop audit.
+    if (!scan || !this.alerts.some(alert =>
+        alert.title === '已保存的任务提醒' || alert.sourceLabel === '历史来源')) {
+      return this.alerts.map(alert => ({ ...alert }));
+    }
+    const byKey = new Map(scan.sources.flatMap(src => src.sessions)
+      .map(session => [session.key, session]));
     return this.alerts.map(alert => {
       const live = byKey.get(alert.sessionKey);
       return { ...alert,
