@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { groupByExecutionLocation, workspaceGroupKey } from '../src/shared/grouping';
-import { filterSessions, makeStatusLanes, recentParentCompletions } from '../src/shared/monitor-view';
+import { filterSessions, makeStatusLanes, recentParentCompletions, summarizeDashboardSessions } from '../src/shared/monitor-view';
 import type { SessionRecord } from '../src/shared/types';
 
 const NOW = 1_800_000_000_000;
@@ -109,5 +109,57 @@ describe('floating recent completion list policy', () => {
     expect(recentParentCompletions([completion], NOW, NOW)).toHaveLength(1);
     completion.ageAtSourceMs = 26 * 60 * 60 * 1000;
     expect(recentParentCompletions([completion], NOW, NOW)).toHaveLength(0);
+  });
+});
+
+
+describe('dashboard waiting and abnormal counts', () => {
+  it('never counts interrupted or failed turns as waiting for user input', () => {
+    // Reproduces the observed dashboard mismatch: waiting=0, interrupted=2.
+    const rows = [
+      row('interrupted-a', 'local', '/a', 'interrupted'),
+      row('interrupted-b', 'ssh:server', '/b', 'interrupted'),
+      row('working', 'local', '/c', 'working'),
+      row('finished', 'local', '/d', 'finished'),
+    ];
+    const counts = summarizeDashboardSessions(rows);
+    expect(counts.pending).toHaveLength(0);
+    expect(counts.abnormal.map(x => x.id)).toEqual(['interrupted-a', 'interrupted-b']);
+    expect(counts.working.map(x => x.id)).toEqual(['working']);
+    expect(counts.pending.concat(counts.abnormal).map(x => x.status)).not.toContain('finished');
+  });
+
+  it('uses actual waiting state and opens only its rows in waiting filter', () => {
+    const pending = row('pending', 'local', '/proj', 'waiting');
+    pending.pendingQuestionToken = 'question1';
+    const terminated = row('failed', 'local', '/proj', 'failed');
+    const abort = row('interrupted', 'local', '/proj', 'interrupted');
+    const all = [pending, terminated, abort];
+    const summary = summarizeDashboardSessions(all);
+    expect(summary.pending.map(x => x.id)).toEqual(['pending']);
+    expect(summary.abnormal.map(x => x.id)).toEqual(['failed', 'interrupted']);
+    const filter = (status: 'waiting' | 'abnormal') => filterSessions(all, {
+      query: '', status, recentOnly: true, sourceId: null, workspaceId: null,
+    }, NOW).map(x => x.id);
+    expect(filter('waiting')).toEqual(['pending']);
+    expect(filter('abnormal')).toEqual(['failed', 'interrupted']);
+  });
+
+  it('keeps counters and navigation within the same search/location scope', () => {
+    const all = [
+      row('wait-a', 'local', '/a', 'waiting', NOW, '需要确认'),
+      row('wait-b', 'ssh:server', '/b', 'waiting', NOW, '另外一个'),
+      row('abort-a', 'local', '/a', 'interrupted', NOW, '需要确认'),
+    ];
+    const options = { query: '需要确认', status: 'all' as const, recentOnly: true,
+      sourceId: 'local', workspaceId: null };
+    const shown = filterSessions(all, options, NOW);
+    const groups = summarizeDashboardSessions(shown);
+    expect(groups.pending.map(x => x.id)).toEqual(['wait-a']);
+    expect(groups.abnormal.map(x => x.id)).toEqual(['abort-a']);
+    expect(filterSessions(all, { ...options, status: 'waiting' }, NOW).map(x => x.id))
+      .toEqual(groups.pending.map(x => x.id));
+    expect(filterSessions(all, { ...options, status: 'abnormal' }, NOW).map(x => x.id))
+      .toEqual(groups.abnormal.map(x => x.id));
   });
 });
