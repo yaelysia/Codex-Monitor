@@ -3,6 +3,7 @@ import type { FloatingTab, FloatingWindowState, MonitorState, SessionRecord } fr
 import { recentParentCompletions } from '../shared/monitor-view';
 import { windowWasActivated } from '../shared/window-navigation';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
+import { sessionEvidenceLabel } from '../shared/session-evidence';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
 const DEFAULT_DOCK: FloatingWindowState = { visible: true, expanded: false, side: 'right', opacity: 1 };
@@ -103,7 +104,7 @@ export default function FloatingApp() {
             onClick={() => openOriginal(session.key)}>
             <span className="small-dot green"/>
             <span className="task-info"><strong title={session.title || ''}>{session.title || '未命名会话'}</strong>
-              <small title={session.workspace || ''}>{session.sourceLabel} · {session.workspace || '未知目录'}</small></span>
+              <small title={session.workspace || ''}>{session.sourceLabel} · {sessionEvidenceLabel(session)} · {session.workspace || '未知目录'}</small></span>
             <Icon name="open" size={13}/>
           </button>) : <p className="dock-empty">暂无可确认的活动会话</p>)}
         {tab === 'alerts' && <>

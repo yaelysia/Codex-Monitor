@@ -494,3 +494,7 @@ button svg { flex-shrink: 0; }
 .detail-original-window{display:flex;flex-direction:column;gap:8px;margin:-5px 0 17px}
 .detail-original-window .primary-button{display:flex;align-items:center;justify-content:center;gap:8px;width:100%}
 .detail-original-window span{font-size:10px;color:#a4a0b9;line-height:1.65;overflow-wrap:anywhere}
+
+/* Evidence provenance is distinct from the tentative execution-state color. */
+.task-evidence{font-size:9px;color:#b6a9c2;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.table-evidence{display:block;font-size:10px;color:#aaa0bb;margin-top:5px;white-space:normal;line-height:1.45}

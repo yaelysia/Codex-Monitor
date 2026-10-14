@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus } from '../shared/types';
+import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessions, makeStatusLanes, type ViewFilter } from '../shared/monitor-view';
 import { visibleSessions } from '../shared/session-visibility';
@@ -102,6 +103,8 @@ function SessionCard({ session, now, selected, onSelect }: {
     </div>}
     <div className="task-path" title={session.workspace || '未记录工作目录'}>{session.workspace || '未记录工作目录'}</div>
     <div className="task-footer"><span className="task-state"><span className="status-dot" />{STATUS[session.status].short}</span>
+      {session.status === 'working' && <span className="task-evidence" title={session.statusReason}>
+        {sessionEvidenceLabel(session)}</span>}
       <Icon name="chevron-right" size={15}/>
     </div>
   </button>;
@@ -129,7 +132,8 @@ function SessionTable({ sessions, now, selectedKey, onSelect }: {
           <div className="mono session-identifier">{item.id}</div>
         </td>
         <td><span className="table-source">{item.sourceLabel}</span></td>
-        <td><StatusPill status={item.status}/></td>
+        <td><StatusPill status={item.status}/>
+          {item.status === 'working' && <span className="table-evidence">{sessionEvidenceLabel(item)}</span>}</td>
         <td><span className="table-age">{ageText(item.updatedAt, now)}</span>
           <span className="table-date">{formatTime(item.updatedAt)}</span></td>
       </tr>)}</tbody>
@@ -732,6 +736,8 @@ export default function App() {
           <div className="detail-field"><span>最后活动</span><div className="detail-value">{formatTime(selected.updatedAt)}
             <span className="detail-muted"> · {ageText(selected.updatedAt, now)}</span></div></div>
           <div className="detail-divider"/>
+          <div className="detail-field"><span>证据可信程度</span>
+            <div className="detail-value">{sessionEvidenceLabel(selected)}</div></div>
           <div className="detail-field"><span>状态判断依据</span>
             <div className="detail-reason">{selected.statusReason || '当前没有可靠的状态信息'}</div></div>
           <p className="detail-note">仅展示 Codex 已持久化的元数据。状态可能滞后，不代表实时进程状态。</p>
