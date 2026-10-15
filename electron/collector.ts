@@ -162,6 +162,10 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
       interruptionTokens: Array.isArray(entry.interruptionTokens)
         ? [...new Set(entry.interruptionTokens.filter((token): token is string =>
           typeof token === 'string' && token.length > 0 && token.length <= 300))].slice(-32) : [],
+      failedToken: typeof entry.failedToken === 'string' ? entry.failedToken.slice(0, 300) : null,
+      failureTokens: Array.isArray(entry.failureTokens)
+        ? [...new Set(entry.failureTokens.filter((token): token is string =>
+          typeof token === 'string' && token.length > 0 && token.length <= 300))].slice(-32) : [],
       waitingToken: typeof entry.waitingToken === 'string' ? entry.waitingToken : null,
       pendingQuestionToken: typeof entry.pendingQuestionToken === 'string' ?
         entry.pendingQuestionToken.slice(0, 300) : null,
