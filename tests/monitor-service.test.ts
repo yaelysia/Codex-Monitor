@@ -521,3 +521,56 @@ describe('local watcher index enablement', () => {
     expect(vi.mocked(collect).mock.calls.at(-1)?.[4]).toBe(false);
   });
 });
+
+describe('monitor service source alert integration', () => {
+  it('keeps brief SSH failures silent and alerts sustained failure + later recovery exactly once', async () => {
+    const initial = source('ssh:one',[session('work','working',NOW)]);
+    const failed = source('ssh:one',[]);
+    failed.error = 'PRIVATE_SSH_CONNECTION_FAILURE';
+    const recovered = source('ssh:one',[session('work','working',NOW+40_000)]);
+    vi.mocked(collect).mockResolvedValueOnce(snapshot(NOW,[initial]))
+      .mockResolvedValueOnce(snapshot(NOW+1000,[failed]))
+      .mockResolvedValueOnce(snapshot(NOW+12_000,[failed]))
+      .mockResolvedValueOnce(snapshot(NOW+32_000,[failed]))
+      .mockResolvedValueOnce(snapshot(NOW+48_000,[failed]))
+      .mockResolvedValueOnce(snapshot(NOW+49_000,[recovered]));
+    const sent: MonitorAlert[] = [];
+    service = new MonitorService(() => undefined, alert => sent.push(alert));
+    await service.refresh(true);
+    vi.setSystemTime(NOW+1000);
+    await service.refresh(true);
+    expect(service.state().scan?.sources[0]?.stale).toBe(true);
+    vi.setSystemTime(NOW+12_000);
+    await service.refresh(true);
+    expect(sent).toEqual([]);
+    vi.setSystemTime(NOW+32_000);
+    await service.refresh(true);
+    expect(sent.map(a=>a.kind)).toEqual(['source-offline']);
+    expect(sent[0]?.sessionKey).toBe('@source:ssh:one');
+    vi.setSystemTime(NOW+48_000);
+    await service.refresh(true);
+    expect(sent).toHaveLength(1);
+    vi.setSystemTime(NOW+49_000);
+    await service.refresh(true);
+    expect(sent.map(a=>a.kind)).toEqual(['source-offline','source-recovered']);
+    expect(service.state().scan?.sources[0]?.error).toBeNull();
+  });
+
+  it('forgets removed source health on a full scan without fabricating a recovery', async () => {
+    const failed = source('ssh:one',[]);
+    failed.error = 'offline';
+    vi.mocked(collect).mockResolvedValueOnce(snapshot(NOW,[failed]))
+      .mockResolvedValueOnce(snapshot(NOW+31_000,[failed]))
+      .mockResolvedValueOnce(snapshot(NOW+32_000,[source('local',[])]));
+    const events: MonitorAlert[] = [];
+    service = new MonitorService(() => undefined, a => events.push(a));
+    await service.refresh(true);
+    vi.setSystemTime(NOW+31_000);
+    await service.refresh(true);
+    expect(events.map(a=>a.kind)).toEqual(['source-offline']);
+    vi.setSystemTime(NOW+32_000);
+    await service.refresh(true);
+    expect(events).toHaveLength(1);
+    expect(service.state().scan?.sources.map(s=>s.id)).toEqual(['local']);
+  });
+});
