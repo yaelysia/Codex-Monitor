@@ -155,6 +155,9 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
       statusReason: typeof entry.statusReason === 'string' ? entry.statusReason : '状态信息不足',
       finishedToken: typeof entry.finishedToken === 'string' ? entry.finishedToken : null,
       interruptedToken: typeof entry.interruptedToken === 'string' ? entry.interruptedToken : null,
+      interruptionTokens: Array.isArray(entry.interruptionTokens)
+        ? [...new Set(entry.interruptionTokens.filter((token): token is string =>
+          typeof token === 'string' && token.length > 0 && token.length <= 300))].slice(-32) : [],
       waitingToken: typeof entry.waitingToken === 'string' ? entry.waitingToken : null,
       pendingQuestionToken: typeof entry.pendingQuestionToken === 'string' ?
         entry.pendingQuestionToken.slice(0, 300) : null,

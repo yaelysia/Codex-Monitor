@@ -39,6 +39,10 @@ export interface SessionRecord {
   finishedToken?: string | null;
   /** Fingerprint of a persisted turn_aborted event, distinct from successful completion. */
   interruptedToken?: string | null;
+  /** Bounded stable fingerprints of aborted turns in the scanned JSONL tail.
+   * Includes aborts followed by a later turn; never includes message text.
+   */
+  interruptionTokens?: string[];
   waitingToken?: string | null;
   /** Stable ID for an unanswered persisted question/approval call or async AgentMessage. */
   pendingQuestionToken?: string | null;

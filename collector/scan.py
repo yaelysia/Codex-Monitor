@@ -398,6 +398,7 @@ def details(head, tail, filename, clipped, modified, now):
     awaiting = False
     finished_token = None
     interrupted_token = None
+    interruption_tokens = []
     waiting_token = None
     checkpoint_after_boundary = False
     parsed_rows = list(rows(tail, clipped))
@@ -443,6 +444,11 @@ def details(head, tail, filename, clipped, modified, now):
                 awaiting, finished_token, waiting_token = (
                     False, marker if phase == 'finished' else None, None)
                 interrupted_token = marker if phase == 'interrupted' else None
+                if (interrupted_token and len(interrupted_token) <= 300
+                        and interrupted_token not in interruption_tokens):
+                    interruption_tokens.append(interrupted_token)
+                    if len(interruption_tokens) > 32:
+                        interruption_tokens.pop(0)
                 checkpoint_after_boundary = False
                 last_terminal_turn_id = turn_id or active_turn_id
                 active_turn_id = None
@@ -499,6 +505,7 @@ def details(head, tail, filename, clipped, modified, now):
         'statusReason': reason,
         'finishedToken': finished_token if terminal and not pending_token else None,
         'interruptedToken': interrupted_token if status == 'interrupted' else None,
+        'interruptionTokens': interruption_tokens,
         'waitingToken': pending_token if question['blocking'] and pending_token
                         else waiting_token if awaiting else None,
         'pendingQuestionToken': pending_token,

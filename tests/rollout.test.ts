@@ -266,6 +266,27 @@ describe('Codex Desktop paginated turn lifecycle', () => {
   });
 });
 
+describe('aborted event history survives subsequent turns', () => {
+  const row = (kind: string, turnId: string, time: string) =>
+    JSON.stringify({ type: 'event_msg', timestamp: time,
+      payload: { type: kind, turn_id: turnId } });
+  it('returns both abort markers after two quick restarts, even when the latest turn is working', () => {
+    const tail = [
+      row('turn_started', 'a', '2026-10-12T10:00:00Z'),
+      row('turn_aborted', 'a', '2026-10-12T10:00:01Z'),
+      row('turn_started', 'b', '2026-10-12T10:00:02Z'),
+      row('turn_aborted', 'b', '2026-10-12T10:00:03Z'),
+      row('turn_started', 'c', '2026-10-12T10:00:04Z'),
+    ].join('\n');
+    const parsed = inferStatus(tail, NOW - 1_000, NOW);
+    expect(parsed.status).toBe('working');
+    expect(parsed.interruptedToken).toBeNull();
+    expect(parsed.interruptionTokens).toEqual([
+      '2026-10-12T10:00:01Z|a', '2026-10-12T10:00:03Z|b',
+    ]);
+  });
+});
+
 describe('strong turn identity safety', () => {
   const evt = (event: string, turnId?: string) => JSON.stringify({
     type: 'event_msg', payload: { type: event, ...(turnId ? { turn_id: turnId } : {}) },

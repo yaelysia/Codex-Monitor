@@ -22,7 +22,7 @@ export interface AlertTrackerPersistence {
 
 type KnownSession = Pick<SessionRecord,
   'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'interruptedToken' |
-  'waitingToken' | 'pendingQuestionToken' | 'isSubagent'>;
+  'interruptionTokens' | 'waitingToken' | 'pendingQuestionToken' | 'isSubagent'>;
 
 /** Compare file mtime with the clock of the machine that owns it, not with Windows. */
 function recentAtSource(session: SessionRecord, now: number): boolean {
@@ -41,6 +41,20 @@ function fileOrEventChanged(previous: KnownSession, session: SessionRecord,
     (session.byteSize != null && previous.byteSize != null &&
       session.byteSize !== previous.byteSize) ||
     (!!token && token !== previousToken);
+}
+
+/** Interpret abort timestamps in the source's own clock, never Windows time.
+ * Older aborts in a newly discovered file must not flood the inbox.
+ */
+function recentAbortedTurn(token: string, session: SessionRecord, now: number): boolean {
+  const separator = token.indexOf('|');
+  const eventAt = separator > 0 ? Date.parse(token.slice(0, separator)) : NaN;
+  if (!Number.isFinite(eventAt)) return recentAtSource(session, now);
+  const sourceNow = typeof session.ageAtSourceMs === 'number' &&
+    Number.isFinite(session.ageAtSourceMs)
+    ? session.updatedAt + session.ageAtSourceMs : now;
+  const age = sourceNow - eventAt;
+  return age >= -10_000 && age <= RECENT_EVENT_MS;
 }
 
 /** A source may temporarily disappear during SSH failures. Never infer transitions from errors. */
@@ -195,6 +209,8 @@ export class AlertTracker {
       for (const session of source.sessions) {
         const prior = previous?.get(session.key);
         const questionToken = session.pendingQuestionToken;
+        const interrupted = [...new Set(session.interruptionTokens ?? [])];
+        const knownInterrupted = new Set(prior?.interruptionTokens ?? []);
         // An asynchronous question may be unanswered while Codex continues
         // working or after its current turn finished. Such a request deserves
         // a waiting notification, not a fabricated process-waiting state.
@@ -229,7 +245,28 @@ export class AlertTracker {
           // A child remains in read-only scan results for optional inspection,
           // but is not a separate user-facing notification target.
           const childNotification = session.isSubagent === true || prior?.isSubagent === true;
-          if (changed && newTerminal && recentlyObserved && !childNotification) {
+          // The snapshot can already be "working" or "finished" by the time
+          // it is read. Emit every NEW persisted abort marker independently.
+          if (recentlyObserved && !childNotification) {
+            for (const marker of interrupted) {
+              if (knownInterrupted.has(marker) || !recentAbortedTurn(marker, session, now)) continue;
+              const id = JSON.stringify([session.key, 'interrupted', marker]);
+              if (this.seenAlertIds.has(id)) continue;
+              this.seenAlertIds.add(id);
+              pending.push({
+                id, sessionKey: session.key, sessionId: session.id, kind: 'interrupted',
+                title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
+                workspace: session.workspace, at: now, read: false,
+                statusReason: '检测到本轮中断事件（即使后续轮次已经开始或结束）',
+                questionText: null,
+              });
+            }
+          }
+          // Legacy/partial scanners may only expose the current terminal state.
+          // With an event history, the abort has already been handled above.
+          if (changed && newTerminal && recentlyObserved && !childNotification &&
+              !(kind === 'interrupted' && session.interruptedToken &&
+                interrupted.includes(session.interruptedToken))) {
             const identity = token || [session.updatedAt, session.byteSize ?? '?'].join(':');
             const id = JSON.stringify([session.key, kind, identity]);
             const finishedTurn = kind === 'finished' && token
@@ -252,6 +289,7 @@ export class AlertTracker {
           status: session.status, updatedAt: session.updatedAt,
           byteSize: session.byteSize, isSubagent: session.isSubagent,
           finishedToken: session.finishedToken, interruptedToken: session.interruptedToken,
+          interruptionTokens: interrupted,
           waitingToken: session.waitingToken,
           pendingQuestionToken: session.pendingQuestionToken,
         });
