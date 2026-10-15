@@ -123,6 +123,16 @@ describe('audit: visibility and inspector consistency', () => {
   });
 });
 
+describe('source-clock and local indexing diagnostics', () => {
+  it('exposes source scan timings and local stat count in the existing footer', () => {
+    const source=readFileSync(new URL('../src/renderer/App.tsx', import.meta.url),'utf8');
+    expect(source).toContain('projectSessionsToLocalTime(scan)');
+    expect(source).toContain('sourceDiagnosticTitle');
+    expect(source).toContain('aria-label="采集性能诊断"');
+    expect(source).toContain('localDiagnostics.metrics.statCalls');
+  });
+});
+
 describe('renderer performance safeguards', () => {
   it('reuses date formatting and limits initial table DOM work', () => {
     const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');

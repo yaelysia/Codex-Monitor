@@ -154,3 +154,43 @@ describe('bounded pinned local rollover sessions', () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe('local index integration with JSONL and the parsing cache', () => {
+  it('reuses indexed stats on healthy watchers, updates changed files, and falls back to full scanning', async () => {
+    const { noteLocalRolloutChange, localFileIndexDiagnostics } =
+      await import('../electron/local-file-index');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(),'monitor-incremental-'));
+    created.push(root);
+    const relative = '2026/10/15/rollout-local-index.jsonl';
+    const directory = path.join(root, 'sessions','2026','10','15');
+    await fs.mkdir(directory,{recursive:true});
+    const file = path.join(directory,'rollout-local-index.jsonl');
+    await fs.writeFile(file, JSON.stringify({
+      type:'event_msg',payload:{type:'task_started'},
+    })+'\n');
+    expect((await scanLocal(root,'local','Windows',Date.now(),[],true))[0]?.status)
+      .toBe('working');
+    const first = localFileIndexDiagnostics(root);
+    expect(first.index.mode).toBe('full');
+    expect(first.index.statCalls).toBe(1);
+    const hits = localScanCacheStats().hits;
+    await scanLocal(root,'local','Windows',Date.now()+1000,[],true);
+    const cached = localFileIndexDiagnostics(root);
+    expect(cached.index.mode).toBe('incremental');
+    expect(cached.index.statCalls).toBe(0);
+    expect(localScanCacheStats().hits).toBeGreaterThan(hits);
+
+    await fs.appendFile(file, JSON.stringify({
+      type:'event_msg',timestamp:new Date().toISOString(),
+      payload:{type:'task_complete',turn_id:'turn-index'},
+    })+'\n');
+    noteLocalRolloutChange(root,relative);
+    expect((await scanLocal(root,'local','Windows',Date.now()+2000,[],true))[0]?.status)
+      .toBe('finished');
+    expect(localFileIndexDiagnostics(root).index.statCalls).toBe(1);
+    expect(localFileIndexDiagnostics(root).cacheMisses).toBe(1);
+    // Watcher unavailable: force a complete discovery and stat pass.
+    await scanLocal(root,'local','Windows',Date.now()+3000,[],false);
+    expect(localFileIndexDiagnostics(root).index.mode).toBe('full');
+  });
+});

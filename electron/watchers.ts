@@ -124,8 +124,12 @@ export class WatchCoordinator {
               (_event, file) => {
                 if (!alive || this.stopped) return;
                 const name = file?.toString() || '';
-                if (!name || /(?:^|[\\/])codex-desktop-[^\\/]+\.log$/i.test(name))
+                if (!name || /(?:^|[\\/])codex-desktop-[^\\/]+\.log$/i.test(name)) {
+                  // The Desktop log watcher does not provide a trusted rollout
+                  // path; the next local scan must recheck its directory index.
+                  noteLocalRolloutChange(spec.root, null);
                   this.onChange(spec.id);
+                }
               });
             desktopWatches.push(subscription);
             subscription.on('error', () => {
