@@ -5,7 +5,7 @@ const LABELS: Record<AlertKind, string> = {
   waiting: '可能待处理',
   interrupted: '本轮已中断',
   failed: '本轮失败',
-  'source-offline': '数据源连接异常',
+  'source-offline': '数据源采集异常',
   'source-recovered': '数据源已恢复',
 };
 

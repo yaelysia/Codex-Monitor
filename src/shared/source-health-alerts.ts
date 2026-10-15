@@ -41,7 +41,7 @@ export class SourceHealthTracker {
     return {
       id: JSON.stringify([sourceAlertKey(source.id), kind, String(startedAt)]),
       sessionKey: sourceAlertKey(source.id), sessionId: source.id,
-      kind, title: source.label + (bad ? ' · 连接异常' : ' · 已恢复连接'),
+      kind, title: source.label + (bad ? ' · 采集异常' : ' · 已恢复采集'),
       sourceLabel: source.label, workspace: null, at: now, read: false,
       statusReason: bad
         ? '持续采集失败；数据源的实时会话状态无法确认，请检查连接或采集配置'

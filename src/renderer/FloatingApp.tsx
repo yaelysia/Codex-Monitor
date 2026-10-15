@@ -63,7 +63,8 @@ export default function FloatingApp() {
 
   const sessions = useMemo(() => recentSessions(monitor), [monitor.scan]);
   const running = useMemo(() => sessions.filter(s => s.status === 'working'), [sessions]);
-  const waiting = useMemo(() => sessions.filter(s => s.status === 'waiting' || !!s.pendingQuestionToken),
+  const waiting = useMemo(() => sessions.filter(s => s.status === 'waiting' ||
+    (s.status !== 'failed' && s.status !== 'interrupted' && !!s.pendingQuestionToken)),
     [sessions]);
   const completed = recentParentCompletions(sessions, now);
   const alerts = useMemo(() => visibleAlerts(monitor.alerts,

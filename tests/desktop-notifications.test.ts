@@ -100,7 +100,7 @@ describe('native notification acknowledge action', () => {
     };
     showDesktopAlert(source,focus,acknowledge);
     const notice = fake.notifications[1]!;
-    expect(notice.options.title).toBe('Codex · 数据源连接异常');
+    expect(notice.options.title).toBe('Codex · 数据源采集异常');
     expect(notice.options.body).toContain('连续采集失败');
     notice.fire('click');
     expect(focus).toHaveBeenCalledExactlyOnceWith('@source:ssh:server');

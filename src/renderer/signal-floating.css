@@ -3,7 +3,7 @@
 .float-shell.signal-float {
   --f-bg:#0b1922;--f-panel:#10232b;--f-elev:#172d35;--f-stroke:rgba(173,220,220,.18);
   --f-text:#e9f5f6;--f-muted:#90aab2;--f-dim:#647f88;--f-accent:#9fe5d0;--f-ink:#082c24;
-  --f-warn:#edbd90;--f-tint:rgba(151,218,201,.11);--f-shadow:rgba(0,0,0,.37);
+  --f-warn:#edbd90;--f-danger:#ef8884;--f-tint:rgba(151,218,201,.11);--f-shadow:rgba(0,0,0,.37);
   font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;
   width:100%;height:100%;display:flex;gap:8px;align-items:center;overflow:hidden;pointer-events:none;
   color:var(--f-text);font-synthesis:none;
@@ -11,12 +11,12 @@
 .float-shell.signal-float.scene-ember {
   --f-bg:#1b1412;--f-panel:#2a201d;--f-elev:#352a26;--f-stroke:rgba(237,199,168,.2);
   --f-text:#f5eae2;--f-muted:#b9a298;--f-dim:#927b70;--f-accent:#eec09b;--f-ink:#331d14;
-  --f-warn:#efb87f;--f-tint:rgba(238,192,155,.11);--f-shadow:rgba(0,0,0,.48);
+  --f-warn:#efb87f;--f-danger:#e99687;--f-tint:rgba(238,192,155,.11);--f-shadow:rgba(0,0,0,.48);
 }
 .float-shell.signal-float.scene-mist {
   --f-bg:#edf6f3;--f-panel:#ffffff;--f-elev:#e8f2f0;--f-stroke:rgba(37,104,100,.18);
   --f-text:#18373b;--f-muted:#62817f;--f-dim:#88a09d;--f-accent:#276f68;--f-ink:#fff;
-  --f-warn:#bd8554;--f-tint:rgba(39,111,104,.08);--f-shadow:rgba(20,67,63,.16);
+  --f-warn:#bd8554;--f-danger:#bf4f51;--f-tint:rgba(39,111,104,.08);--f-shadow:rgba(20,67,63,.16);
   color-scheme:light;
 }
 .signal-float .dock-rail,.signal-float .dock-panel{pointer-events:auto;box-sizing:border-box}
@@ -116,7 +116,7 @@
   flex:1;border:0;background:transparent;color:var(--f-text);padding:12px 3px;text-align:left}
 .signal-float .signal-dock-alert-dot{width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:var(--f-accent)}
 .signal-float .signal-dock-alert-dot.waiting,.signal-float .signal-dock-alert-dot.interrupted{background:var(--f-warn)}
-.signal-float .signal-dock-alert-dot.failed,.signal-float .signal-dock-alert-dot.source-offline{background:var(--f-warn)}
+.signal-float .signal-dock-alert-dot.failed,.signal-float .signal-dock-alert-dot.source-offline{background:var(--f-danger)}
 .signal-float .signal-dock-alert-dot.source-recovered{background:var(--f-accent)}
 .signal-float .signal-dock-alert-main > span:last-child{display:flex;flex-direction:column;gap:6px;min-width:0;flex:1}
 .signal-float .signal-dock-alert-main strong{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

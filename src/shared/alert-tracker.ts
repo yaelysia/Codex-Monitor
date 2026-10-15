@@ -123,7 +123,7 @@ export class AlertTracker {
         const live = bySourceKey.get(alert.sessionKey);
         return { ...alert,
           title: alert.title === '已保存的数据源提醒' && live
-            ? live.label + (alert.kind === 'source-offline' ? ' · 连接异常' : ' · 已恢复连接')
+            ? live.label + (alert.kind === 'source-offline' ? ' · 采集异常' : ' · 已恢复采集')
             : alert.title,
           sourceLabel: alert.sourceLabel === '历史来源'
             ? (live?.label || alert.sourceLabel) : alert.sourceLabel,
