@@ -222,6 +222,35 @@ export class AlertTracker {
           session.status === 'finished' ? 'finished' :
           session.status === 'waiting' ? 'waiting' : null;
 
+        // Two adjacent successful scans bound the completion to that observation
+        // interval, regardless of SSH/WSL clock skew or metadata timestamps.
+        // On reconnect or for a newly discovered session, require a locally
+        // calculated age from the source host to avoid stale alert floods.
+        const recentlyObserved = prior
+          ? continuouslyObserved || recentAtSource(session, now)
+          : recentAtSource(session, now);
+
+        // Hide child-agent notifications (including wait events) by default.
+        // A child remains in read-only scan results for optional inspection,
+        // but is not a separate user-facing notification target.
+        const childNotification = session.isSubagent === true || prior?.isSubagent === true;
+        // The snapshot can already be "working" or "finished" by the time
+        // it is read. Emit every NEW persisted abort marker independently.
+        if (knownBefore && recentlyObserved && !childNotification) {
+          for (const marker of interrupted) {
+            if (knownInterrupted.has(marker) || !recentAbortedTurn(marker, session, now)) continue;
+            const id = JSON.stringify([session.key, 'interrupted', marker]);
+            if (this.seenAlertIds.has(id)) continue;
+            this.seenAlertIds.add(id);
+            pending.push({
+              id, sessionKey: session.key, sessionId: session.id, kind: 'interrupted',
+              title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
+              workspace: session.workspace, at: now, read: false,
+              statusReason: '检测到本轮中断事件（即使后续轮次已经开始或结束）',
+              questionText: null,
+            });
+          }
+        }
         if (kind && knownBefore) {
           const token = kind === 'finished' ? session.finishedToken :
             kind === 'interrupted' ? session.interruptedToken :
@@ -233,35 +262,6 @@ export class AlertTracker {
           const newTerminal = !prior || (kind === 'waiting' && questionToken
             ? questionToken !== prior.pendingQuestionToken
             : prior.status !== session.status || (!!token && token !== priorToken));
-          // Two adjacent successful scans bound the completion to that observation
-          // interval, regardless of SSH/WSL clock skew or metadata timestamps.
-          // On reconnect or for a newly discovered session, require a locally
-          // calculated age from the source host to avoid stale alert floods.
-          const recentlyObserved = prior
-            ? continuouslyObserved || recentAtSource(session, now)
-            : recentAtSource(session, now);
-
-          // Hide child-agent notifications (including wait events) by default.
-          // A child remains in read-only scan results for optional inspection,
-          // but is not a separate user-facing notification target.
-          const childNotification = session.isSubagent === true || prior?.isSubagent === true;
-          // The snapshot can already be "working" or "finished" by the time
-          // it is read. Emit every NEW persisted abort marker independently.
-          if (recentlyObserved && !childNotification) {
-            for (const marker of interrupted) {
-              if (knownInterrupted.has(marker) || !recentAbortedTurn(marker, session, now)) continue;
-              const id = JSON.stringify([session.key, 'interrupted', marker]);
-              if (this.seenAlertIds.has(id)) continue;
-              this.seenAlertIds.add(id);
-              pending.push({
-                id, sessionKey: session.key, sessionId: session.id, kind: 'interrupted',
-                title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
-                workspace: session.workspace, at: now, read: false,
-                statusReason: '检测到本轮中断事件（即使后续轮次已经开始或结束）',
-                questionText: null,
-              });
-            }
-          }
           // Legacy/partial scanners may only expose the current terminal state.
           // With an event history, the abort has already been handled above.
           if (changed && newTerminal && recentlyObserved && !childNotification &&
