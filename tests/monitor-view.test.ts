@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { groupByExecutionLocation, workspaceGroupKey } from '../src/shared/grouping';
 import { filterSessions, filterSessionsForView, makeStatusLanes, recentParentCompletions, summarizeDashboardSessions } from '../src/shared/monitor-view';
-import type { SessionRecord } from '../src/shared/types';
+import type { SessionRecord, ScanResponse } from '../src/shared/types';
+import { projectSessionsToLocalTime, sessionObservedAt } from '../src/shared/session-time';
 
 const NOW = 1_800_000_000_000;
 function row(id: string, sourceId: string, workspace: string | null, status: SessionRecord['status'],
@@ -99,16 +100,21 @@ describe('floating recent completion list policy', () => {
     items[0]!.ageAtSourceMs = 1000;
     items[1]!.isSubagent = false;
     items[1]!.ageAtSourceMs = 1000;
-    const recent = recentParentCompletions(items, NOW + 12_000, NOW);
+    const recent = recentParentCompletions(items, NOW + 12_000);
     expect(recent.map(s => s.id)).toEqual(['root']);
     expect(items.map(s => s.id)).toEqual(['child', 'root']);
   });
   it('uses remote age rather than cross-host time when showing recent completion', () => {
     const completion = row('root', 'ssh:server', '/srv/app', 'finished', NOW - 20 * 60 * 60 * 1000);
     completion.ageAtSourceMs = 2000;
-    expect(recentParentCompletions([completion], NOW, NOW)).toHaveLength(1);
+    const snapshot = (capturedAt: number): ScanResponse => ({
+      scannedAt: NOW + 30_000,
+      sources: [{id: 'ssh:server', label: 'Server', kind: 'ssh',
+        capturedAt, error: null, sessions: [completion]}],
+    });
+    expect(recentParentCompletions(projectSessionsToLocalTime(snapshot(NOW)), NOW)).toHaveLength(1);
     completion.ageAtSourceMs = 26 * 60 * 60 * 1000;
-    expect(recentParentCompletions([completion], NOW, NOW)).toHaveLength(0);
+    expect(recentParentCompletions(projectSessionsToLocalTime(snapshot(NOW)), NOW)).toHaveLength(0);
   });
 });
 

@@ -9,6 +9,7 @@ import { getDesktopLogMetrics, getDesktopLogWatchDirectories } from './desktop-r
 import { DesktopLogFolderWatcher } from './desktop-log-watch';
 import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
 import { SourceRetention } from '../src/shared/source-retention';
+import { NotificationPerformance } from '../src/shared/notification-performance';
 import type { SourceResult } from '../src/shared/types';
 
 const POLLING_FALLBACK_MS = 12_000;
@@ -42,6 +43,7 @@ function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): bool
 export class MonitorService {
   private tracker = new AlertTracker();
   private readonly sourceRetention = new SourceRetention();
+  private readonly notificationPerformance = new NotificationPerformance();
   private readonly alertStore: AlertStateStore | null;
   private lastSourceScanDurationMs: number | null = null;
   private lastScan: ScanResponse | null = null;
@@ -132,6 +134,7 @@ export class MonitorService {
       performance: {
         sourceScanDurationMs: this.lastSourceScanDurationMs,
         desktopAudit: this.platform === 'win32' ? getDesktopLogMetrics() : null,
+        notificationLag: this.notificationPerformance.snapshot(),
       },
     };
   }
@@ -284,7 +287,10 @@ export class MonitorService {
     const alerts = this.tracker.observe({ scannedAt, sources: justScanned });
     if (this.running) alerts.push(...this.tracker.observeDesktopCompletions(
       projected, recentDesktopCompletions(), this.startedAt, Date.now()));
-    if (alerts.length) this.persistAlerts();
+    if (alerts.length) {
+      this.notificationPerformance.observe(alerts, projected, Date.now());
+      this.persistAlerts();
+    }
     this.onChange(this.state());
     if (!this.tracker.getMuted()) for (const alert of alerts) this.onAlert(alert);
   }
@@ -324,7 +330,7 @@ export class MonitorService {
         pins, async source => {
           await deliver([source], source.capturedAt ?? Date.now());
           observed.add(source.id);
-        });
+        }, partial && this.watchers.status().local === 'active');
       if (delta.sources.length === 0 && partial && this.lastScan) return this.lastScan;
       const remainder = delta.sources.filter(source => !observed.has(source.id));
       if (remainder.length) await deliver(remainder, delta.scannedAt);

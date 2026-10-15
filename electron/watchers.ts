@@ -5,6 +5,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { app } from 'electron';
 import type { Settings, SourceResult } from '../src/shared/types';
 import { resolveLocalRoot } from './local';
+import { noteLocalRolloutChange } from './local-file-index';
 import { findDesktopLogRoots } from './desktop-runtime-logs';
 
 export type EventChannelMode = 'active' | 'connecting' | 'fallback';
@@ -123,8 +124,12 @@ export class WatchCoordinator {
               (_event, file) => {
                 if (!alive || this.stopped) return;
                 const name = file?.toString() || '';
-                if (!name || /(?:^|[\\/])codex-desktop-[^\\/]+\.log$/i.test(name))
+                if (!name || /(?:^|[\\/])codex-desktop-[^\\/]+\.log$/i.test(name)) {
+                  // Desktop log events have a separate native lifecycle
+                  // audit. Do not invalidate the entire JSONL index for each
+                  // verbose Desktop log write; the periodic full scan remains.
                   this.onChange(spec.id);
+                }
               });
             desktopWatches.push(subscription);
             subscription.on('error', () => {
@@ -146,7 +151,10 @@ export class WatchCoordinator {
             if (!alive || this.stopped) return;
             const name = filename?.toString();
             // A rename may be a new date folder; a null filename means rescan safely.
-            if (!name || name.endsWith('.jsonl') || kind === 'rename') this.onChange(spec.id);
+            if (!name || name.endsWith('.jsonl') || kind === 'rename') {
+              noteLocalRolloutChange(spec.root, name);
+              this.onChange(spec.id);
+            }
           });
         this.statusFor(spec.id, 'active');
         watch.on('error', () => {

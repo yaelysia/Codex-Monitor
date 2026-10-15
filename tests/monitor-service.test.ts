@@ -111,6 +111,9 @@ describe('event-driven scan orchestration', () => {
     await vi.advanceTimersByTimeAsync(450);
     expect(collect).toHaveBeenCalledTimes(2);
     expect(vi.mocked(collect).mock.calls[1]?.[1]).toEqual(new Set(['ssh:one']));
+    // Targeted event scans can use a healthy local watcher-backed index;
+    // manual/full scans always rediscover the directory tree.
+    expect(vi.mocked(collect).mock.calls[1]?.[4]).toBe(false);
     expect(service.state().scan?.sources.map(x => x.id)).toEqual(['local', 'ssh:one']);
     expect(delivered.map(e => e.sessionId)).toEqual(['parent']);
 
@@ -491,5 +494,30 @@ describe('independent source delivery and disconnection history', () => {
     expect(service.state().scan?.sources[0]?.sessions[0]?.status).toBe('finished');
     expect(service.state().scan?.sources[0]?.stale).toBeUndefined();
     expect(delivered.map(a=>a.kind)).toEqual(['finished']);
+  });
+});
+
+describe('local watcher index enablement', () => {
+  it('only uses incremental indexing for healthy local partial scans', async () => {
+    const local = source('local', [{
+      ...session('local-task','working',NOW), sourceId:'local',
+      sourceLabel:'Windows', key:'local:local-task',
+    }]);
+    vi.mocked(collect).mockImplementation(async () => snapshot(Date.now(),[local]));
+    service = new MonitorService(() => undefined, () => undefined);
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(collect).mock.calls[0]?.[4]).toBe(false);
+
+    fake.health = {local:'active'};
+    fake.wake?.('local');
+    await vi.advanceTimersByTimeAsync(450);
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['local']));
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[4]).toBe(true);
+
+    // A manual all-source refresh must bypass the index regardless of health.
+    await service.refresh(true);
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toBeUndefined();
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[4]).toBe(false);
   });
 });

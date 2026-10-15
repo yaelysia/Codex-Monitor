@@ -85,14 +85,10 @@ export function makeStatusLanes(rows: SessionRecord[]): StatusLane[] {
 
 const RECENT_COMPLETION_MS = 24 * 60 * 60 * 1000;
 
-/** The compact dock only shows user-facing completed turns, never subagent finishes.
- * Source-relative age also prevents remote clock skew from hiding recent completions. */
-export function recentParentCompletions(rows: SessionRecord[], now: number, scannedAt?: number): SessionRecord[] {
-  return rows.filter(row => {
-    if (row.status !== 'finished' || row.isSubagent === true) return false;
-    const age = typeof row.ageAtSourceMs === 'number' && Number.isFinite(row.ageAtSourceMs) &&
-      scannedAt != null ? row.ageAtSourceMs + Math.max(0, now - scannedAt) :
-      now - row.updatedAt;
-    return age >= -10_000 && age <= RECENT_COMPLETION_MS;
-  });
+/** Input rows are projected onto the Monitor's local timeline beforehand.
+ * Never use the global scan timestamp for a source refreshed earlier.
+ */
+export function recentParentCompletions(rows: SessionRecord[], now: number): SessionRecord[] {
+  return rows.filter(row => row.status === 'finished' && row.isSubagent !== true &&
+    now - row.updatedAt >= -10_000 && now - row.updatedAt <= RECENT_COMPLETION_MS);
 }

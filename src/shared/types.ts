@@ -56,6 +56,16 @@ export interface SessionRecord {
   startedAt: number | null;
 }
 
+export interface SourceScanMetrics {
+  durationMs: number;
+  sessionCount: number;
+  indexMode?: 'full' | 'incremental';
+  indexedFiles?: number;
+  statCalls?: number;
+  parsedFiles?: number;
+  cacheHits?: number;
+}
+
 export interface SourceResult {
   id: string;
   label: string;
@@ -69,6 +79,8 @@ export interface SourceResult {
   /** Failed source with retained historical session metadata, not live evidence. */
   stale?: boolean;
   lastHealthyAt?: number;
+  /** Source-specific collection cost; never includes paths or conversation content. */
+  scanMetrics?: SourceScanMetrics;
 }
 
 export interface ScanResponse {
@@ -126,9 +138,17 @@ export interface DesktopAuditMetrics {
   directoriesEnumerated: number;
   lastEventLagMs: number | null;
 }
+export interface NotificationLagMetrics {
+  samples: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+}
 export interface MonitorPerformance {
   sourceScanDurationMs: number | null;
   desktopAudit: DesktopAuditMetrics | null;
+  /** Estimated from persisted event timestamps, not a measurement of OS popup display. */
+  notificationLag?: NotificationLagMetrics | null;
 }
 
 export interface MonitorState {

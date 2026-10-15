@@ -82,6 +82,12 @@ describe('native notification acknowledge action', () => {
     expect(focus).toHaveBeenCalledTimes(1);
   });
 
+  it('labels explicit interruptions without reporting success or waiting', () => {
+    showDesktopAlert({ ...alert, kind: 'interrupted', questionText: null },
+      vi.fn(), vi.fn());
+    expect(fake.notifications[0]?.options.title).toBe('Codex · 本轮已中断');
+  });
+
   it('accepts positional action-index callbacks on older Electron builds', () => {
     const focus = vi.fn();
     const acknowledge = vi.fn();

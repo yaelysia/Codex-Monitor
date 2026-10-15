@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
+import { projectSessionsToLocalTime } from '../shared/session-time';
 import { alertKindLabel } from '../shared/alert-presentation';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
@@ -399,9 +400,10 @@ export default function App() {
   // Using the already hidden UI list here would lose the child identities.
   const rawSessions = useMemo(() =>
     scan?.sources.flatMap(source => source.sessions) ?? [], [scan]);
+  const displaySessions = useMemo(() => projectSessionsToLocalTime(scan), [scan]);
   const allSessions = useMemo(() =>
-    visibleSessions(rawSessions, showSubagents)
-      .sort((a, b) => b.updatedAt - a.updatedAt), [rawSessions, showSubagents]);
+    visibleSessions(displaySessions, showSubagents)
+      .sort((a, b) => b.updatedAt - a.updatedAt), [displaySessions, showSubagents]);
   // The full workspace tree is only needed when a workspace is selected.
   const sourceGroups = useMemo(() => workspaceId ?
     groupByExecutionLocation(allSessions) : [], [allSessions, workspaceId]);
@@ -416,6 +418,10 @@ export default function App() {
     groupByExecutionLocation(shown) : [], [shown, view]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
+  // UI timestamps are source-clock corrected, but reply refresh invalidation
+  // must depend on durable file mtime, not capture-clock rounding jitter.
+  const selectedRaw = useMemo(() => rawSessions.find(session => session.key === selectedKey) ?? null,
+    [rawSessions, selectedKey]);
 
   // Read reply text only when a session is explicitly opened. The 12-second
   // metadata scan never fetches text for other sessions.
@@ -434,7 +440,7 @@ export default function App() {
       if (!cancelled) setRecentReply({ key, loading: false, value: null, error: describeError(err) });
     });
     return () => { cancelled = true; };
-  }, [detailOpen, selected?.key, selected?.updatedAt, replyVersion]);
+  }, [detailOpen, selected?.key, selectedRaw?.updatedAt, replyVersion]);
 
   useEffect(() => {
     setOriginalWindow(null);
@@ -493,6 +499,23 @@ export default function App() {
     visibleAlerts(alerts, rawSessions, showSubagents).sort((a, b) => b.at - a.at),
   [alerts, rawSessions, showSubagents]);
   const unreadCount = recentAlerts.filter(item => !item.read).length;
+  const sourceDiagnostics = useMemo(() => (scan?.sources ?? [])
+    .filter(source => source.scanMetrics)
+    .map(source => ({
+      id: source.id,
+      label: source.label,
+      error: !!source.error,
+      metrics: source.scanMetrics!,
+    })), [scan]);
+  const localDiagnostics = sourceDiagnostics.find(source => source.id === 'local');
+  const sourceDiagnosticTitle = sourceDiagnostics.map(({label, error, metrics}) =>
+    label + (error ? ' · 采集失败' : '') + ' · ' + metrics.durationMs + 'ms' +
+    ' · 会话 ' + metrics.sessionCount +
+    (metrics.indexMode ? ' · 索引 ' + metrics.indexMode +
+      ' · 候选 ' + metrics.indexedFiles +
+      ' · stat ' + metrics.statCalls +
+      ' · 缓存命中 ' + metrics.cacheHits +
+      ' · 重新解析 ' + metrics.parsedFiles : '')).join('\n');
   async function updateAppearance(next: SignalAppearance): Promise<void> {
     try { setAppearance(next); const saved = await window.monitorApi.setFloatingAppearance(next); setAppearance(saved.appearance); }
     catch (cause) { setError(describeError(cause)); }
@@ -877,9 +900,20 @@ export default function App() {
 
         <footer className="signal-footer">
           <span>Codex Monitor · 只读会话观察器 · {shown.length} / {totals.all} 条</span>
-          <span>{performanceStats?.desktopAudit
-            ? '采集 ' + (performanceStats.sourceScanDurationMs ?? '—') + 'ms · Desktop审计 ' + performanceStats.desktopAudit.durationMs + 'ms'
-            : '事件优先 · 兜底扫描 · 状态为保守推断'}</span>
+          <span title={sourceDiagnosticTitle || undefined} aria-label="采集性能诊断">
+            {sourceDiagnostics.length
+              ? '源扫描 ' + sourceDiagnostics.length + ' 路 · 最近批次 ' +
+                (performanceStats?.sourceScanDurationMs ?? '—') + 'ms' +
+                (localDiagnostics?.metrics.indexMode
+                  ? ' · 本地' + (localDiagnostics.metrics.indexMode === 'incremental' ? '增量' : '全量') +
+                    ' stat ' + localDiagnostics.metrics.statCalls : '') +
+                (performanceStats?.desktopAudit
+                  ? ' · Desktop审计 ' + performanceStats.desktopAudit.durationMs + 'ms' : '') +
+                (performanceStats?.notificationLag
+                  ? ' · 事件通知估计 P95 ' + performanceStats.notificationLag.p95Ms +
+                    'ms(n=' + performanceStats.notificationLag.samples + ')' : '')
+              : '事件优先 · 兜底扫描 · 状态为保守推断'}
+          </span>
         </footer>
       </main>
     </div>
