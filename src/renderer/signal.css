@@ -142,7 +142,8 @@
 .signal-key-stats .signal-stat-soft{padding:8px 11px;border:1px solid var(--s-stroke);border-radius:7px;background:var(--s-tint)}
 .signal-mini-dot{display:inline-block;width:7px;height:7px;flex:0 0 auto;border-radius:50%;background:var(--s-accent)}
 .signal-mini-dot.warning,.signal-mini-dot.waiting,.signal-mini-dot.interrupted{background:var(--s-warn)}
-.signal-mini-dot.failed{background:var(--s-danger)}
+.signal-mini-dot.failed,.signal-mini-dot.source-offline{background:var(--s-danger)}
+.signal-mini-dot.source-recovered{background:var(--s-accent)}
 .signal-mini-dot.finished,.signal-mini-dot.unknown{background:var(--s-muted)}
 .signal-main-grid{display:grid;grid-template-columns: .94fr 1.12fr;gap:18px;min-height:370px}
 .signal-panel{background:var(--s-panel);border:1px solid var(--s-stroke);
@@ -244,6 +245,8 @@
   gap:18px;padding:17px 0 17px 24px;border-left:1px solid var(--s-stroke)}
 .signal-timeline-pin{position:absolute;left:-4px;top:24px;height:7px;width:7px;background:var(--s-accent);border-radius:50%}
 .signal-timeline-pin.waiting,.signal-timeline-pin.interrupted{background:var(--s-warn)}
+.signal-timeline-pin.failed,.signal-timeline-pin.source-offline{background:var(--s-danger)}
+.signal-timeline-pin.source-recovered{background:var(--s-accent)}
 .signal-timeline-pin.muted{background:var(--s-dim)}
 .signal-timeline-entry time{color:var(--s-dim);font:10px Consolas,monospace;padding-top:3px;white-space:nowrap}
 .signal-timeline-entry strong{font-size:12px;font-weight:600}

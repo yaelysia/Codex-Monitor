@@ -6,6 +6,7 @@ import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { projectSessionsToLocalTime } from '../shared/session-time';
 import { alertKindLabel } from '../shared/alert-presentation';
+import { isSourceAlertKind } from '../shared/source-alert';
 import { useVisibleInterval } from './useVisibleInterval';
 
 const EMPTY: MonitorState = { scan: null, alerts: [], muted: false };
@@ -153,7 +154,8 @@ export default function FloatingApp() {
             className={'signal-dock-alert' + (alert.read ? ' is-read' : '')}>
             <button type="button" className="signal-dock-alert-main" onClick={() => {
               if (!alert.read) acknowledge(alert.id);
-              openOriginal(alert.sessionKey);
+              if (isSourceAlertKind(alert.kind)) openMain(alert.sessionKey);
+              else openOriginal(alert.sessionKey);
             }}>
               <span className={'signal-dock-alert-dot ' + alert.kind}/>
               <span><strong>{alert.title}</strong><small title={alert.questionText || undefined}>

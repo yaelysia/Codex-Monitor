@@ -10,6 +10,7 @@ import type { MainWindowController } from './main-window';
 import type { MonitorService } from './monitor-service';
 import type { AutoWindowTracker } from './window-tracking';
 import { focusAndRead } from '../src/shared/focus-and-read';
+import { sourceIdFromAlertKey } from '../src/shared/source-alert';
 
 export function registerIpcHandlers(monitor: MonitorService,
   floating: FloatingWindowController, main: MainWindowController,
@@ -117,8 +118,10 @@ export function registerIpcHandlers(monitor: MonitorService,
     if (sessionKey != null && (typeof sessionKey !== 'string' || sessionKey.length > 300)) {
       throw new Error('Invalid session key');
     }
+    const sourceId = typeof sessionKey === 'string' ? sourceIdFromAlertKey(sessionKey) : null;
     const known = sessionKey == null || !!monitor.state().scan?.sources.some(
-      source => source.sessions.some(session => session.key === sessionKey));
+      source => (sourceId !== null && source.id === sourceId) ||
+        source.sessions.some(session => session.key === sessionKey));
     main.show(known ? (sessionKey as string | undefined) : undefined);
   });
   ipcMain.handle('workspace:copy', (_event, text: unknown) => {

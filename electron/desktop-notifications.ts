@@ -1,6 +1,7 @@
 import { Notification } from 'electron';
 import type { MonitorAlert } from '../src/shared/types';
 import { alertKindLabel } from '../src/shared/alert-presentation';
+import { isSourceAlertKind } from '../src/shared/source-alert';
 
 const activeNotices = new Set<Notification>();
 
@@ -16,7 +17,10 @@ export function showDesktopAlert(
     const notice = new Notification({
       title: alert.kind === 'waiting' ? 'Codex · 等待用户处理' :
         'Codex · ' + alertKindLabel(alert.kind),
-      body: [alert.title, alert.questionText, alert.sourceLabel]
+      body: (isSourceAlertKind(alert.kind)
+        ? [alert.sourceLabel, alert.kind === 'source-offline'
+          ? '连续采集失败，点击查看数据源状态' : '数据源采集已恢复']
+        : [alert.title, alert.questionText, alert.sourceLabel])
         .filter(Boolean).join(' · ').slice(0, 240),
       actions: [{ type: 'button', text: '✓ 标记已读' }],
     });

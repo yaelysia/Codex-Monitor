@@ -4,6 +4,7 @@ import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settin
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { projectSessionsToLocalTime } from '../shared/session-time';
 import { alertKindLabel } from '../shared/alert-presentation';
+import { isSourceAlertKind, sourceIdFromAlertKey } from '../shared/source-alert';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
@@ -330,6 +331,20 @@ export default function App() {
       setCompactSize(state.compactSize);
     });
     const focusSession = (key: string) => {
+      const sourceId = sourceIdFromAlertKey(key);
+      if (sourceId) {
+        setOverviewStatus(null);
+        setShowAlerts(false);
+        setShowPalette(false);
+        setSourceId(sourceId);
+        setWorkspaceId(null);
+        setFilter('all');
+        setQuery('');
+        setRecentOnly(false);
+        setDetailOpen(false);
+        setView('board');
+        return;
+      }
       // Native notification/deep-link navigation supersedes temporary drawers.
       setOverviewStatus(null);
       setShowAlerts(false);
@@ -565,6 +580,20 @@ export default function App() {
     setSelectedKey(session.key);
     setDetailOpen(true);
   }
+  function openAlertTarget(alert: MonitorAlert) {
+    if (isSourceAlertKind(alert.kind)) {
+      setSourceId(sourceIdFromAlertKey(alert.sessionKey));
+      setWorkspaceId(null);
+      setQuery('');
+      setRecentOnly(false);
+      setDetailOpen(false);
+      navigate('board');
+      return;
+    }
+    const session = allSessions.find(item => item.key === alert.sessionKey);
+    if (session) openSession(session);
+  }
+
   async function focusOriginalWindow(key: string): Promise<void> {
     setOriginalWindowMessage('正在定位原窗口…');
     try {
@@ -630,8 +659,7 @@ export default function App() {
           <div key={alert.id} className={'signal-alert-row' + (alert.read ? ' read' : '')}>
             <button type="button" onClick={() => {
               if (!alert.read) void acknowledgeAlert(alert.id);
-              const session = allSessions.find(item => item.key === alert.sessionKey);
-              if (session) openSession(session);
+              openAlertTarget(alert);
               setShowAlerts(false);
             }}>
               <span className={'signal-mini-dot ' + alert.kind}/>
@@ -790,10 +818,8 @@ export default function App() {
                 onClick={() => navigate('chronicle')}>查看事件轨迹 <Icon name="chevron-right" size={14}/></button></div>
               <div className="signal-event-list">
                 {recentAlerts.length ? recentAlerts.slice(0, 4).map(alert =>
-                  <button type="button" key={alert.id} className="signal-event" onClick={() => {
-                    const session = allSessions.find(item => item.key === alert.sessionKey);
-                    if (session) openSession(session);
-                  }}>
+                  <button type="button" key={alert.id} className="signal-event"
+                    onClick={() => openAlertTarget(alert)}>
                     <span className={'signal-mini-dot ' + alert.kind}/>
                     <span><strong>{alertKindLabel(alert.kind)}</strong>
                       <small>{alert.title}</small></span><time>{formatTime(alert.at)}</time></button>) :
@@ -849,10 +875,8 @@ export default function App() {
                 <div><strong>{alertKindLabel(alert.kind)}</strong>
                   <p>{alert.title}</p><small>{alert.sourceLabel}</small></div>
                 <div className="signal-timeline-actions">
-                  <button type="button" onClick={() => {
-                    const session = allSessions.find(item => item.key === alert.sessionKey);
-                    if (session) openSession(session);
-                  }}>会话详情</button>
+                  <button type="button" onClick={() => openAlertTarget(alert)}>
+                    {isSourceAlertKind(alert.kind) ? '查看数据源' : '会话详情'}</button>
                   {!alert.read && <button type="button" onClick={() => void acknowledgeAlert(alert.id)}>标记已读</button>}
                 </div></div>)}
               {!recentAlerts.length && <p className="signal-list-empty">还没有真实通知事件。下面仅展示最近会话元数据变化。</p>}
