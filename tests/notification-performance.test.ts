@@ -4,11 +4,13 @@ import type { MonitorAlert, ScanResponse, SessionRecord } from '../src/shared/ty
 
 const NOW=Date.parse('2026-10-15T03:00:00Z');
 const EVENT=NOW-11_000;
-const token=new Date(EVENT).toISOString()+'|turn-a';
+// A remote clock is nine minutes ahead; the event and mtime share that clock.
+const SOURCE_EVENT=EVENT+9*60_000;
+const token=new Date(SOURCE_EVENT).toISOString()+'|turn-a';
 const remote: SessionRecord={
   id:'turn',key:'ssh:remote:turn',sourceId:'ssh:remote',sourceLabel:'Remote',
   workspace:'/repo',title:'Test',status:'interrupted',statusReason:'aborted',
-  updatedAt:EVENT+5000+9*60_000,ageAtSourceMs:6000,startedAt:null,
+  updatedAt:SOURCE_EVENT+5000,ageAtSourceMs:6000,startedAt:null,
   interruptedToken:token,
 };
 const scan: ScanResponse={scannedAt:NOW+90_000,sources:[{
