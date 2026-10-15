@@ -179,34 +179,36 @@ async function sourceResult(id: string, label: string, kind: SourceKind, scan: (
     error: error instanceof Error ? error.message : String(error) }; }
 }
 
-/** Passing sourceIds scans only the changed host; empty/omitted means all hosts. */
+/** Sources complete independently. The callback is awaited per host so Monitor can
+ * notify from a finished local/WSL source without waiting for slow SSH peers.
+ * Results still retain the original stable source ordering on return.
+ */
 export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string>,
-  pinnedPaths: ReadonlyMap<string, readonly string[]> = new Map()): Promise<ScanResponse> {
+  pinnedPaths: ReadonlyMap<string, readonly string[]> = new Map(),
+  onSource?: (source: SourceResult) => void | Promise<void>): Promise<ScanResponse> {
   const wanted = (id: string): boolean => !sourceIds || sourceIds.has(id);
-  const distros = await listWslDistros();
-  const remoteScript = await script().catch(() => '');
+  // Start local work immediately. WSL discovery and script I/O must not block
+  // a ready local source's completion callback.
+  const needsWsl = !sourceIds || [...sourceIds].some(id => id.startsWith('wsl:'));
+  const distrosPromise = needsWsl ? listWslDistros() : Promise.resolve<string[]>([]);
+  const scriptPromise = script().catch(() => '');
   const scans: Promise<SourceResult>[] = [];
-  if (wanted('local')) scans.push(sourceResult('local', 'Windows', 'local',
+  const add = (task: Promise<SourceResult>): void => {
+    scans.push(task.then(async source => {
+      inferObservedActivity([source], source.capturedAt ?? Date.now());
+      await onSource?.(source);
+      return source;
+    }));
+  };
+  if (wanted('local')) add(sourceResult('local', 'Windows', 'local',
     () => scanLocal(resolveLocalRoot(settings.localRoot),
       'local', 'Windows', Date.now(), pinnedPaths.get('local') ?? [])));
-  for (const distro of distros) {
-    const id = `wsl:${distro}`;
-    if (!wanted(id)) continue;
-    const label = `${distro} · WSL`;
-    scans.push(sourceResult(id, label, 'wsl', async () => {
-      if (!remoteScript) throw new Error('Collector script not found');
-      const pins = [...new Set(pinnedPaths.get(id) ?? [])].filter(validPinnedRolloutPath)
-        .slice(0, MAX_PINNED_ROLLOUTS);
-      const rows = await runCollector('wsl.exe', ['-d', distro, '--', 'python3', '-'],
-        remoteScript, settings.wslRoots[distro] || '', { pinnedPaths: pins });
-      return normalizeRemote(rows, id, label);
-    }));
-  }
+  const remoteScript = await scriptPromise;
   for (const host of settings.remotes) {
     const id = `ssh:${host.id}`;
     if (!wanted(id)) continue;
     const label = `${host.alias} · SSH`;
-    scans.push(sourceResult(id, label, 'ssh', async () => {
+    add(sourceResult(id, label, 'ssh', async () => {
       if (!remoteScript) throw new Error('Collector script not found');
       const rows = await runCollector('ssh', [
         '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ConnectionAttempts=1',
@@ -216,13 +218,21 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
       return normalizeRemote(rows, id, label);
     }));
   }
-  const sources = await Promise.all(scans);
-  const scannedAt = Date.now();
-  // Keep the filesystem snapshot separate from GUI-owned runtime evidence.
-  // A later native event can then replace an earlier start, even when remote
-  // JSONL hasn't changed and we intentionally do NOT rescan every SSH host.
-  inferObservedActivity(sources, scannedAt);
-  return { sources, scannedAt };
+  const distros = await distrosPromise;
+  for (const distro of distros) {
+    const id = `wsl:${distro}`;
+    if (!wanted(id)) continue;
+    const label = `${distro} · WSL`;
+    add(sourceResult(id, label, 'wsl', async () => {
+      if (!remoteScript) throw new Error('Collector script not found');
+      const pins = [...new Set(pinnedPaths.get(id) ?? [])].filter(validPinnedRolloutPath)
+        .slice(0, MAX_PINNED_ROLLOUTS);
+      const rows = await runCollector('wsl.exe', ['-d', distro, '--', 'python3', '-'],
+        remoteScript, settings.wslRoots[distro] || '', { pinnedPaths: pins });
+      return normalizeRemote(rows, id, label);
+    }));
+  }
+  return { sources: await Promise.all(scans), scannedAt: Date.now() };
 }
 
 /** Overlay the Windows GUI's native lifecycle evidence over ANY known thread
