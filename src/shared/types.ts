@@ -56,6 +56,16 @@ export interface SessionRecord {
   startedAt: number | null;
 }
 
+export interface SourceScanMetrics {
+  durationMs: number;
+  sessionCount: number;
+  indexMode?: 'full' | 'incremental';
+  indexedFiles?: number;
+  statCalls?: number;
+  parsedFiles?: number;
+  cacheHits?: number;
+}
+
 export interface SourceResult {
   id: string;
   label: string;
@@ -69,6 +79,8 @@ export interface SourceResult {
   /** Failed source with retained historical session metadata, not live evidence. */
   stale?: boolean;
   lastHealthyAt?: number;
+  /** Source-specific collection cost; never includes paths or conversation content. */
+  scanMetrics?: SourceScanMetrics;
 }
 
 export interface ScanResponse {

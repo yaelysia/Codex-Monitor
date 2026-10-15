@@ -324,7 +324,7 @@ export class MonitorService {
         pins, async source => {
           await deliver([source], source.capturedAt ?? Date.now());
           observed.add(source.id);
-        });
+        }, this.watchers.status().local === 'active');
       if (delta.sources.length === 0 && partial && this.lastScan) return this.lastScan;
       const remainder = delta.sources.filter(source => !observed.has(source.id));
       if (remainder.length) await deliver(remainder, delta.scannedAt);

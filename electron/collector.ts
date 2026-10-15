@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
 import type { ScanResponse, SessionRecord, Settings, SourceKind, SourceResult } from '../src/shared/types';
-import { resolveLocalRoot, scanLocal } from './local';
+import { resolveLocalRoot, scanLocal, localScanDiagnostics } from './local';
 import { SessionActivityTracker } from '../src/shared/activity-tracker';
 import { inspectDesktopLogSignals } from './desktop-runtime-logs';
 import { applyDesktopLogEvidence, DesktopLogEventCache, isActiveDesktopStart,
@@ -178,9 +178,18 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
 
 async function sourceResult(id: string, label: string, kind: SourceKind, scan: () => Promise<SessionRecord[]>): Promise<SourceResult> {
   const captureStartedAt = Date.now();
-  try { return { id, label, kind, sessions: await scan(), captureStartedAt, capturedAt: Date.now(), error: null }; }
-  catch (error) { return { id, label, kind, sessions: [], captureStartedAt, capturedAt: Date.now(),
-    error: error instanceof Error ? error.message : String(error) }; }
+  const started = performance.now();
+  try {
+    const sessions = await scan();
+    return { id, label, kind, sessions, captureStartedAt, capturedAt: Date.now(),
+      scanMetrics: { durationMs: Math.max(0, Math.round(performance.now() - started)),
+        sessionCount: sessions.length } };
+  } catch (error) {
+    return { id, label, kind, sessions: [], captureStartedAt, capturedAt: Date.now(),
+      error: error instanceof Error ? error.message : String(error),
+      scanMetrics: {durationMs: Math.max(0, Math.round(performance.now() - started)),
+        sessionCount: 0} };
+  }
 }
 
 /** Sources complete independently. The callback is awaited per host so Monitor can
@@ -189,7 +198,8 @@ async function sourceResult(id: string, label: string, kind: SourceKind, scan: (
  */
 export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string>,
   pinnedPaths: ReadonlyMap<string, readonly string[]> = new Map(),
-  onSource?: (source: SourceResult) => void | Promise<void>): Promise<ScanResponse> {
+  onSource?: (source: SourceResult) => void | Promise<void>,
+  useIncrementalLocalIndex = false): Promise<ScanResponse> {
   const wanted = (id: string): boolean => !sourceIds || sourceIds.has(id);
   // Start local work immediately. WSL discovery and script I/O must not block
   // a ready local source's completion callback.
@@ -206,7 +216,16 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
   };
   if (wanted('local')) add(sourceResult('local', 'Windows', 'local',
     () => scanLocal(resolveLocalRoot(settings.localRoot),
-      'local', 'Windows', Date.now(), pinnedPaths.get('local') ?? [])));
+      'local', 'Windows', Date.now(), pinnedPaths.get('local') ?? [],
+      useIncrementalLocalIndex)).then(source => {
+        const stats = localScanDiagnostics(resolveLocalRoot(settings.localRoot));
+        if (source.scanMetrics && stats) Object.assign(source.scanMetrics, {
+          indexMode: stats.index.mode, indexedFiles: stats.index.indexedFiles,
+          statCalls: stats.index.statCalls, parsedFiles: stats.cacheMisses,
+          cacheHits: stats.cacheHits,
+        });
+        return source;
+      }));
   const remoteScript = await scriptPromise;
   for (const host of settings.remotes) {
     const id = `ssh:${host.id}`;

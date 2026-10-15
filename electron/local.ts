@@ -6,6 +6,7 @@ import { extractFirstUserTitle, extractSessionId, extractWorkspace, extractLastU
 import { enrichLocalTitles } from './titles';
 import { extractSessionClientKind, extractSessionOrigin } from '../src/shared/session-origin';
 import { LocalScanCache } from '../src/shared/local-scan-cache';
+import { indexedRollouts, localFileIndexDiagnostics, mapLimited } from './local-file-index';
 import { MAX_PINNED_ROLLOUTS, validPinnedRolloutPath } from '../src/shared/pinned-rollouts';
 
 const HEAD_BYTES = 128 * 1024;
@@ -14,35 +15,18 @@ const TAIL_BYTES = 192 * 1024;
 // still-unknown sessions whose lifecycle markers left the short tail.
 const EXTENDED_TAIL_BYTES = 8 * 1024 * 1024;
 const RECENT_MS = 5 * 60_000;
-const MAX_DISCOVERED = 10_000;
 const MAX_RETURNED = 200;
 const cache = new LocalScanCache();
 export function localScanCacheStats(): ReturnType<LocalScanCache['stats']> { return cache.stats(); }
+const lastScanStats = new Map<string, {index: ReturnType<typeof localFileIndexDiagnostics>;
+  parsed: number; cacheHits: number; cacheMisses: number}>();
+export function localScanDiagnostics(root: string) { return lastScanStats.get(path.resolve(root)) ?? null; }
 
 export function resolveLocalRoot(customRoot: string): string {
   const chosen = customRoot || process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   if (chosen === '~') return os.homedir();
   if (chosen.startsWith('~/') || chosen.startsWith('~\\')) return path.join(os.homedir(), chosen.slice(2));
   return path.resolve(chosen);
-}
-
-async function findRollouts(dir: string, remaining: { count: number }, level = 0): Promise<string[]> {
-  if (level > 5 || remaining.count <= 0) return [];
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  // Codex uses sessions/YYYY/MM/DD; newest date directories first when bounded.
-  entries.sort((a, b) => b.name.localeCompare(a.name));
-  const found: string[] = [];
-  for (const entry of entries) {
-    if (remaining.count <= 0) break;
-    const current = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      found.push(...await findRollouts(current, remaining, level + 1));
-    } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-      found.push(current);
-      remaining.count--;
-    }
-  }
-  return found;
 }
 
 /** Read bounded head/tail; never load a full historical transcript. */
@@ -80,29 +64,12 @@ async function readExtendedTail(file: string, size: number): Promise<{ text: str
   } finally { await handle.close(); }
 }
 
-async function mapLimited<T, R>(items: T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
-  const result: R[] = new Array(items.length);
-  let cursor = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      result[index] = await map(items[index]!);
-    }
-  }));
-  return result;
-}
-
 export async function scanLocal(root: string, sourceId = 'local',
   sourceLabel = 'Windows', now = Date.now(),
-  pinnedPaths: readonly string[] = []): Promise<SessionRecord[]> {
+  pinnedPaths: readonly string[] = [], useIncrementalIndex = false): Promise<SessionRecord[]> {
   const sessionsDir = path.join(root, 'sessions');
-  const files = await findRollouts(sessionsDir, { count: MAX_DISCOVERED });
-  const stats = await mapLimited(files, 24, async (file) => {
-    try { const stat = await fs.stat(file); return { file, mtime: stat.mtimeMs, size: stat.size }; }
-    catch { return null; }
-  });
-  const newest = stats.filter((s): s is NonNullable<typeof s> => !!s)
-    .sort((a, b) => b.mtime - a.mtime).slice(0, MAX_RETURNED);
+  const candidates = await indexedRollouts(root, now, useIncrementalIndex);
+  const newest = candidates.slice(0, MAX_RETURNED);
   const included = new Set(newest.map(item => path.normalize(item.file)));
   const extras = await mapLimited([...new Set(pinnedPaths)]
     .filter(validPinnedRolloutPath).slice(0, MAX_PINNED_ROLLOUTS), 8, async relative => {
@@ -120,6 +87,7 @@ export async function scanLocal(root: string, sourceId = 'local',
     } catch { return null; }
   });
   const selected = [...newest, ...extras.filter((row): row is NonNullable<typeof row> => !!row)];
+  const cacheBefore = cache.stats();
   const sessions = await mapLimited(selected, 12, async ({ file, mtime, size }): Promise<SessionRecord | null> => {
     try {
       const stored = cache.get(file, mtime, size, now);
@@ -161,5 +129,11 @@ export async function scanLocal(root: string, sourceId = 'local',
   });
   cache.retain(new Set(selected.map(item => item.file)));
   await enrichLocalTitles(root, unique);
+  const cacheAfter = cache.stats();
+  lastScanStats.set(path.resolve(root), {
+    index: localFileIndexDiagnostics(root), parsed: selected.length,
+    cacheHits: cacheAfter.hits - cacheBefore.hits,
+    cacheMisses: cacheAfter.misses - cacheBefore.misses,
+  });
   return unique;
 }
