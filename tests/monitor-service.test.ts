@@ -423,3 +423,73 @@ describe('native completion captured during filesystem refresh', () => {
     expect(sent).toHaveLength(1);
   });
 });
+
+describe('independent source delivery and disconnection history', () => {
+  it('publishes a completed local turn before a slow remote host settles', async () => {
+    const baseline = snapshot(NOW, [
+      source('local', [{...session('fast','working',NOW),
+        sourceId:'local', key:'local:fast', sourceLabel:'Windows'}]),
+      source('ssh:one',[session('remote','working',NOW)]),
+    ]);
+    const delivered: MonitorAlert[] = [];
+    const states: MonitorState[] = [];
+    vi.mocked(collect).mockResolvedValueOnce(baseline);
+    service = new MonitorService(state => states.push(state), alert => delivered.push(alert));
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const fast = source('local',[{...session('fast','finished',NOW+1000),
+      sourceId:'local',key:'local:fast',sourceLabel:'Windows',byteSize:250}]);
+    const slow = source('ssh:one',[session('remote','working',NOW)]);
+    let release: (() => void) | undefined;
+    vi.mocked(collect).mockImplementationOnce(async (_settings, _ids, _pins, onSource) => {
+      await onSource?.(fast);
+      await new Promise<void>(resolve => { release = resolve; });
+      await onSource?.(slow);
+      return snapshot(Date.now(), [fast, slow]);
+    });
+
+    const pending = service.refresh(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(release).toBeTypeOf('function');
+    expect(delivered.map(alert => alert.sessionId)).toEqual(['fast']);
+    expect(states.at(-1)?.scan?.sources.find(s => s.id === 'local')
+      ?.sessions[0]?.status).toBe('finished');
+    // The remote host is still pending and is not allowed to block the alert.
+    release?.();
+    await pending;
+    expect(delivered).toHaveLength(1);
+    expect(service.state().scan?.sources.map(s=>s.id)).toEqual(['local','ssh:one']);
+  });
+
+  it('keeps recent healthy sessions and rollout pins across a temporary SSH failure', async () => {
+    const running = {...session('p','working',NOW),
+      rolloutPath:'2026/10/12/rollout-active.jsonl'};
+    const healthy = snapshot(NOW,[source('ssh:one',[running])]);
+    const offline = source('ssh:one',[]);
+    offline.error = 'SSH connection reset';
+    vi.mocked(collect).mockResolvedValueOnce(healthy)
+      .mockResolvedValueOnce(snapshot(NOW + 1000,[offline]))
+      .mockResolvedValueOnce(snapshot(NOW + 2000,[source('ssh:one',[
+        {...running,status:'finished',finishedToken:'done|p',
+          updatedAt:NOW + 1800,byteSize:200},
+      ])]));
+    const delivered: MonitorAlert[] = [];
+    service = new MonitorService(()=>undefined, alert=>delivered.push(alert));
+    await service.refresh(true);
+    await service.refresh(true);
+    const retained = service.state().scan?.sources[0];
+    expect(retained).toMatchObject({error:'SSH connection reset',stale:true});
+    expect(retained?.sessions).toHaveLength(1);
+    expect(retained?.sessions[0]).toMatchObject({status:'unknown',id:'p'});
+    expect(retained?.sessions[0]?.statusReason).toContain('上次成功');
+    expect(delivered).toEqual([]);
+    await service.refresh(true);
+    expect(vi.mocked(collect).mock.calls[2]?.[2]?.get('ssh:one'))
+      .toEqual(['2026/10/12/rollout-active.jsonl']);
+    expect(service.state().scan?.sources[0]?.error).toBeNull();
+    expect(service.state().scan?.sources[0]?.sessions[0]?.status).toBe('finished');
+    expect(service.state().scan?.sources[0]?.stale).toBeUndefined();
+    expect(delivered.map(a=>a.kind)).toEqual(['finished']);
+  });
+});

@@ -144,6 +144,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   statusReason: string;
   finishedToken: string | null;
   interruptedToken: string | null;
+  interruptionTokens: string[];
   waitingToken: string | null;
   pendingQuestionToken: string | null;
   questionText: string | null;
@@ -154,6 +155,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   let awaiting = false;
   let finishedToken: string | null = null;
   let interruptedToken: string | null = null;
+  const interruptionTokens: string[] = [];
   let waitingToken: string | null = null;
   let checkpointAfterBoundary = false;
   const parsedRows = jsonlRows(tail, clippedStart);
@@ -202,6 +204,11 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
       awaiting = false;
       finishedToken = phase === 'finished' ? token : null;
       interruptedToken = phase === 'interrupted' ? token : null;
+      if (phase === 'interrupted' && token && token.length <= 300 &&
+          !interruptionTokens.includes(token)) {
+        interruptionTokens.push(token);
+        if (interruptionTokens.length > 32) interruptionTokens.shift();
+      }
       waitingToken = null;
       checkpointAfterBoundary = false;
       lastTerminalTurnId = turnId ?? activeTurnId;
@@ -221,6 +228,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     finishedToken: terminal && !question.blocking ? finishedToken : null,
     interruptedToken: phase === 'interrupted' && !checkpointAfterBoundary &&
       !question.blocking ? interruptedToken : null,
+    interruptionTokens,
     waitingToken: question.blocking && pendingQuestionToken ? pendingQuestionToken :
       awaiting ? waitingToken : null,
     pendingQuestionToken,

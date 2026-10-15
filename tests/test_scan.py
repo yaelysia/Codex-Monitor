@@ -32,6 +32,23 @@ class TestLinuxCollector(unittest.TestCase):
             'type': 'session_meta', 'payload': {'source': 'vscode'}})), 'unknown')
 
 
+    def test_interruption_history_survives_new_turns(self):
+        now = 1_800_000_000_000
+        def row(kind, turn, at):
+            return {'type': 'event_msg', 'timestamp': at,
+                    'payload': {'type': kind, 'turn_id': turn}}
+        events = [row('turn_started', 'a', '2026-10-12T10:00:00Z'),
+                  row('turn_aborted', 'a', '2026-10-12T10:00:01Z'),
+                  row('turn_started', 'b', '2026-10-12T10:00:02Z'),
+                  row('turn_aborted', 'b', '2026-10-12T10:00:03Z'),
+                  row('turn_started', 'c', '2026-10-12T10:00:04Z')]
+        result = scanner.details('', '\n'.join(map(json.dumps, events)),
+                                 'x.jsonl', False, now - 1000, now)
+        self.assertEqual(result['status'], 'working')
+        self.assertIsNone(result['interruptedToken'])
+        self.assertEqual(result['interruptionTokens'],
+                         ['2026-10-12T10:00:01Z|a', '2026-10-12T10:00:03Z|b'])
+
     def test_interruption_fingerprint_changes_per_aborted_turn(self):
         now = 1_800_000_000_000
 

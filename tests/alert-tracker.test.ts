@@ -165,6 +165,41 @@ describe('remote SSH and WSL completion alerts', () => {
 });
 
 
+describe('aborts independent of latest session status', () => {
+  it('emits two new aborts from a still-running session, once each', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, { byteSize: 100,
+      interruptionTokens: ['old|a'] })]), NOW);
+    const next = row('working', NOW + 1000, { byteSize: 200,
+      ageAtSourceMs: 0, interruptionTokens: ['old|a',
+        new Date(NOW + 1000).toISOString() + '|b',
+        new Date(NOW + 1500).toISOString() + '|c'] });
+    expect(tracker.observe(snapshot(NOW + 2000, [next]), NOW + 2000)
+      .map(a => a.kind)).toEqual(['interrupted', 'interrupted']);
+    expect(tracker.observe(snapshot(NOW + 3000, [next]), NOW + 3000)).toEqual([]);
+  });
+
+  it('never reports old aborts from a newly discovered, recently modified session', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, []), NOW);
+    const old = row('working', NOW + 1000, { byteSize: 200, ageAtSourceMs: 0,
+      interruptionTokens: [new Date(NOW - 3_600_000).toISOString() + '|older'] });
+    expect(tracker.observe(snapshot(NOW + 2000, [old]), NOW + 2000)).toEqual([]);
+  });
+
+  it('reports a new abort while the latest status is finished, alongside real completion', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, { byteSize: 100 })]), NOW);
+    const finished = row('finished', NOW + 1000, {
+      byteSize: 200, ageAtSourceMs: 0,
+      finishedToken: 'now|turn-next',
+      interruptionTokens: [new Date(NOW + 1000).toISOString() + '|abort-prev'],
+    });
+    expect(tracker.observe(snapshot(NOW + 2000, [finished]), NOW + 2000)
+      .map(a => a.kind).sort()).toEqual(['finished', 'interrupted']);
+  });
+});
+
 describe('interrupted turn notifications', () => {
   it('reports a newly interrupted turn once, not as waiting or finished', () => {
     const tracker = new AlertTracker();

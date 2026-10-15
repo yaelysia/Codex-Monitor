@@ -8,6 +8,8 @@ import { AlertStateStore } from './alert-store';
 import { getDesktopLogMetrics, getDesktopLogWatchDirectories } from './desktop-runtime-logs';
 import { DesktopLogFolderWatcher } from './desktop-log-watch';
 import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
+import { SourceRetention } from '../src/shared/source-retention';
+import type { SourceResult } from '../src/shared/types';
 
 const POLLING_FALLBACK_MS = 12_000;
 const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
@@ -39,6 +41,7 @@ function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): bool
 /** One state owner and event queue for all renderer windows and external hosts. */
 export class MonitorService {
   private tracker = new AlertTracker();
+  private readonly sourceRetention = new SourceRetention();
   private readonly alertStore: AlertStateStore | null;
   private lastSourceScanDurationMs: number | null = null;
   private lastScan: ScanResponse | null = null;
@@ -252,6 +255,40 @@ export class MonitorService {
     if (this.pendingSources.size) this.scheduleWake();
   }
 
+  /** Apply only the sources whose scan actually finished. This never advances
+   * alert history for cached/unscanned sources, even during a full refresh.
+   */
+  private async acceptSources(sources: SourceResult[], scannedAt: number): Promise<void> {
+    if (!sources.length) return;
+    const rawDelta: ScanResponse = { scannedAt, sources };
+    try { this.onScanned(rawDelta); }
+    catch { console.warn('Automatic original-window correlation failed; scan continues'); }
+
+    const recovered: ScanResponse = {
+      scannedAt, sources: sources.map(source =>
+        this.sourceRetention.onFailure(source, Date.now())),
+    };
+    const raw = this.rawLastScan
+      ? mergeSourceSnapshots(this.rawLastScan, recovered) : recovered;
+    // Native GUI evidence must be projected on the whole known source scope.
+    // This retains exact-thread matching and current native completion safety.
+    const projected = await projectDesktopRuntime(raw, Date.now());
+    const affected = new Set(sources.map(source => source.id));
+    const justScanned = projected.sources.filter(source => affected.has(source.id));
+    this.rawLastScan = raw;
+    this.lastScan = projected;
+    for (const source of justScanned) {
+      if (!source.error) this.sourceRetention.remember(source, Date.now());
+      this.lastSourceScan.set(source.id, scannedAt);
+    }
+    const alerts = this.tracker.observe({ scannedAt, sources: justScanned });
+    if (this.running) alerts.push(...this.tracker.observeDesktopCompletions(
+      projected, recentDesktopCompletions(), this.startedAt, Date.now()));
+    if (alerts.length) this.persistAlerts();
+    this.onChange(this.state());
+    if (!this.tracker.getMuted()) for (const alert of alerts) this.onAlert(alert);
+  }
+
   /** Manual and fallback scans are full; a watcher provides affected source IDs. */
   refresh(force = false, sourceIds?: ReadonlySet<string>): Promise<ScanResponse> {
     if (this.inFlight) {
@@ -270,50 +307,48 @@ export class MonitorService {
     const scanStartedAt = performance.now();
     const task = (async () => {
       const settings = await readSettings();
-      const delta = await collect(settings, partial ? sourceIds : undefined,
-        pinnedRolloutsBySource(this.lastScan));
-      if (delta.sources.length === 0 && partial && this.lastScan) return this.lastScan;
-      // Use only freshly scanned sources for auto-window correlation: merging cached
-      // sources would shift remote-clock ages and could create false associations.
-      try { this.onScanned(delta); }
-      catch { console.warn('Automatic original-window correlation failed; scan continues'); }
+      const pinSources = this.sourceRetention.pinSnapshot(Date.now());
+      const pins = pinnedRolloutsBySource(pinSources.sources.length
+        ? pinSources : this.lastScan);
 
-      // Retain a raw baseline independent of the GUI log overlay. This is
-      // essential when Desktop's turn/start disappears from log tail or a newer
-      // completion supersedes it without any change to a remote JSONL file.
-      const raw = partial && this.rawLastScan
-        ? mergeSourceSnapshots(this.rawLastScan, delta) : delta;
-      const projected = await projectDesktopRuntime(raw, Date.now());
-      if (this.running && this.eventsEnabled) this.desktopLogWatcher.reconcile(
-        getDesktopLogWatchDirectories());
-      this.rawLastScan = raw;
-      this.lastScan = projected;
-      this.lastSourceScanDurationMs = Math.max(0, Math.round(performance.now() - scanStartedAt));
-
-      // Notify from genuinely rescanned sources only. The four-second
-      // log-only overlay updates the board but must not fabricate alerts.
-      const rescanned = new Set(delta.sources.map(source => source.id));
-      const projectedDelta: ScanResponse = {
-        ...delta, sources: projected.sources.filter(source => rescanned.has(source.id)),
+      // The production collector calls onSource when EACH host settles, so
+      // notifications and renderer updates do not wait for the slowest SSH.
+      // Tests/legacy collectors may return only the aggregate result.
+      const observed = new Set<string>();
+      let updates: Promise<void> = Promise.resolve();
+      const deliver = (sources: SourceResult[], at: number): Promise<void> => {
+        updates = updates.then(() => this.acceptSources(sources, at));
+        return updates;
       };
-      for (const source of delta.sources) this.lastSourceScan.set(source.id, delta.scannedAt);
-      const alerts = this.tracker.observe(projectedDelta);
-      // A Desktop completion that occurred during this source scan must not
-      // wait for the next safety audit. Both paths share exact-turn dedup.
-      if (this.running) alerts.push(...this.tracker.observeDesktopCompletions(
-        projected, recentDesktopCompletions(), this.startedAt, Date.now()));
-      // Only an actual new alert changes the persisted inbox here. Frequent
-      // no-change filesystem scans must not serialize the same 500 IDs.
-      if (alerts.length) this.persistAlerts();
+      const delta = await collect(settings, partial ? sourceIds : undefined,
+        pins, async source => {
+          await deliver([source], source.capturedAt ?? Date.now());
+          observed.add(source.id);
+        });
+      if (delta.sources.length === 0 && partial && this.lastScan) return this.lastScan;
+      const remainder = delta.sources.filter(source => !observed.has(source.id));
+      if (remainder.length) await deliver(remainder, delta.scannedAt);
+      await updates;
+
+      // The last full scan establishes the configured source set and original
+      // order. Keep the per-host projected status and retained error evidence.
       if (!partial) {
+        const order = delta.sources.map(source => source.id);
+        const known = new Set(order);
+        this.sourceRetention.forgetAbsent(known);
+        const byId = new Map(this.lastScan?.sources.map(src => [src.id, src]) ?? []);
+        const rawById = new Map(this.rawLastScan?.sources.map(src => [src.id, src]) ?? []);
+        this.lastScan = { scannedAt: delta.scannedAt,
+          sources: order.map(id => byId.get(id)!).filter(Boolean) };
+        this.rawLastScan = { scannedAt: delta.scannedAt,
+          sources: order.map(id => rawById.get(id)!).filter(Boolean) };
         this.lastFullScanAt = delta.scannedAt;
         if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);
       }
+      this.lastSourceScanDurationMs = Math.max(0, Math.round(performance.now() - scanStartedAt));
       this.onChange(this.state());
-      if (!this.tracker.getMuted()) for (const alert of alerts) this.onAlert(alert);
-      return this.lastScan;
+      return this.lastScan!;
     })();
-
     this.inFlight = task;
     void task.finally(() => {
       if (this.inFlight === task) this.inFlight = null;
