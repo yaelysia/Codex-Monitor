@@ -418,6 +418,10 @@ export default function App() {
     groupByExecutionLocation(shown) : [], [shown, view]);
   const selected = useMemo(() => allSessions.find(session => session.key === selectedKey) ?? null,
     [allSessions, selectedKey]);
+  // UI timestamps are source-clock corrected, but reply refresh invalidation
+  // must depend on durable file mtime, not capture-clock rounding jitter.
+  const selectedRaw = useMemo(() => rawSessions.find(session => session.key === selectedKey) ?? null,
+    [rawSessions, selectedKey]);
 
   // Read reply text only when a session is explicitly opened. The 12-second
   // metadata scan never fetches text for other sessions.
@@ -436,7 +440,7 @@ export default function App() {
       if (!cancelled) setRecentReply({ key, loading: false, value: null, error: describeError(err) });
     });
     return () => { cancelled = true; };
-  }, [detailOpen, selected?.key, selected?.updatedAt, replyVersion]);
+  }, [detailOpen, selected?.key, selectedRaw?.updatedAt, replyVersion]);
 
   useEffect(() => {
     setOriginalWindow(null);
@@ -904,7 +908,10 @@ export default function App() {
                   ? ' · 本地' + (localDiagnostics.metrics.indexMode === 'incremental' ? '增量' : '全量') +
                     ' stat ' + localDiagnostics.metrics.statCalls : '') +
                 (performanceStats?.desktopAudit
-                  ? ' · Desktop审计 ' + performanceStats.desktopAudit.durationMs + 'ms' : '')
+                  ? ' · Desktop审计 ' + performanceStats.desktopAudit.durationMs + 'ms' : '') +
+                (performanceStats?.notificationLag
+                  ? ' · 事件通知估计 P95 ' + performanceStats.notificationLag.p95Ms +
+                    'ms(n=' + performanceStats.notificationLag.samples + ')' : '')
               : '事件优先 · 兜底扫描 · 状态为保守推断'}
           </span>
         </footer>

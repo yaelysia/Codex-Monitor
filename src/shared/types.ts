@@ -138,9 +138,17 @@ export interface DesktopAuditMetrics {
   directoriesEnumerated: number;
   lastEventLagMs: number | null;
 }
+export interface NotificationLagMetrics {
+  samples: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+}
 export interface MonitorPerformance {
   sourceScanDurationMs: number | null;
   desktopAudit: DesktopAuditMetrics | null;
+  /** Estimated from persisted event timestamps, not a measurement of OS popup display. */
+  notificationLag?: NotificationLagMetrics | null;
 }
 
 export interface MonitorState {

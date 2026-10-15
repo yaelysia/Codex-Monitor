@@ -130,6 +130,8 @@ describe('source-clock and local indexing diagnostics', () => {
     expect(source).toContain('sourceDiagnosticTitle');
     expect(source).toContain('aria-label="采集性能诊断"');
     expect(source).toContain('localDiagnostics.metrics.statCalls');
+    expect(source).toContain('notificationLag.p95Ms');
+    expect(source).toContain('selectedRaw?.updatedAt');
   });
 });
 
