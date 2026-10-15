@@ -867,7 +867,7 @@ export default function App() {
         {view === 'chronicle' && <div className="signal-chronicle">
           <section className="signal-panel signal-chronicle-main">
             <div className="signal-panel-heading"><div><h2>通知与近期活动</h2>
-              <small>通知来自真实结束、待处理证据；最近活动来自会话元数据</small></div></div>
+              <small>通知来自结束、失败、待处理及来源采集状态；最近活动来自会话元数据</small></div></div>
             <div className="signal-timeline">
               {recentAlerts.slice(0, 30).map(alert => <div className="signal-timeline-entry" key={alert.id}>
                 <span className={'signal-timeline-pin ' + alert.kind}/>

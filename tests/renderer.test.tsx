@@ -26,6 +26,8 @@ describe('notification copy across renderer and Windows surfaces', () => {
     expect(main).toContain('sourceIdFromAlertKey(key)');
     expect(floating).toContain('isSourceAlertKind(alert.kind)');
     expect(floating).toContain('openMain(alert.sessionKey)');
+    expect(main).toContain("setView('board')");
+    expect(main).toContain('sourceIdFromAlertKey(alert.sessionKey)');
   });
 });
 

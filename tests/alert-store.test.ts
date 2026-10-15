@@ -113,6 +113,28 @@ describe('persisted minimal notification inbox', () => {
       .toBe('Windows');
   });
 
+  it('validates source alert keys and strips extra persisted source metadata', () => {
+    const id = JSON.stringify(['@source:ssh:unit','source-offline','1700000000000']);
+    const valid = { id, sessionKey:'@source:ssh:unit',sessionId:'ssh:unit',
+      kind:'source-offline',at:NOW,read:false,title:'LEAK_TITLE' };
+    const raw = {version:1,muted:false,alerts:[
+      {...valid,sessionId:'different'},
+      valid,
+    ],seenAlertIds:[id],sourceHealth:[
+      {sourceId:'ssh:unit',firstFailedAt:NOW-31_000,failures:3,
+        offlineNotified:true,alias:'PRIVATE_SERVER_ALIAS',error:'PRIVATE_SSH_ERROR'},
+      {sourceId:'ssh:corrupt',firstFailedAt:'bad',failures:8,offlineNotified:true},
+    ]};
+    const output = normalizeAlertState(raw,NOW);
+    expect(output?.alerts).toEqual([{id,sessionKey:'@source:ssh:unit',
+      sessionId:'ssh:unit',kind:'source-offline',at:NOW,read:false}]);
+    expect(output?.sourceHealth).toEqual([{sourceId:'ssh:unit',
+      firstFailedAt:NOW-31_000,failures:3,offlineNotified:true}]);
+    expect(JSON.stringify(output)).not.toMatch(/LEAK_TITLE|PRIVATE_SERVER_ALIAS|PRIVATE_SSH_ERROR/);
+    expect(normalizeAlertState({version:1,muted:false,alerts:[],
+      seenAlertIds:[]},NOW)?.sourceHealth).toEqual([]);
+  });
+
   it('drops corrupted, extra-field and expired entries safely', () => {
     const root = dir();
     fs.writeFileSync(path.join(root, 'alert-state.json'), '{not json');

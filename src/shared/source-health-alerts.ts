@@ -59,8 +59,10 @@ export class SourceHealthTracker {
           now < prior.firstFailedAt) {
         this.records.set(source.id, {
           sourceId: source.id, firstFailedAt: now,
-          failures: 1, offlineNotified: false,
+          failures: 1, offlineNotified: !!prior?.offlineNotified,
         });
+        if (this.records.size > MAX_SOURCES)
+          this.records.delete(this.records.keys().next().value!);
         return [];
       }
       const current = { ...prior, failures: Math.min(1000, prior.failures + 1) };
