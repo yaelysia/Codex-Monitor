@@ -182,7 +182,7 @@ async function sourceResult(id: string, label: string, kind: SourceKind, scan: (
   try {
     const sessions = await scan();
     return { id, label, kind, sessions, captureStartedAt, capturedAt: Date.now(),
-      scanMetrics: { durationMs: Math.max(0, Math.round(performance.now() - started)),
+      error: null, scanMetrics: { durationMs: Math.max(0, Math.round(performance.now() - started)),
         sessionCount: sessions.length } };
   } catch (error) {
     return { id, label, kind, sessions: [], captureStartedAt, capturedAt: Date.now(),
