@@ -66,7 +66,7 @@ describe('retained sources on temporary disconnection', () => {
       stale: true, lastHealthyAt: NOW });
     expect(stale.sessions.map(row => row.status)).toEqual(['unknown', 'finished']);
     expect(stale.sessions[0]?.ageAtSourceMs).toBe(35_000);
-    expect(stale.sessions[0]?.statusReason).toContain('实时');
+    expect(stale.sessions[0]?.statusReason).toContain('当前运行或待处理情况未确认');
     expect(previous.sessions[0]?.status).toBe('working');
     expect(cache.pinSnapshot(NOW + 5_000).sources[0]?.sessions[0]?.status).toBe('working');
   });
