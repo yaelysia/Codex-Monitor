@@ -111,14 +111,18 @@ export function runCollector(command: string, args: string[], python: string, ro
 export async function listWslDistros(): Promise<string[]> {
   if (process.platform !== 'win32') return [];
   if (wslCache && Date.now() - wslCache.at < 60_000) return wslCache.distros;
-  const distros = await new Promise<string[]>((resolve) => {
+  const distros = await new Promise<string[] | null>((resolve) => {
     execFile('wsl.exe', ['--list', '--quiet'], { encoding: 'buffer', timeout: 6_000, windowsHide: true }, (err, stdout) => {
-      if (err || !stdout) return resolve([]);
+      // A transient WSL listing error must not silently erase a previously
+      // configured source. Keep the last known distros and let their own
+      // scans expose a source error until WSL recovers.
+      if (err || !stdout) return resolve(null);
       const buffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout);
       const text = buffer.length > 1 && buffer[1] === 0 ? buffer.toString('utf16le') : buffer.toString('utf8');
       resolve([...new Set(text.replace(/\0/g, '').split(/\r?\n/).map(s => s.trim()).filter(s => s && !isInternalWslDistro(s)))]);
     });
   });
+  if (distros === null) return wslCache?.distros ?? [];
   wslCache = { at: Date.now(), distros };
   return distros;
 }
