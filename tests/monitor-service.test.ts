@@ -111,6 +111,9 @@ describe('event-driven scan orchestration', () => {
     await vi.advanceTimersByTimeAsync(450);
     expect(collect).toHaveBeenCalledTimes(2);
     expect(vi.mocked(collect).mock.calls[1]?.[1]).toEqual(new Set(['ssh:one']));
+    // Targeted event scans can use a healthy local watcher-backed index;
+    // manual/full scans always rediscover the directory tree.
+    expect(vi.mocked(collect).mock.calls[1]?.[4]).toBe(false);
     expect(service.state().scan?.sources.map(x => x.id)).toEqual(['local', 'ssh:one']);
     expect(delivered.map(e => e.sessionId)).toEqual(['parent']);
 

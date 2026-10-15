@@ -125,9 +125,9 @@ export class WatchCoordinator {
                 if (!alive || this.stopped) return;
                 const name = file?.toString() || '';
                 if (!name || /(?:^|[\\/])codex-desktop-[^\\/]+\.log$/i.test(name)) {
-                  // The Desktop log watcher does not provide a trusted rollout
-                  // path; the next local scan must recheck its directory index.
-                  noteLocalRolloutChange(spec.root, null);
+                  // Desktop log events have a separate native lifecycle
+                  // audit. Do not invalidate the entire JSONL index for each
+                  // verbose Desktop log write; the periodic full scan remains.
                   this.onChange(spec.id);
                 }
               });
