@@ -98,7 +98,16 @@ export class LocalFileIndex {
       // Changes which arrived while discovery was running remain queued.
     } else {
       statCalls = changed.length;
-      const records = await mapLimited(changed, 24, statRollout);
+      const realRoot = await fs.realpath(sessionsDir);
+      const records = await mapLimited(changed, 24, async file => {
+        // An event can name a regular file inside a symlinked date folder.
+        // lstat(file) checks only the leaf, not its parent directories.
+        const actual = await fs.realpath(file).catch(() => null);
+        if (!actual) return null;
+        const rel = path.relative(realRoot, actual);
+        if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) return null;
+        return statRollout(file);
+      });
       for (let i = 0; i < changed.length; i++) {
         const row = records[i];
         if (row) this.entries.set(row.file,row);

@@ -60,6 +60,20 @@ describe('bounded event-assisted local file discovery', () => {
     expect(index.diagnostics().mode).toBe('full');
   });
 
+  it('does not follow event hints through a symlinked date directory', async () => {
+    if (process.platform === 'win32') return; // Creating directory links needs privileges.
+    const {home,root}=await fixture();
+    const index=new LocalFileIndex();
+    await index.candidates(root,NOW,false);
+    const outside=path.join(home,'outside');
+    await fs.mkdir(outside,{recursive:true});
+    await fs.writeFile(path.join(outside,'rollout-leak.jsonl'),'{}');
+    await fs.mkdir(path.join(root,'2026','10'),{recursive:true});
+    await fs.symlink(outside,path.join(root,'2026','10','16'),'dir');
+    index.note(root,'2026/10/16/rollout-leak.jsonl');
+    expect(await index.candidates(root,NOW+1000,true)).toEqual([]);
+  });
+
   it('unknown directory and untrusted paths invalidate discovery rather than accessing paths', async () => {
     const {root,day}=await fixture();
     const index=new LocalFileIndex();
