@@ -32,6 +32,27 @@ class TestLinuxCollector(unittest.TestCase):
             'type': 'session_meta', 'payload': {'source': 'vscode'}})), 'unknown')
 
 
+    def test_failed_turn_history_survives_new_turns(self):
+        now = 1_800_000_000_000
+        def row(kind, turn, at, error=False):
+            payload = {'type': kind, 'turn_id': turn}
+            if error:
+                payload['error'] = {'message': 'PRIVATE_FAILURE_TEXT'}
+            return {'type': 'event_msg', 'timestamp': at, 'payload': payload}
+        events = [row('turn_started', 'a', '2026-10-12T10:00:00Z'),
+                  row('turn_complete', 'a', '2026-10-12T10:00:01Z', True),
+                  row('turn_started', 'b', '2026-10-12T10:00:02Z'),
+                  row('turn_complete', 'b', '2026-10-12T10:00:03Z', True),
+                  row('turn_started', 'c', '2026-10-12T10:00:04Z')]
+        status = scanner.details('', '\n'.join(map(json.dumps, events)),
+                                 'rollout-abc.jsonl', False, now - 1000, now)
+        self.assertEqual(status['status'], 'working')
+        self.assertIsNone(status['failedToken'])
+        self.assertEqual(status['failureTokens'],
+                         ['2026-10-12T10:00:01Z|a',
+                          '2026-10-12T10:00:03Z|b'])
+        self.assertNotIn('PRIVATE_FAILURE_TEXT', json.dumps(status))
+
     def test_interruption_history_survives_new_turns(self):
         now = 1_800_000_000_000
         def row(kind, turn, at):
@@ -383,6 +404,9 @@ class TestLinuxCollector(unittest.TestCase):
                 self.assertEqual(state['status'], expected)
                 if expected != 'finished':
                     self.assertIsNone(state['finishedToken'])
+                if expected == 'failed':
+                    self.assertEqual(state['failureTokens'], [])
+                    self.assertIsNone(state['failedToken'])
 
 
 

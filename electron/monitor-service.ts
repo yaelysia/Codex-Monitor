@@ -342,6 +342,7 @@ export class MonitorService {
         const order = delta.sources.map(source => source.id);
         const known = new Set(order);
         this.sourceRetention.forgetAbsent(known);
+        if (this.tracker.forgetSources(known)) this.persistAlerts();
         const byId = new Map(this.lastScan?.sources.map(src => [src.id, src]) ?? []);
         const rawById = new Map(this.rawLastScan?.sources.map(src => [src.id, src]) ?? []);
         this.lastScan = { scannedAt: delta.scannedAt,

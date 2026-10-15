@@ -127,12 +127,38 @@ describe('terminal turn status accuracy', () => {
     const result = inferStatus(text, NOW - 1000, NOW);
     expect(result.status).toBe('failed');
     expect(result.finishedToken).toBeNull();
+    expect(result.failedToken).toBe('|turn2');
+    expect(result.failureTokens).toEqual(['|turn2']);
   });
+  it('keeps error event identities after a later turn starts, without saving error text', () => {
+    const eventRow = (kind: string, turn: string, stamp: string, failed = false) =>
+      JSON.stringify({ type: 'event_msg', timestamp: stamp,
+        payload: { type: kind, turn_id: turn,
+          ...(failed ? { error: { message: 'PRIVATE_FAILURE_TEXT' } } : {}) } });
+    const lines = [
+      eventRow('turn_started', 'a', '2026-10-12T10:00:00Z'),
+      eventRow('turn_complete', 'a', '2026-10-12T10:00:01Z', true),
+      eventRow('turn_started', 'b', '2026-10-12T10:00:02Z'),
+      eventRow('turn_complete', 'b', '2026-10-12T10:00:03Z', true),
+      eventRow('turn_started', 'c', '2026-10-12T10:00:04Z'),
+    ].join('\n');
+    const result = inferStatus(lines, NOW - 1000, NOW);
+    expect(result.status).toBe('working');
+    expect(result.failedToken).toBeNull();
+    expect(result.failureTokens).toEqual([
+      '2026-10-12T10:00:01Z|a', '2026-10-12T10:00:03Z|b',
+    ]);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_FAILURE_TEXT');
+  });
+
   it('does not mistake a completion with error:null for a failure', () => {
     const text = JSON.stringify({ type: 'event_msg', payload: {
       type: 'turn_complete', turn_id: 'turn3', error: null,
     } });
-    expect(inferStatus(text, NOW - 1000, NOW).status).toBe('finished');
+    const result = inferStatus(text, NOW - 1000, NOW);
+    expect(result.status).toBe('finished');
+    expect(result.failureTokens).toEqual([]);
+    expect(result.failedToken).toBeNull();
   });
 });
 

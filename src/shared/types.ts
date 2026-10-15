@@ -43,6 +43,10 @@ export interface SessionRecord {
    * Includes aborts followed by a later turn; never includes message text.
    */
   interruptionTokens?: string[];
+  /** Terminal turn completed with an explicit non-null error, not an abort. */
+  failedToken?: string | null;
+  /** Bounded failure event fingerprints, even when a later turn has started. */
+  failureTokens?: string[];
   waitingToken?: string | null;
   /** Stable ID for an unanswered persisted question/approval call or async AgentMessage. */
   pendingQuestionToken?: string | null;
@@ -106,7 +110,8 @@ export interface ConfigResponse {
   distros: string[];
 }
 
-export type AlertKind = 'finished' | 'waiting' | 'interrupted';
+export type AlertKind =
+  'finished' | 'waiting' | 'interrupted' | 'failed' | 'source-offline' | 'source-recovered';
 export type FloatingSide = 'left' | 'right';
 export type SignalAppearance = 'moonsea' | 'ember' | 'mist';
 export type FloatingCompactSize = 'micro' | 'compact';

@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AlertTrackerPersistence, SavedAlert } from '../src/shared/alert-tracker';
+import { isSourceAlertKind, sourceIdFromAlertKey } from '../src/shared/source-alert';
+import type { SavedSourceHealth } from '../src/shared/source-health-alerts';
 
 const MAX_FILE_BYTES = 128 * 1024;
 const MAX_ALERTS = 60;
@@ -21,7 +23,8 @@ function validAlertId(id: unknown, key?: string, kind?: string): id is string {
     if (!Array.isArray(parsed) || parsed.length !== 3 ||
         !validString(parsed[0], 350) ||
         (parsed[1] !== 'finished' && parsed[1] !== 'waiting' &&
-         parsed[1] !== 'interrupted') ||
+         parsed[1] !== 'interrupted' && parsed[1] !== 'failed' &&
+         parsed[1] !== 'source-offline' && parsed[1] !== 'source-recovered') ||
         !validString(parsed[2], 500)) return false;
     return (!key || parsed[0] === key) && (!kind || parsed[1] === kind);
   } catch { return false; }
@@ -31,8 +34,11 @@ function validRecord(value: unknown, now: number): SavedAlert | null {
   const row = value as Record<string, unknown>;
   if (!validString(row.sessionKey, 350) || !validString(row.sessionId, 128) ||
       (row.kind !== 'finished' && row.kind !== 'waiting' &&
-       row.kind !== 'interrupted') ||
+       row.kind !== 'interrupted' && row.kind !== 'failed' &&
+       row.kind !== 'source-offline' && row.kind !== 'source-recovered') ||
       !validAlertId(row.id, row.sessionKey, row.kind) ||
+      (isSourceAlertKind(row.kind) &&
+        sourceIdFromAlertKey(row.sessionKey) !== row.sessionId) ||
       typeof row.at !== 'number' || !Number.isSafeInteger(row.at) ||
       row.at <= 0 || row.at > now + 60_000 || now - row.at > MAX_AGE_MS ||
       typeof row.read !== 'boolean') return null;
@@ -55,7 +61,29 @@ export function normalizeAlertState(raw: unknown, now = Date.now()): AlertTracke
   const seen = new Set<string>();
   for (const id of row.seenAlertIds.slice(-MAX_SEEN_IDS)) if (validAlertId(id)) seen.add(id);
   for (const item of alerts) seen.add(item.id);
-  return { version: 1, muted: row.muted, alerts, seenAlertIds: [...seen].slice(-MAX_SEEN_IDS) };
+  // Whitelisted health state is tiny and contains IDs/timestamps only. No
+  // errors, host aliases, paths or transcript contents are persisted.
+  const sourceHealth: SavedSourceHealth[] = [];
+  const uniqueSources = new Set<string>();
+  const candidates: unknown[] = Array.isArray(row.sourceHealth) ? row.sourceHealth.slice(-48) : [];
+  for (const value of candidates) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const state = value as Record<string, unknown>;
+    if (!validString(state.sourceId, 128) || uniqueSources.has(state.sourceId) ||
+        (state.firstFailedAt !== null &&
+          (typeof state.firstFailedAt !== 'number' || !Number.isSafeInteger(state.firstFailedAt) ||
+            state.firstFailedAt <= 0 || state.firstFailedAt > now + 60_000)) ||
+        typeof state.failures !== 'number' || !Number.isSafeInteger(state.failures) ||
+        state.failures < 0 || state.failures > 1000 ||
+        typeof state.offlineNotified !== 'boolean') continue;
+    uniqueSources.add(state.sourceId);
+    sourceHealth.push({
+      sourceId: state.sourceId, firstFailedAt: state.firstFailedAt,
+      failures: state.failures, offlineNotified: state.offlineNotified,
+    });
+  }
+  return { version: 1, muted: row.muted, alerts,
+    seenAlertIds: [...seen].slice(-MAX_SEEN_IDS), sourceHealth };
 }
 
 /** Atomic, debounced, tiny local store. Never writes prompts, titles or paths. */

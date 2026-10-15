@@ -13,12 +13,21 @@ describe('notification copy across renderer and Windows surfaces', () => {
     expect(alertKindLabel('finished')).toBe('本轮回复已结束');
     expect(alertKindLabel('waiting')).toBe('可能待处理');
     expect(alertKindLabel('interrupted')).toBe('本轮已中断');
+    expect(alertKindLabel('failed')).toBe('本轮失败');
+    expect(alertKindLabel('source-offline')).toBe('数据源采集异常');
+    expect(alertKindLabel('source-recovered')).toBe('数据源已恢复');
     const main = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url), 'utf8');
     const floating = readFileSync(new URL('../src/renderer/FloatingApp.tsx', import.meta.url), 'utf8');
     const native = readFileSync(new URL('../electron/desktop-notifications.ts', import.meta.url), 'utf8');
     expect(main).toContain('alertKindLabel(alert.kind)');
     expect(floating).toContain('alertKindLabel(alert.kind)');
     expect(native).toContain('alertKindLabel(alert.kind)');
+    expect(main).toContain('openAlertTarget(alert)');
+    expect(main).toContain('sourceIdFromAlertKey(key)');
+    expect(floating).toContain('isSourceAlertKind(alert.kind)');
+    expect(floating).toContain('openMain(alert.sessionKey)');
+    expect(main).toContain("setView('board')");
+    expect(main).toContain('sourceIdFromAlertKey(alert.sessionKey)');
   });
 });
 

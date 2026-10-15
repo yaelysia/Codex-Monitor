@@ -145,6 +145,8 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   finishedToken: string | null;
   interruptedToken: string | null;
   interruptionTokens: string[];
+  failedToken: string | null;
+  failureTokens: string[];
   waitingToken: string | null;
   pendingQuestionToken: string | null;
   questionText: string | null;
@@ -156,6 +158,8 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
   let finishedToken: string | null = null;
   let interruptedToken: string | null = null;
   const interruptionTokens: string[] = [];
+  let failedToken: string | null = null;
+  const failureTokens: string[] = [];
   let waitingToken: string | null = null;
   let checkpointAfterBoundary = false;
   const parsedRows = jsonlRows(tail, clippedStart);
@@ -170,6 +174,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
       awaiting = false;
       finishedToken = null;
       interruptedToken = null;
+      failedToken = null;
       waitingToken = null;
       checkpointAfterBoundary = false;
     }
@@ -190,7 +195,7 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     if (START_EVENTS.has(event)) {
       phase = 'started'; activeTurnId = turnId;
       awaiting = false; waitingToken = null;
-      finishedToken = null; interruptedToken = null;
+      finishedToken = null; interruptedToken = null; failedToken = null;
       checkpointAfterBoundary = false;
     } else if (END_EVENTS.has(event) || ABORT_EVENTS.has(event)) {
       // A late turn-a completion must never close currently running turn-b.
@@ -204,6 +209,12 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
       awaiting = false;
       finishedToken = phase === 'finished' ? token : null;
       interruptedToken = phase === 'interrupted' ? token : null;
+      failedToken = phase === 'failed' ? token : null;
+      if (phase === 'failed' && token && token.length <= 300 &&
+          !failureTokens.includes(token)) {
+        failureTokens.push(token);
+        if (failureTokens.length > 32) failureTokens.shift();
+      }
       if (phase === 'interrupted' && token && token.length <= 300 &&
           !interruptionTokens.includes(token)) {
         interruptionTokens.push(token);
@@ -229,6 +240,8 @@ export function inferStatus(tail: string, updatedAt: number, now = Date.now(), c
     interruptedToken: phase === 'interrupted' && !checkpointAfterBoundary &&
       !question.blocking ? interruptedToken : null,
     interruptionTokens,
+    failedToken: phase === 'failed' && !checkpointAfterBoundary ? failedToken : null,
+    failureTokens,
     waitingToken: question.blocking && pendingQuestionToken ? pendingQuestionToken :
       awaiting ? waitingToken : null,
     pendingQuestionToken,

@@ -1,5 +1,7 @@
 import type { AlertKind, MonitorAlert, MonitorState, ScanResponse, SessionRecord } from './types';
 import type { DesktopLogEvent } from './desktop-log-status';
+import { SourceHealthTracker, type SavedSourceHealth } from './source-health-alerts';
+import { isSourceAlertKind, sourceAlertKey } from './source-alert';
 
 const RECENT_EVENT_MS = 120_000;
 const CONTIGUOUS_SCAN_GAP_MS = 90_000;
@@ -18,11 +20,14 @@ export interface AlertTrackerPersistence {
   muted: boolean;
   alerts: SavedAlert[];
   seenAlertIds: string[];
+  /** Additive v1 metadata. Old saved inboxes remain loadable. */
+  sourceHealth?: SavedSourceHealth[];
 }
 
 type KnownSession = Pick<SessionRecord,
   'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'interruptedToken' |
-  'interruptionTokens' | 'waitingToken' | 'pendingQuestionToken' | 'isSubagent'>;
+  'interruptionTokens' | 'failedToken' | 'failureTokens' |
+  'waitingToken' | 'pendingQuestionToken' | 'isSubagent'>;
 
 /** Compare file mtime with the clock of the machine that owns it, not with Windows. */
 function recentAtSource(session: SessionRecord, now: number): boolean {
@@ -46,7 +51,7 @@ function fileOrEventChanged(previous: KnownSession, session: SessionRecord,
 /** Interpret abort timestamps in the source's own clock, never Windows time.
  * Older aborts in a newly discovered file must not flood the inbox.
  */
-function recentAbortedTurn(token: string, session: SessionRecord, now: number): boolean {
+function recentTerminalEvent(token: string, session: SessionRecord, now: number): boolean {
   const separator = token.indexOf('|');
   const eventAt = separator > 0 ? Date.parse(token.slice(0, separator)) : NaN;
   if (!Number.isFinite(eventAt)) return recentAtSource(session, now);
@@ -59,6 +64,7 @@ function recentAbortedTurn(token: string, session: SessionRecord, now: number): 
 
 /** A source may temporarily disappear during SSH failures. Never infer transitions from errors. */
 export class AlertTracker {
+  private readonly sourceHealth = new SourceHealthTracker();
   private known = new Map<string, Map<string, KnownSession>>();
   private scanned = new Map<string, number>();
   private seenAlertIds = new Set<string>();
@@ -72,11 +78,14 @@ export class AlertTracker {
   restore(snapshot: AlertTrackerPersistence | null): void {
     if (!snapshot) return;
     this.muted = snapshot.muted;
+    this.sourceHealth.restore(snapshot.sourceHealth);
     this.seenAlertIds = new Set(snapshot.seenAlertIds.slice(-MAX_SEEN_ALERT_IDS));
     this.alerts = snapshot.alerts.slice(0, MAX_ALERTS).map(item => {
       this.seenAlertIds.add(item.id);
       return {
-        ...item, title: '已保存的任务提醒', sourceLabel: '历史来源',
+        ...item,
+        title: isSourceAlertKind(item.kind) ? '已保存的数据源提醒' : '已保存的任务提醒',
+        sourceLabel: '历史来源',
         workspace: null, statusReason: '历史提醒；请打开当前会话查看最新状态',
         questionText: null,
       };
@@ -92,6 +101,7 @@ export class AlertTracker {
         kind: item.kind, at: item.at, read: item.read,
       })),
       seenAlertIds: [...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS),
+      sourceHealth: this.sourceHealth.snapshot(),
     };
   }
 
@@ -101,12 +111,24 @@ export class AlertTracker {
     // lookup only when restoring a redacted historical inbox, not on every
     // foreground update or four-second Desktop audit.
     if (!scan || !this.alerts.some(alert =>
-        alert.title === '已保存的任务提醒' || alert.sourceLabel === '历史来源')) {
+        alert.title === '已保存的任务提醒' ||
+        alert.title === '已保存的数据源提醒' || alert.sourceLabel === '历史来源')) {
       return this.alerts.map(alert => ({ ...alert }));
     }
     const byKey = new Map(scan.sources.flatMap(src => src.sessions)
       .map(session => [session.key, session]));
+    const bySourceKey = new Map(scan.sources.map(src => [sourceAlertKey(src.id), src]));
     return this.alerts.map(alert => {
+      if (isSourceAlertKind(alert.kind)) {
+        const live = bySourceKey.get(alert.sessionKey);
+        return { ...alert,
+          title: alert.title === '已保存的数据源提醒' && live
+            ? live.label + (alert.kind === 'source-offline' ? ' · 采集异常' : ' · 已恢复采集')
+            : alert.title,
+          sourceLabel: alert.sourceLabel === '历史来源'
+            ? (live?.label || alert.sourceLabel) : alert.sourceLabel,
+        };
+      }
       const live = byKey.get(alert.sessionKey);
       return { ...alert,
         title: alert.title === '已保存的任务提醒' ? (live?.title || alert.title) : alert.title,
@@ -195,9 +217,21 @@ export class AlertTracker {
     return { scan, alerts: this.getAlerts(scan), muted: this.muted };
   }
 
+  /** Deleting a configured source must not pretend it recovered. */
+  forgetSources(known: ReadonlySet<string>): boolean {
+    for (const id of this.known.keys()) if (!known.has(id)) this.known.delete(id);
+    for (const id of this.scanned.keys()) if (!known.has(id)) this.scanned.delete(id);
+    return this.sourceHealth.forgetAbsent(known);
+  }
+
   observe(scan: ScanResponse, now = Date.now()): MonitorAlert[] {
     const pending: MonitorAlert[] = [];
     for (const source of scan.sources) {
+      for (const event of this.sourceHealth.observe(source, now)) {
+        if (this.seenAlertIds.has(event.id)) continue;
+        this.seenAlertIds.add(event.id);
+        pending.push(event);
+      }
       if (source.error) continue;
       const previous = this.known.get(source.id);
       const lastSuccessfulScan = this.scanned.get(source.id);
@@ -211,6 +245,8 @@ export class AlertTracker {
         const questionToken = session.pendingQuestionToken;
         const interrupted = [...new Set(session.interruptionTokens ?? [])];
         const knownInterrupted = new Set(prior?.interruptionTokens ?? []);
+        const failed = [...new Set(session.failureTokens ?? [])];
+        const knownFailed = new Set(prior?.failureTokens ?? []);
         // An asynchronous question may be unanswered while Codex continues
         // working or after its current turn finished. Such a request deserves
         // a waiting notification, not a fabricated process-waiting state.
@@ -218,6 +254,7 @@ export class AlertTracker {
         // asynchronous question token is still present in the session.
         const kind: AlertKind | null =
           session.status === 'interrupted' ? 'interrupted' :
+          session.status === 'failed' ? 'failed' :
           questionToken ? 'waiting' :
           session.status === 'finished' ? 'finished' :
           session.status === 'waiting' ? 'waiting' : null;
@@ -238,7 +275,7 @@ export class AlertTracker {
         // it is read. Emit every NEW persisted abort marker independently.
         if (knownBefore && recentlyObserved && !childNotification) {
           for (const marker of interrupted) {
-            if (knownInterrupted.has(marker) || !recentAbortedTurn(marker, session, now)) continue;
+            if (knownInterrupted.has(marker) || !recentTerminalEvent(marker, session, now)) continue;
             const id = JSON.stringify([session.key, 'interrupted', marker]);
             if (this.seenAlertIds.has(id)) continue;
             this.seenAlertIds.add(id);
@@ -251,12 +288,31 @@ export class AlertTracker {
             });
           }
         }
+        // An error-bearing completion can be followed by a new active turn
+        // before the next scan. Notify the new event, not just the snapshot.
+        if (knownBefore && recentlyObserved && !childNotification) {
+          for (const marker of failed) {
+            if (knownFailed.has(marker) || !recentTerminalEvent(marker, session, now)) continue;
+            const id = JSON.stringify([session.key, 'failed', marker]);
+            if (this.seenAlertIds.has(id)) continue;
+            this.seenAlertIds.add(id);
+            pending.push({
+              id, sessionKey: session.key, sessionId: session.id, kind: 'failed',
+              title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
+              workspace: session.workspace, at: now, read: false,
+              statusReason: '检测到本轮失败结束事件（后续轮次可能已重新开始）',
+              questionText: null,
+            });
+          }
+        }
         if (kind && knownBefore) {
           const token = kind === 'finished' ? session.finishedToken :
             kind === 'interrupted' ? session.interruptedToken :
+            kind === 'failed' ? session.failedToken :
               (questionToken || session.waitingToken);
           const priorToken = prior && (kind === 'finished' ? prior.finishedToken :
             kind === 'interrupted' ? prior.interruptedToken :
+            kind === 'failed' ? prior.failedToken :
               (prior.pendingQuestionToken || prior.waitingToken));
           const changed = prior ? fileOrEventChanged(prior, session, token, priorToken) : true;
           const newTerminal = !prior || (kind === 'waiting' && questionToken
@@ -266,7 +322,9 @@ export class AlertTracker {
           // With an event history, the abort has already been handled above.
           if (changed && newTerminal && recentlyObserved && !childNotification &&
               !(kind === 'interrupted' && session.interruptedToken &&
-                interrupted.includes(session.interruptedToken))) {
+                interrupted.includes(session.interruptedToken)) &&
+              !(kind === 'failed' && session.failedToken &&
+                failed.includes(session.failedToken))) {
             const identity = token || [session.updatedAt, session.byteSize ?? '?'].join(':');
             const id = JSON.stringify([session.key, kind, identity]);
             const finishedTurn = kind === 'finished' && token
@@ -290,6 +348,7 @@ export class AlertTracker {
           byteSize: session.byteSize, isSubagent: session.isSubagent,
           finishedToken: session.finishedToken, interruptedToken: session.interruptedToken,
           interruptionTokens: interrupted,
+          failedToken: session.failedToken, failureTokens: failed,
           waitingToken: session.waitingToken,
           pendingQuestionToken: session.pendingQuestionToken,
         });

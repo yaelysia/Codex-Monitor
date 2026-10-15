@@ -200,6 +200,66 @@ describe('aborts independent of latest session status', () => {
   });
 });
 
+describe('error-bearing turn completion notifications', () => {
+  it('notifies a failed turn once, never classifying it as completion or interruption', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, { byteSize: 100 })]), NOW);
+    const marker = new Date(NOW + 1000).toISOString() + '|failed-turn';
+    const failed = row('failed', NOW + 1000, {
+      byteSize: 120, ageAtSourceMs: 0, failedToken: marker, failureTokens: [marker],
+    });
+    expect(tracker.observe(snapshot(NOW + 2000, [failed]), NOW + 2000)
+      .map(alert => alert.kind)).toEqual(['failed']);
+    expect(tracker.observe(snapshot(NOW + 3000, [failed]), NOW + 3000)).toEqual([]);
+    expect(tracker.getAlerts()).toHaveLength(1);
+  });
+
+  it('recognizes failures even if the latest turn has started or completed', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, { byteSize: 100 })]), NOW);
+    const m1 = new Date(NOW + 1000).toISOString() + '|a';
+    const m2 = new Date(NOW + 2000).toISOString() + '|b';
+    const resumed = row('working', NOW + 3000, {
+      byteSize: 200, ageAtSourceMs: 0, failureTokens: [m1, m2],
+    });
+    expect(tracker.observe(snapshot(NOW + 4000, [resumed]), NOW + 4000)
+      .map(a => a.kind)).toEqual(['failed', 'failed']);
+    const final = row('finished', NOW + 5000, {
+      byteSize: 240, ageAtSourceMs: 0, finishedToken: 'complete|c',
+      failureTokens: [m1, m2],
+    });
+    expect(tracker.observe(snapshot(NOW + 6000, [final]), NOW + 6000)
+      .map(a => a.kind)).toEqual(['finished']);
+  });
+
+  it('ignores old failed markers after reconnect and child-agent failures', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW, {byteSize: 100})]), NOW);
+    tracker.observe(snapshot(NOW + 12_000, [], 'temporary offline'), NOW + 12_000);
+    const stale = row('working', NOW + 600_000, {
+      ageAtSourceMs: 0, byteSize: 200,
+      failureTokens: [new Date(NOW + 1000).toISOString() + '|old'],
+    });
+    expect(tracker.observe(snapshot(NOW + 600_000, [stale]), NOW + 600_000)).toEqual([]);
+    const child = row('failed', NOW + 601_000, {
+      isSubagent: true, byteSize: 200,
+      failureTokens: [new Date(NOW + 601_000).toISOString() + '|child'],
+    });
+    expect(tracker.observe(snapshot(NOW + 601_000, [child]), NOW + 601_000)).toEqual([]);
+  });
+
+  it('never promotes an explicit failure with an async question into waiting', () => {
+    const tracker = new AlertTracker();
+    tracker.observe(snapshot(NOW, [row('working', NOW)]), NOW);
+    const record = row('failed', NOW + 1000, {
+      byteSize: 210, failedToken: 'failed|a',
+      pendingQuestionToken: 'async:old',
+    });
+    expect(tracker.observe(snapshot(NOW + 2000, [record]), NOW + 2000)
+      .map(a => a.kind)).toEqual(['failed']);
+  });
+});
+
 describe('interrupted turn notifications', () => {
   it('reports a newly interrupted turn once, not as waiting or finished', () => {
     const tracker = new AlertTracker();

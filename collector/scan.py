@@ -399,6 +399,8 @@ def details(head, tail, filename, clipped, modified, now):
     finished_token = None
     interrupted_token = None
     interruption_tokens = []
+    failed_token = None
+    failure_tokens = []
     waiting_token = None
     checkpoint_after_boundary = False
     parsed_rows = list(rows(tail, clipped))
@@ -414,6 +416,7 @@ def details(head, tail, filename, clipped, modified, now):
             active_turn_id = None
             awaiting, finished_token, waiting_token = False, None, None
             interrupted_token = None
+            failed_token = None
             checkpoint_after_boundary = False
         if is_compaction_checkpoint(row, payload):
             checkpoint_after_boundary = True
@@ -430,7 +433,7 @@ def details(head, tail, filename, clipped, modified, now):
             if event in START:
                 phase, active_turn_id = 'started', turn_id or None
                 awaiting, waiting_token = False, None
-                finished_token, interrupted_token = None, None
+                finished_token, interrupted_token, failed_token = None, None, None
                 checkpoint_after_boundary = False
             elif event in END or event in ABORT:
                 # Late turn-a completion cannot terminate a newer running turn-b.
@@ -444,6 +447,12 @@ def details(head, tail, filename, clipped, modified, now):
                 awaiting, finished_token, waiting_token = (
                     False, marker if phase == 'finished' else None, None)
                 interrupted_token = marker if phase == 'interrupted' else None
+                failed_token = marker if phase == 'failed' else None
+                if (failed_token and len(failed_token) <= 300
+                        and failed_token not in failure_tokens):
+                    failure_tokens.append(failed_token)
+                    if len(failure_tokens) > 32:
+                        failure_tokens.pop(0)
                 if (interrupted_token and len(interrupted_token) <= 300
                         and interrupted_token not in interruption_tokens):
                     interruption_tokens.append(interrupted_token)
@@ -506,6 +515,8 @@ def details(head, tail, filename, clipped, modified, now):
         'finishedToken': finished_token if terminal and not pending_token else None,
         'interruptedToken': interrupted_token if status == 'interrupted' else None,
         'interruptionTokens': interruption_tokens,
+        'failedToken': failed_token if status == 'failed' else None,
+        'failureTokens': failure_tokens,
         'waitingToken': pending_token if question['blocking'] and pending_token
                         else waiting_token if awaiting else None,
         'pendingQuestionToken': pending_token,
