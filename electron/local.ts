@@ -130,7 +130,10 @@ export async function scanLocal(root: string, sourceId = 'local',
   cache.retain(new Set(selected.map(item => item.file)));
   await enrichLocalTitles(root, unique);
   const cacheAfter = cache.stats();
-  lastScanStats.set(path.resolve(root), {
+  const key = path.resolve(root);
+  if (!lastScanStats.has(key) && lastScanStats.size >= 6)
+    lastScanStats.delete(lastScanStats.keys().next().value!);
+  lastScanStats.set(key, {
     index: localFileIndexDiagnostics(root), parsed: selected.length,
     cacheHits: cacheAfter.hits - cacheBefore.hits,
     cacheMisses: cacheAfter.misses - cacheBefore.misses,

@@ -502,12 +502,12 @@ export default function App() {
   const sourceDiagnostics = useMemo(() => (scan?.sources ?? [])
     .filter(source => source.scanMetrics)
     .map(source => ({
+      id: source.id,
       label: source.label,
       error: !!source.error,
       metrics: source.scanMetrics!,
     })), [scan]);
-  const localDiagnostics = sourceDiagnostics.find(source =>
-    scan?.sources.find(item => item.label === source.label)?.id === 'local');
+  const localDiagnostics = sourceDiagnostics.find(source => source.id === 'local');
   const sourceDiagnosticTitle = sourceDiagnostics.map(({label, error, metrics}) =>
     label + (error ? ' · 采集失败' : '') + ' · ' + metrics.durationMs + 'ms' +
     ' · 会话 ' + metrics.sessionCount +
