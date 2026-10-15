@@ -34,3 +34,63 @@ describe('event-triggered targeted snapshot merge', () => {
     expect(mergeSourceSnapshots(prior, updated).sources[1]?.error).toBe('temporary failure');
   });
 });
+
+describe('retained sources on temporary disconnection', () => {
+  const NOW = 1_800_000_000_000;
+  const previous: SourceResult = {
+    id: 'ssh:one', label: 'Server', kind: 'ssh', error: null,
+    sessions: [{
+      key: 'ssh:one:active', id: 'active', sourceId: 'ssh:one',
+      sourceLabel: 'Server', workspace: '/repo', title: 'Build',
+      status: 'working', statusReason: 'previously observed active',
+      updatedAt: NOW - 30_000, ageAtSourceMs: 30_000, startedAt: null,
+      rolloutPath: '2026/10/12/rollout-active.jsonl',
+    }, {
+      key: 'ssh:one:done', id: 'done', sourceId: 'ssh:one',
+      sourceLabel: 'Server', workspace: '/repo', title: 'Old result',
+      status: 'finished', statusReason: 'finished event',
+      updatedAt: NOW - 10_000, ageAtSourceMs: 10_000, startedAt: null,
+    }],
+  };
+  const failure: SourceResult = {
+    id: 'ssh:one', label: 'Server', kind: 'ssh',
+    error: 'SSH disconnected', sessions: [],
+  };
+
+  it('retains rows but never advertises stale working/waiting as live', async () => {
+    const { SourceRetention } = await import('../src/shared/source-retention');
+    const cache = new SourceRetention();
+    cache.remember(previous, NOW);
+    const stale = cache.onFailure(failure, NOW + 5_000);
+    expect(stale).toMatchObject({ error: 'SSH disconnected',
+      stale: true, lastHealthyAt: NOW });
+    expect(stale.sessions.map(row => row.status)).toEqual(['unknown', 'finished']);
+    expect(stale.sessions[0]?.ageAtSourceMs).toBe(35_000);
+    expect(stale.sessions[0]?.statusReason).toContain('实时');
+    expect(previous.sessions[0]?.status).toBe('working');
+    expect(cache.pinSnapshot(NOW + 5_000).sources[0]?.sessions[0]?.status).toBe('working');
+  });
+
+  it('does not resurrect long-expired snapshots or store error rows as healthy', async () => {
+    const { SourceRetention, SOURCE_RETENTION_MS } =
+      await import('../src/shared/source-retention');
+    const cache = new SourceRetention();
+    cache.remember(previous, NOW);
+    expect(cache.onFailure(failure, NOW + SOURCE_RETENTION_MS + 1).sessions).toEqual([]);
+    expect(cache.pinSnapshot(NOW + SOURCE_RETENTION_MS + 1).sources).toEqual([]);
+    cache.remember(failure, NOW + 1000);
+    expect(cache.pinSnapshot(NOW + 1001).sources).toEqual([]);
+  });
+
+  it('replaces previous healthy data when the source reconnects', async () => {
+    const { SourceRetention } = await import('../src/shared/source-retention');
+    const cache = new SourceRetention();
+    cache.remember(previous, NOW);
+    cache.onFailure(failure, NOW + 1000);
+    const resumed = { ...previous, sessions: [{...previous.sessions[0]!,
+      status: 'finished' as const, statusReason: 'new completion'}] };
+    cache.remember(resumed, NOW + 2000);
+    expect(cache.pinSnapshot(NOW + 3000).sources[0]?.sessions[0]?.status).toBe('finished');
+    expect(cache.onFailure(failure, NOW + 4000).sessions[0]?.status).toBe('finished');
+  });
+});

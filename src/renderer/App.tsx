@@ -691,7 +691,8 @@ export default function App() {
         </div>
         {error && <div className="error-banner" role="alert">{error}</div>}
         {scan?.sources.filter(source => source.error).map(source =>
-          <div className="error-banner" role="alert" key={source.id}><Icon name="alert"/>{source.label}: {source.error}</div>)}
+          <div className="error-banner" role="alert" key={source.id}><Icon name="alert"/>{source.label}: {source.error}
+              {source.stale && ' · 已保留上次成功采集的会话，实时状态未确认'}</div>)}
         {workspaceId && <div className="scope-banner">工作目录：{currentWorkspace?.workspace || '未知'}
           <button type="button" onClick={() => setWorkspaceId(null)}>清除 ×</button></div>}
 

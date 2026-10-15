@@ -66,6 +66,9 @@ export interface SourceResult {
   capturedAt?: number;
   sessions: SessionRecord[];
   error: string | null;
+  /** Failed source with retained historical session metadata, not live evidence. */
+  stale?: boolean;
+  lastHealthyAt?: number;
 }
 
 export interface ScanResponse {
