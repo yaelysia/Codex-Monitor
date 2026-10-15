@@ -45,6 +45,8 @@ describe('retained sources on temporary disconnection', () => {
       status: 'working', statusReason: 'previously observed active',
       updatedAt: NOW - 30_000, ageAtSourceMs: 30_000, startedAt: null,
       rolloutPath: '2026/10/12/rollout-active.jsonl',
+      pendingQuestionToken: 'async:old-question', waitingToken: 'old-request',
+      questionText: 'old question',
     }, {
       key: 'ssh:one:done', id: 'done', sourceId: 'ssh:one',
       sourceLabel: 'Server', workspace: '/repo', title: 'Old result',
@@ -66,6 +68,8 @@ describe('retained sources on temporary disconnection', () => {
       stale: true, lastHealthyAt: NOW });
     expect(stale.sessions.map(row => row.status)).toEqual(['unknown', 'finished']);
     expect(stale.sessions[0]?.ageAtSourceMs).toBe(35_000);
+    expect(stale.sessions[0]?.pendingQuestionToken).toBeNull();
+    expect(stale.sessions[0]?.waitingToken).toBeNull();
     expect(stale.sessions[0]?.statusReason).toContain('当前运行或待处理情况未确认');
     expect(previous.sessions[0]?.status).toBe('working');
     expect(cache.pinSnapshot(NOW + 5_000).sources[0]?.sessions[0]?.status).toBe('working');

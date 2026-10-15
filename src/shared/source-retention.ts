@@ -32,6 +32,11 @@ export class SourceRetention {
           ' 上次证据：' + row.statusReason,
         evidenceKind: undefined,
         desktopRuntimeObserved: undefined,
+        // A previously outstanding request may already have been answered on
+        // the disconnected machine. Do not show it as actionable in the dock.
+        pendingQuestionToken: null,
+        waitingToken: null,
+        questionText: null,
         ageAtSourceMs: typeof row.ageAtSourceMs === 'number' &&
           Number.isFinite(row.ageAtSourceMs) ? row.ageAtSourceMs + elapsed : undefined,
       })),
