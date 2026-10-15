@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
+import { projectSessionsToLocalTime } from '../shared/session-time';
 import { alertKindLabel } from '../shared/alert-presentation';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
@@ -399,9 +400,10 @@ export default function App() {
   // Using the already hidden UI list here would lose the child identities.
   const rawSessions = useMemo(() =>
     scan?.sources.flatMap(source => source.sessions) ?? [], [scan]);
+  const displaySessions = useMemo(() => projectSessionsToLocalTime(scan), [scan]);
   const allSessions = useMemo(() =>
-    visibleSessions(rawSessions, showSubagents)
-      .sort((a, b) => b.updatedAt - a.updatedAt), [rawSessions, showSubagents]);
+    visibleSessions(displaySessions, showSubagents)
+      .sort((a, b) => b.updatedAt - a.updatedAt), [displaySessions, showSubagents]);
   // The full workspace tree is only needed when a workspace is selected.
   const sourceGroups = useMemo(() => workspaceId ?
     groupByExecutionLocation(allSessions) : [], [allSessions, workspaceId]);

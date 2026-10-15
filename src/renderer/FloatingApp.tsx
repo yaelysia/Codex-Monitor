@@ -4,6 +4,7 @@ import { recentParentCompletions } from '../shared/monitor-view';
 import { windowWasActivated } from '../shared/window-navigation';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
+import { projectSessionsToLocalTime } from '../shared/session-time';
 import { alertKindLabel } from '../shared/alert-presentation';
 import { useVisibleInterval } from './useVisibleInterval';
 
@@ -38,7 +39,7 @@ function ageText(then: number, now: number) {
   return Math.floor(seconds / 86400) + ' 天前';
 }
 function recentSessions(state: MonitorState): SessionRecord[] {
-  return visibleSessions(state.scan?.sources.flatMap(source => source.sessions) || [])
+  return visibleSessions(projectSessionsToLocalTime(state.scan))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
@@ -63,7 +64,7 @@ export default function FloatingApp() {
   const running = useMemo(() => sessions.filter(s => s.status === 'working'), [sessions]);
   const waiting = useMemo(() => sessions.filter(s => s.status === 'waiting' || !!s.pendingQuestionToken),
     [sessions]);
-  const completed = recentParentCompletions(sessions, now, monitor.scan?.scannedAt);
+  const completed = recentParentCompletions(sessions, now);
   const alerts = useMemo(() => visibleAlerts(monitor.alerts,
     monitor.scan?.sources.flatMap(source => source.sessions) || [])
     .sort((a, b) => b.at - a.at), [monitor.alerts, monitor.scan]);
@@ -178,8 +179,7 @@ export default function FloatingApp() {
             className="signal-dock-session" onClick={() => openOriginal(session.key)}>
             <span className="signal-dock-session-icon done"><Icon name="check" size={17}/></span>
             <span className="signal-dock-session-info"><strong>{session.title || '未命名会话'}</strong>
-              <small>{session.sourceLabel} · {ageText(session.ageAtSourceMs != null && monitor.scan
-                ? monitor.scan.scannedAt - session.ageAtSourceMs : session.updatedAt, now)}</small></span>
+              <small>{session.sourceLabel} · {ageText(session.updatedAt, now)}</small></span>
             <Icon name="open" size={13}/>
           </button>)}
           {!completed.length && <p className="signal-dock-empty">24 小时内没有已检测的完成轮次</p>}
