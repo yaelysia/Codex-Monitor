@@ -58,12 +58,15 @@ describe('remote status normalization', () => {
       { id: 'completed', status: 'finished', updatedAt: 1000, finishedToken: 'done|1' },
       { id: 'cancelled', status: 'interrupted', updatedAt: 1001, interruptedToken: 'abort|2',
         interruptionTokens: ['abort|1', 'abort|2', 'abort|2'] },
-      { id: 'failed', status: 'failed', updatedAt: 1002 },
+      { id: 'failed', status: 'failed', updatedAt: 1002,
+        failedToken: 'failed|2', failureTokens: ['failed|1', 'failed|2', 'failed|2'] },
       { id: 'invalid', status: 'nonsense', updatedAt: 1003 },
     ];
     const rows = normalizeRemote(entries, 'ssh:server', 'Server');
     expect(rows.map(row => row.status)).toEqual(['finished', 'interrupted', 'failed', 'unknown']);
     expect(rows[1]?.interruptedToken).toBe('abort|2');
     expect(rows[1]?.interruptionTokens).toEqual(['abort|1', 'abort|2']);
+    expect(rows[2]?.failedToken).toBe('failed|2');
+    expect(rows[2]?.failureTokens).toEqual(['failed|1', 'failed|2']);
   });
 });

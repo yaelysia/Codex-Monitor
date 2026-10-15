@@ -84,6 +84,35 @@ describe('persisted minimal notification inbox', () => {
     expect(restored.observe(snap(interrupted, NOW + 24_000), NOW + 24_000)).toEqual([]);
   });
 
+  it('persists failed and source health alerts without storing failure text', () => {
+    const root = dir();
+    const t = new AlertTracker();
+    t.observe(snap(session('working'), NOW), NOW);
+    const failed = { ...session('failed'), updatedAt: NOW + 1000,
+      failedToken: 'failed|a', failureTokens: ['failed|a'] };
+    expect(t.observe(snap(failed, NOW + 2000), NOW + 2000).map(a=>a.kind))
+      .toEqual(['failed']);
+    const offline = snap(session('working'), NOW + 3000);
+    offline.sources[0]!.error = 'PRIVATE_SSH_ERROR';
+    offline.sources[0]!.sessions = [];
+    t.observe(offline, NOW + 3000);
+    const alerts = t.observe(offline, NOW + 35_000);
+    expect(alerts.map(a=>a.kind)).toEqual(['source-offline']);
+    const store = new AlertStateStore(root);
+    store.update(t.snapshot(), NOW + 35_000);
+    store.flush();
+    const content = fs.readFileSync(path.join(root, 'alert-state.json'), 'utf8');
+    expect(content).not.toMatch(/PRIVATE_PROMPT_TITLE|PRIVATE_WORKSPACE|PRIVATE_REASON|PRIVATE_SSH_ERROR/);
+    const next = new AlertTracker();
+    next.restore(new AlertStateStore(root).load(NOW + 36_000));
+    expect(next.getAlerts().map(a=>a.kind)).toEqual(['source-offline','failed']);
+    expect(next.observe(offline, NOW + 48_000)).toEqual([]);
+    const recovered = next.observe(snap(session('working'), NOW + 49_000), NOW + 49_000);
+    expect(recovered.map(a=>a.kind)).toEqual(['source-recovered']);
+    expect(next.state(snap(session('working'), NOW + 49_000)).alerts[0]?.sourceLabel)
+      .toBe('Windows');
+  });
+
   it('drops corrupted, extra-field and expired entries safely', () => {
     const root = dir();
     fs.writeFileSync(path.join(root, 'alert-state.json'), '{not json');

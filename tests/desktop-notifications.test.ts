@@ -88,6 +88,27 @@ describe('native notification acknowledge action', () => {
     expect(fake.notifications[0]?.options.title).toBe('Codex · 本轮已中断');
   });
 
+  it('labels failed turns and routes source notices with synthetic source keys', () => {
+    showDesktopAlert({ ...alert, kind: 'failed', questionText: null }, vi.fn(), vi.fn());
+    expect(fake.notifications[0]?.options.title).toBe('Codex · 本轮失败');
+    const focus = vi.fn();
+    const acknowledge = vi.fn();
+    const source: MonitorAlert = {
+      ...alert, id:'source-event', kind:'source-offline',
+      sessionKey:'@source:ssh:server', sessionId:'ssh:server',
+      title:'Server · 连接异常', questionText:null,
+    };
+    showDesktopAlert(source,focus,acknowledge);
+    const notice = fake.notifications[1]!;
+    expect(notice.options.title).toBe('Codex · 数据源连接异常');
+    expect(notice.options.body).toContain('连续采集失败');
+    notice.fire('click');
+    expect(focus).toHaveBeenCalledExactlyOnceWith('@source:ssh:server');
+    expect(acknowledge).toHaveBeenCalledExactlyOnceWith('source-event');
+    showDesktopAlert({...source,kind:'source-recovered'},vi.fn(),vi.fn());
+    expect(fake.notifications[2]?.options.title).toBe('Codex · 数据源已恢复');
+  });
+
   it('accepts positional action-index callbacks on older Electron builds', () => {
     const focus = vi.fn();
     const acknowledge = vi.fn();
