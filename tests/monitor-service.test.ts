@@ -496,3 +496,28 @@ describe('independent source delivery and disconnection history', () => {
     expect(delivered.map(a=>a.kind)).toEqual(['finished']);
   });
 });
+
+describe('local watcher index enablement', () => {
+  it('only uses incremental indexing for healthy local partial scans', async () => {
+    const local = source('local', [{
+      ...session('local-task','working',NOW), sourceId:'local',
+      sourceLabel:'Windows', key:'local:local-task',
+    }]);
+    vi.mocked(collect).mockImplementation(async () => snapshot(Date.now(),[local]));
+    service = new MonitorService(() => undefined, () => undefined);
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(collect).mock.calls[0]?.[4]).toBe(false);
+
+    fake.health = {local:'active'};
+    fake.wake?.('local');
+    await vi.advanceTimersByTimeAsync(450);
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toEqual(new Set(['local']));
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[4]).toBe(true);
+
+    // A manual all-source refresh must bypass the index regardless of health.
+    await service.refresh(true);
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[1]).toBeUndefined();
+    expect(vi.mocked(collect).mock.calls.at(-1)?.[4]).toBe(false);
+  });
+});
