@@ -62,22 +62,22 @@ if (firstInstance) {
         if (!shouldDisplayNativeAlert(alert,
           key => windowTracker?.isSessionForeground(key) ?? false)) return;
         showDesktopAlert(alert, key => {
-        // Source notifications have no Codex thread to focus.
-        const sourceId = sourceIdFromAlertKey(key);
-        if (sourceId) {
-          mainWindow?.show(monitor?.state().scan?.sources.some(src => src.id === sourceId)
-            ? key : undefined);
-          return;
-        }
-        if (!monitor || !windowTracker) { mainWindow?.show(key); return; }
-        // The notification itself acknowledged only its own alert on click.
-        // A partial result means the original window IS foreground; do not
-        // immediately cover it with Monitor merely because the tab is unknown.
-        const record = monitor.state().scan?.sources.flatMap(source => source.sessions)
-          .find(session => session.key === key);
-        void windowTracker.focusOriginalWindow(key, record).then(result => {
-          if (!windowWasActivated(result)) mainWindow?.show(key);
-        }).catch(() => mainWindow?.show(key));
+          // Source notifications have no Codex thread to focus.
+          const sourceId = sourceIdFromAlertKey(key);
+          if (sourceId) {
+            mainWindow?.show(monitor?.state().scan?.sources.some(src => src.id === sourceId)
+              ? key : undefined);
+            return;
+          }
+          if (!monitor || !windowTracker) { mainWindow?.show(key); return; }
+          // The notification itself acknowledged only its own alert on click.
+          // A partial result means the original window IS foreground; do not
+          // immediately cover it with Monitor merely because the tab is unknown.
+          const record = monitor.state().scan?.sources.flatMap(source => source.sessions)
+            .find(session => session.key === key);
+          void windowTracker.focusOriginalWindow(key, record).then(result => {
+            if (!windowWasActivated(result)) mainWindow?.show(key);
+          }).catch(() => mainWindow?.show(key));
         }, id => { monitor?.acknowledge(id); });
       },
       snapshot => windowTracker?.observeScan(snapshot),

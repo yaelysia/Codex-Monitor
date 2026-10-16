@@ -450,3 +450,86 @@ describe('asynchronous MobaXterm tab selection after the scan', () => {
     expect(resolver.get('ssh:server:thread')?.tabId).toBeNull();
   });
 });
+
+describe('foreground session-specific notification suppression', () => {
+  const key = 'local:active';
+  const vscode = (at: number, hwnd = '0x1234', pid = 123) =>
+    sample(at, 'vscode', hwnd, pid);
+
+  it('suppresses only the bound active session, never unrelated windows or apps', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(vscode(NOW - 1000));
+    resolver.observeScan(makeScan(NOW, 100, 'vscode', key), NOW);
+    expect(resolver.isSessionForeground(key, NOW)).toBe(true);
+    expect(resolver.isSessionForeground('local:another', NOW)).toBe(false);
+    resolver.observeFocus(sample(NOW + 300, 'other', '0x9876', 987));
+    expect(resolver.isSessionForeground(key, NOW + 400)).toBe(false);
+    resolver.observeFocus(vscode(NOW + 1000));
+    expect(resolver.isSessionForeground(key, NOW + 1300)).toBe(true);
+    // The native hook must keep confirming this is still the foreground HWND.
+    expect(resolver.isSessionForeground(key, NOW + 10_000)).toBe(false);
+    resolver.observeFocus(vscode(NOW + 10_100));
+    expect(resolver.isSessionForeground(key, NOW + 10_200)).toBe(true);
+  });
+
+  it('never guesses which of two VS Code conversations is visible in the same HWND', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(vscode(NOW - 3000));
+    resolver.observeScan(makeScan(NOW, 100, 'vscode', 'local:thread-a'), NOW);
+    resolver.observeScan(makeScan(NOW + 400, 100, 'vscode', 'local:thread-b'),
+      NOW + 400);
+    expect(resolver.get('local:thread-a')?.hwnd).toBe('0x1234');
+    expect(resolver.get('local:thread-b')?.hwnd).toBe('0x1234');
+    expect(resolver.isSessionForeground('local:thread-a', NOW + 500)).toBe(false);
+    expect(resolver.isSessionForeground('local:thread-b', NOW + 500)).toBe(false);
+    // Both sessions still have identities; activating one on a distinct HWND
+    // makes the foreground match unambiguous again.
+    resolver.observeFocus(vscode(NOW + 1000, '0xabcd', 321));
+    resolver.observeScan(makeScan(NOW + 1100, 100, 'vscode', 'local:thread-b'),
+      NOW + 1100);
+    expect(resolver.isSessionForeground('local:thread-b', NOW + 1200)).toBe(true);
+    expect(resolver.isSessionForeground('local:thread-a', NOW + 1200)).toBe(false);
+  });
+
+  it('requires the exact selected tab in multi-tab terminals, not just their window', () => {
+    const resolver = new AutoWindowResolver();
+    const tab = (at: number, tabId?: string) => ({
+      ...sample(at, 'terminal'), tabHost: 'multi' as const, tabCount: 3,
+      ...(tabId ? { tabId } : {}),
+    });
+    const key = 'ssh:server:thread';
+    resolver.observeFocus(tab(NOW - 5000, 'rid:1.10'));
+    resolver.observeFocus(tab(NOW - 1000, 'rid:1.10'));
+    resolver.observeFocus(tab(NOW + 200, 'rid:1.10'));
+    resolver.observeScan(makeScan(NOW + 100, 100), NOW + 300);
+    expect(resolver.get(key)?.tabId).toBe('rid:1.10');
+    expect(resolver.isSessionForeground(key, NOW + 300)).toBe(true);
+    resolver.observeFocus(tab(NOW + 500, 'rid:1.11'));
+    expect(resolver.isSessionForeground(key, NOW + 600)).toBe(false);
+    resolver.observeFocus(tab(NOW + 1000)); // Current raw HWND without selected UIA tab.
+    expect(resolver.isSessionForeground(key, NOW + 1200)).toBe(false);
+    resolver.observeFocus(tab(NOW + 1300, 'rid:1.10'));
+    expect(resolver.isSessionForeground(key, NOW + 1500)).toBe(true);
+    expect(resolver.isSessionForeground(key, NOW + 6_000)).toBe(false);
+  });
+
+  it('refuses multi-tab suppression when selected tab identity is unknown', () => {
+    const resolver = new AutoWindowResolver();
+    const multi = (at: number) => ({
+      ...sample(at, 'terminal'), tabHost: 'multi' as const, tabCount: 3,
+    });
+    resolver.observeFocus(multi(NOW - 1000));
+    resolver.observeScan(makeScan(NOW, 100), NOW);
+    expect(resolver.get('ssh:server:thread')?.tabId).toBeNull();
+    expect(resolver.isSessionForeground('ssh:server:thread', NOW)).toBe(false);
+  });
+
+  it('never accepts a future foreground sample or a switched process behind reused HWND', () => {
+    const resolver = new AutoWindowResolver();
+    resolver.observeFocus(vscode(NOW - 1000));
+    resolver.observeScan(makeScan(NOW, 100, 'vscode', key), NOW);
+    resolver.observeFocus(vscode(NOW + 1000, '0x1234', 999));
+    expect(resolver.isSessionForeground(key, NOW + 1100)).toBe(false);
+    expect(resolver.isSessionForeground(key, NOW - 5000)).toBe(false);
+  });
+});
