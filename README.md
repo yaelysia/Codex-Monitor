@@ -212,7 +212,7 @@ Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Mon
 
 当 Desktop 日志确认该会话新的 `turn/start` 成功、且没有后续明确结束证据时，在有限时间窗口内显示“可能执行中”。相反，持久化的本轮结束事件如果更晚，仍优先判定为结束；日志不全时不根据静默倒推出完成。现在改为每 **4 秒**单独读取 Windows Desktop 的有限量日志摘要，以准确 UUID 补充**任意创建来源**（Desktop、VS Code 或 CLI）的已有本地、WSL、SSH 会话；不再因为一次新状态就重新扫描所有远程文件系统。GUI 日志里存在 `turn/start` 才能临时补足执行中的证据，更晚的完成事件会撤销它；来源元数据仍保持原始值，不假装创建来源等于当前执行客户端。Desktop 日志写入变化也会触发本地文件事件检查。远程会话只按准确 UUID 关联，不通过标题或工作目录猜测。会话详情的「状态判断依据」会标明是有匹配事件，还是日志缺失、格式不受支持、会话 ID 不匹配。
 
-**Monitor 重启后的 Desktop 状态回归修复：** Desktop GUI 已明确报告过的会话生命周期信号，会以最小字段集保存到 Electron 用户数据目录的 `desktop-runtime-evidence.json`（最多 200 条，只含 UUID、`turn-start-accepted` 或 `turn-displayed-complete`、事件时间和可选 turn UUID）。此前这部分状态只在内存中，一旦重启 Monitor，Desktop 的 `turn/start` 若已滚出最近 320 KiB 日志尾部，就失去依据。新版本会在重新启动时校验并加载最近 **45 分钟**的已保存事件；出现更晚的 Desktop 完成记录会覆盖旧开始。若旧 JSONL 结束事件没有有效时间戳，只有在来源文件最后写入时间**可以证明早于新的 Desktop 开始事件**时才判为“可能执行中”；时间来源不可信时仍保留原状态。所有这些记录都是只读观察的派生信息，不包含终端内容、任务文本、文件路径或账户凭证。
+**Monitor 重启后的 Desktop 状态回归修复：** Desktop GUI 已明确报告过的会话生命周期信号，会以最小字段集保存到 Electron 用户数据目录的 `desktop-runtime-evidence.json`（最多 200 条，只含 UUID、`turn-start-accepted` 或 `turn-displayed-complete`、事件时间和可选 turn UUID）。此前这部分状态只在内存中，一旦重启 Monitor，Desktop 的 `turn/start` 若已滚出最近 320 KiB 日志尾部，就失去依据。新版本会在重新启动时校验并加载最多 **72 小时**的已保存事件用于生命周期排序；但只有近 **8 分钟**内、没有明确终止证据的启动响应，才会临时补充「可能执行中」。出现更晚的 Desktop 完成记录会覆盖旧开始。若旧 JSONL 结束事件没有有效时间戳，只有在来源文件最后写入时间**可以证明早于新的 Desktop 开始事件**时才判为“可能执行中”；时间来源不可信时仍保留原状态。所有这些记录都是只读观察的派生信息，不包含终端内容、任务文本、文件路径或账户凭证。
 
 **能力边界：** Desktop 的私有 stdio App Server 仍未向 Monitor 开放可靠的只读状态订阅。本功能不保证捕获后台所有会话，更不保证有 `waitingOnApproval` / `waitingOnUserInput` 的完整实时状态，不能据此称“100% 追踪”。如果 Desktop 应用日志不记载某个轮次、从其它客户端发起任务、仅显示云端远程任务或日志与 JSONL 使用不同的会话 ID，当前仍可能未知。未验证前**不调用** `thread/resume`、`turn/start`、审批回答，也不会启动新服务去冒充 Desktop。
 
