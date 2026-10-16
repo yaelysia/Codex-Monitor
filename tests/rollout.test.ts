@@ -163,6 +163,22 @@ describe('terminal turn status accuracy', () => {
 });
 
 
+describe('VS Code structured async question after newer turn starts', () => {
+  it('keeps an unanswered persisted agent_message request actionable after newer turn markers', () => {
+    const records=[
+      {type:'event_msg',payload:{type:'turn_started',turn_id:'a'}},
+      {type:'response_item',payload:{type:'agent_message',id:'ask-1',
+        delivery:'async',questions:[{question:'下一步如何做？'}]}},
+      {type:'event_msg',payload:{type:'turn_complete',turn_id:'a'}},
+      {type:'event_msg',payload:{type:'turn_started',turn_id:'b'}},
+    ].map(item=>JSON.stringify(item)).join('\n');
+    const state=inferStatus(records,NOW-1000,NOW);
+    expect(state.status).toBe('working'); // new turn may run while the async question remains outstanding
+    expect(state.pendingQuestionToken).toBe('async:ask-1');
+    expect(state.questionText).toBe('下一步如何做？');
+  });
+});
+
 describe('persisted Codex question state inference', () => {
   const r = (type: string, payload: Record<string, unknown>) =>
     JSON.stringify({ type, payload });

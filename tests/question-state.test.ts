@@ -25,6 +25,37 @@ describe('Codex durable question evidence', () => {
     expect(detectPendingQuestion(text(ask('one'), row('event_msg', { type: 'turn_aborted' }))).token).toBeNull();
     expect(detectPendingQuestion(text(ask('one'), row('event_msg', { type: 'turn_started' }))).token).toBeNull();
   });
+  it('recognizes legacy response_item agent_message with structured async questions', () => {
+    const question = row('response_item', {
+      type:'agent_message', id:'msg-legacy', delivery:'async',
+      questions:[{id:'environment',header:'部署环境',question:'应该部署哪个环境？'}],
+      content:[{type:'input_text',text:'PRIVATE_OUTPUT_TEXT'}],
+    });
+    expect(detectPendingQuestion(text(
+      row('event_msg',{type:'turn_started'}),question,
+      row('event_msg',{type:'turn_complete'}),
+    ))).toEqual({token:'async:msg-legacy', blocking:false,
+      text:'应该部署哪个环境？'});
+    expect(detectPendingQuestion(text(question,
+      row('response_item',{type:'message',role:'user',
+        content:[{type:'input_text',text:'生产环境'}]})
+    )).token).toBeNull();
+  });
+
+  it('recovers a timestamp-identified async question without a message ID', () => {
+    const stamp='2026-10-16T02:00:00.000Z';
+    const record=JSON.stringify({ timestamp:stamp, type:'response_item',
+      payload:{type:'agent_message',delivery:'async',
+        questions:[{question:'现在提交吗？'}]} });
+    expect(detectPendingQuestion(text(record))).toEqual({
+      token:'async:'+stamp,blocking:false,text:'现在提交吗？',
+    });
+    const notQuestion=row('response_item',{
+      type:'agent_message',delivery:'async',questions:[],id:'no-question',
+    });
+    expect(detectPendingQuestion(text(notQuestion)).token).toBeNull();
+  });
+
   it('recognizes persisted async questions despite immediate accepted tool output', () => {
     const pending = text(
       row('response_item', { type: 'function_call', name: 'request_user_input_async', call_id: 'a1',

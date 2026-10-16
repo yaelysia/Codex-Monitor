@@ -116,6 +116,26 @@ class TestLinuxCollector(unittest.TestCase):
         self.assertEqual(scanner.details('', '\n'.join(map(json.dumps, records)),
                          'x.jsonl', False, now - 1000, now)['status'], 'finished')
 
+    def test_vscode_persisted_response_agent_message_questions(self):
+        now = 1_800_000_000_000
+        stamp = '2026-10-12T12:00:00Z'
+        row = {'timestamp': stamp, 'type':'response_item','payload': {
+            'type':'agent_message', 'delivery':'async',
+            'questions':[{'id':'confirm','question':'现在继续吗？','title':'确认'}],
+            'content':[{'type':'text','text':'PRIVATE_OUTPUT_TEXT'}]}}
+        task = {'type':'event_msg', 'payload':{'type':'task_started'}}
+        completed = {'type':'event_msg', 'payload':{'type':'task_complete'}}
+        status = scanner.details('', '\n'.join(map(json.dumps,[task,row,completed])),
+                                 'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertEqual(status['pendingQuestionToken'],'async:'+stamp)
+        self.assertEqual(status['questionText'],'现在继续吗？')
+        self.assertEqual(status['status'],'unknown')
+        self.assertNotIn('PRIVATE_OUTPUT_TEXT', json.dumps(status))
+        answered={'type':'event_msg','payload':{'type':'user_message','message':'yes'}}
+        cleared=scanner.details('', '\n'.join(map(json.dumps,[task,row,completed,answered])),
+                                'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertIsNone(cleared['pendingQuestionToken'])
+
     def test_desktop_async_question_cannot_be_a_fully_completed_user_task(self):
         now = 1_800_000_000_000
         events = [
