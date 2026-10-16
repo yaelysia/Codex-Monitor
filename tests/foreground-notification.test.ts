@@ -36,3 +36,15 @@ describe('session-scoped native toast suppression policy',()=>{
     expect(source).toContain('if (periodic && app != "terminal"');
   });
 });
+
+describe('VS Code newest-interaction popup owner integration',()=>{
+  it('uses exact session identity to suppress only one popup, leaving other alerts untouched',()=>{
+    const owner='local:chat-b';
+    const decision=(key:string)=>key===owner;
+    expect(shouldDisplayNativeAlert({kind:'finished',sessionKey:owner},decision)).toBe(false);
+    expect(shouldDisplayNativeAlert({kind:'failed',sessionKey:'local:chat-a'},decision)).toBe(true);
+    expect(shouldDisplayNativeAlert({kind:'waiting',sessionKey:'local:chat-c'},decision)).toBe(true);
+    expect(shouldDisplayNativeAlert({kind:'source-recovered',sessionKey:'@source:local'},decision))
+      .toBe(true);
+  });
+});

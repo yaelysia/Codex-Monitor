@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AutoWindowResolver, normalizeForegroundWindow, validForegroundWindow } from '../src/shared/auto-window-binding';
+import { AutoWindowResolver, normalizeForegroundWindow, validForegroundWindow,
+  VSCODE_ACTIVE_INPUT_MAX_AGE_MS } from '../src/shared/auto-window-binding';
 import type { ScanResponse, SessionRecord } from '../src/shared/types';
 
 const NOW = Date.parse('2026-10-12T09:00:00Z');
@@ -583,5 +584,74 @@ describe('read confirmation requires active original-session evidence', () => {
     expect(r.isSessionForegroundForRead(key,NOW+800)).toBe(false);
     r.observeFocus(tab(NOW+900,'rid:1.10'));
     expect(r.isSessionForegroundForRead(key,NOW+950)).toBe(true);
+  });
+});
+
+describe('VS Code multi-conversation foreground toast fallback', () => {
+  const initialWindow = (at: number, hwnd='0x1234', pid=123) =>
+    sample(at, 'vscode', hwnd, pid);
+  const bind = (resolver: AutoWindowResolver, key: string, at: number,
+    hwnd='0x1234', pid=123) => {
+    resolver.observeFocus(initialWindow(at-1000,hwnd,pid));
+    const scan=makeScan(at,100,'vscode',key);
+    scan.sources[0]!.captureStartedAt=at;
+    scan.sources[0]!.capturedAt=at;
+    resolver.observeScan(scan,at);
+  };
+
+  it('suppresses just the last distinctly used chat even with several bound to one VS Code HWND', () => {
+    const resolver=new AutoWindowResolver();
+    bind(resolver,'local:chat-a',NOW);
+    bind(resolver,'local:chat-b',NOW+15_000);
+    bind(resolver,'local:chat-c',NOW+30_000);
+    expect(resolver.get('local:chat-a')?.hwnd).toBe('0x1234');
+    expect(resolver.get('local:chat-b')?.hwnd).toBe('0x1234');
+    expect(resolver.get('local:chat-c')?.hwnd).toBe('0x1234');
+    expect(resolver.isSessionForeground('local:chat-c',NOW+30_200)).toBe(true);
+    expect(resolver.isSessionForeground('local:chat-b',NOW+30_200)).toBe(false);
+    expect(resolver.isSessionForeground('local:chat-a',NOW+30_200)).toBe(false);
+    // A recent input is a popup-only hint, never proof the conversation was read.
+    expect(resolver.isSessionForegroundForRead('local:chat-c',NOW+30_200)).toBe(false);
+
+    // If another chat actually receives a new user submission, ownership
+    // switches to that exact chat; all others start notifying again.
+    bind(resolver,'local:chat-a',NOW+45_000);
+    expect(resolver.isSessionForeground('local:chat-a',NOW+45_100)).toBe(true);
+    expect(resolver.isSessionForeground('local:chat-c',NOW+45_100)).toBe(false);
+  });
+
+  it('does not infer an active chat from nearly simultaneous or expired inputs', () => {
+    const resolver=new AutoWindowResolver();
+    bind(resolver,'local:first',NOW);
+    bind(resolver,'local:second',NOW+1000);
+    expect(resolver.isSessionForeground('local:second',NOW+1100)).toBe(false);
+    expect(resolver.isSessionForeground('local:first',NOW+1100)).toBe(false);
+
+    bind(resolver,'local:second',NOW+10_000);
+    expect(resolver.isSessionForeground('local:second',NOW+10_100)).toBe(true);
+    // Refreshing the HWND heartbeat does not refresh last USER interaction.
+    const later=NOW+10_000+VSCODE_ACTIVE_INPUT_MAX_AGE_MS+100;
+    resolver.observeFocus(initialWindow(later));
+    expect(resolver.isSessionForeground('local:second',later)).toBe(false);
+    expect(resolver.isSessionForegroundForRead('local:second',later)).toBe(false);
+  });
+
+  it('cannot suppress a chat in another foreground window or on an old HWND/PID', () => {
+    const resolver=new AutoWindowResolver();
+    bind(resolver,'local:chat-a',NOW);
+    bind(resolver,'local:chat-b',NOW+10_000);
+    resolver.observeFocus(initialWindow(NOW+10_500,'0xbbbb',222));
+    expect(resolver.isSessionForeground('local:chat-b',NOW+10_550)).toBe(false);
+    resolver.observeFocus(initialWindow(NOW+11_000,'0x1234',900));
+    expect(resolver.isSessionForeground('local:chat-b',NOW+11_100)).toBe(false);
+  });
+
+  it('retains strict ambiguity handling for Codex Desktop rather than guessing visible thread', () => {
+    const resolver=new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW-1000,'desktop'));
+    resolver.observeScan(makeScan(NOW,100,'desktop','local:desktop-a'),NOW);
+    resolver.observeFocus(sample(NOW+9000,'desktop'));
+    resolver.observeScan(makeScan(NOW+10_000,100,'desktop','local:desktop-b'),NOW+10_000);
+    expect(resolver.isSessionForeground('local:desktop-b',NOW+10_100)).toBe(false);
   });
 });

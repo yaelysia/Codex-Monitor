@@ -402,3 +402,34 @@ describe('manual foreground switching triggers session read confirmation', () =>
     }
   });
 });
+
+describe('real native observation wrapper in multi-conversation VS Code', () => {
+  it('notifies only background threads after the most recent VS Code prompt is bound', () => {
+    const tracker=new AutoWindowTracker('win32');
+    const now=Date.now();
+    try {
+      tracker.start();
+      const native=children.at(-1)!;
+      native.stdout.emit('data',Buffer.from(sample(now-1000)));
+      const sessionAt=(key:string,at:number):ScanResponse=>({
+        scannedAt:at,sources:[{
+          id:'local',kind:'local',label:'Windows',error:null,
+          captureStartedAt:at,capturedAt:at,
+          sessions:[{
+            key,id:key.slice(6),sourceId:'local',sourceLabel:'Windows',
+            status:'working',statusReason:'working',title:null,workspace:null,
+            updatedAt:at,startedAt:null,clientKind:'vscode',
+            lastUserInputAgeAtSourceMs:100,lastUserInputAtSourceMs:at-100,
+          }],
+        }],
+      });
+      tracker.observeScan(sessionAt('local:chat-a',now));
+      vi.setSystemTime(now+10_000);
+      native.stdout.emit('data',Buffer.from(sample(now+9_000)));
+      tracker.observeScan(sessionAt('local:chat-b',now+10_000));
+      expect(tracker.isSessionForeground('local:chat-b',now+10_100)).toBe(true);
+      expect(tracker.isSessionForeground('local:chat-a',now+10_100)).toBe(false);
+      expect(tracker.isSessionForegroundForRead('local:chat-b',now+10_100)).toBe(false);
+    } finally { tracker.stop(); }
+  });
+});
