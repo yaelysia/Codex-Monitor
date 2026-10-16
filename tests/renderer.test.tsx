@@ -223,3 +223,22 @@ describe('desktop UI rendering smoke', () => {
     expect(html).toContain('nav-board');
   });
 });
+
+describe('notification-kind settings UI contract', () => {
+  it('exposes all six typed controls through resident settings and live Monitor state', () => {
+    const source = readFileSync(new URL('../src/renderer/App.tsx', import.meta.url),'utf8');
+    const preload = readFileSync(new URL('../electron/preload.ts', import.meta.url),'utf8');
+    const native = readFileSync(new URL('../electron/ipc-handlers.ts', import.meta.url),'utf8');
+    expect(source).toContain('aria-label="通知类型设置"');
+    expect(source).toContain('NOTIFICATION_OPTIONS.map');
+    expect(source).toContain("setNotificationKinds(state.notificationKinds");
+    expect(source).toContain('updateNotificationKind(option.kind, event.target.checked)');
+    for (const kind of ['waiting','finished','interrupted','failed',
+      'source-offline','source-recovered'])
+      expect(source).toContain("kind: '"+kind+"'");
+    expect(preload).toContain('monitor:set-notification-kind');
+    expect(native).toContain('isNotificationKind(kind)');
+    expect(native).toContain("typeof enabled !== 'boolean'");
+    expect(source).toContain('关闭后不会弹系统通知，也不增加未读数量');
+  });
+});

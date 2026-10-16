@@ -135,6 +135,41 @@ describe('persisted minimal notification inbox', () => {
       seenAlertIds:[]},NOW)?.sourceHealth).toEqual([]);
   });
 
+  it('round-trips selected kinds, accepts old v1 stores, and discards nonboolean or injected fields', () => {
+    const root = dir();
+    const tracker = new AlertTracker();
+    tracker.setNotificationKindEnabled('finished', false);
+    tracker.setNotificationKindEnabled('source-recovered', false);
+    tracker.observe(snap(session('working'), NOW), NOW);
+    const finished = {...session('finished'), updatedAt: NOW+1000, byteSize:250,
+      finishedToken:'end|v2'};
+    expect(tracker.observe(snap(finished,NOW+2000),NOW+2000)).toMatchObject([
+      {kind:'finished',read:true},
+    ]);
+    const store = new AlertStateStore(root);
+    store.update(tracker.snapshot(),NOW+3000);
+    store.flush();
+    const raw = fs.readFileSync(path.join(root,'alert-state.json'),'utf8');
+    expect(raw).toContain('"finished":false');
+    expect(raw).not.toMatch(/PRIVATE_PROMPT_TITLE|PRIVATE_WORKSPACE/);
+    const restored = new AlertTracker();
+    restored.restore(new AlertStateStore(root).load(NOW+4000));
+    expect(restored.getNotificationKinds()).toMatchObject({
+      finished:false,'source-recovered':false,waiting:true,failed:true,
+    });
+    expect(restored.getAlerts()[0]?.read).toBe(true);
+    const legacy = normalizeAlertState({version:1,muted:false,
+      alerts:[],seenAlertIds:[]},NOW);
+    expect(Object.values(legacy!.notificationKinds!)).toEqual(Array(6).fill(true));
+    const mixed=normalizeAlertState({version:1,muted:false,
+      alerts:[],seenAlertIds:[],notificationKinds:{
+        finished:false,waiting:'false',unknownKind:false,'__proto__':{private:'PRIVATE_SECRET'},
+      }},NOW);
+    expect(mixed?.notificationKinds?.finished).toBe(false);
+    expect(mixed?.notificationKinds?.waiting).toBe(true);
+    expect(JSON.stringify(mixed)).not.toMatch(/unknownKind|PRIVATE_SECRET/);
+  });
+
   it('drops corrupted, extra-field and expired entries safely', () => {
     const root = dir();
     fs.writeFileSync(path.join(root, 'alert-state.json'), '{not json');
