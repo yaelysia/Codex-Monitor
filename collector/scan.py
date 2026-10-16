@@ -19,6 +19,8 @@ HEAD_BYTES = 128 * 1024
 TAIL_BYTES = 192 * 1024
 # For a recent, unknown session look further back for task_started/task_complete.
 EXTENDED_TAIL_BYTES = 8 * 1024 * 1024
+VSCODE_QUESTION_TAIL_BYTES = 2 * 1024 * 1024
+MAX_VSCODE_QUESTION_LOOKBACKS = 8
 RECENT_MS = 5 * 60_000
 MAX_DISCOVERED = 10000
 MAX_RETURNED = 200
@@ -293,8 +295,8 @@ def question_from_arguments(value):
     if not isinstance(questions, list) or not questions or not isinstance(questions[0], dict):
         return None
     first = questions[0]
-    return (limited_question_text(first.get('title')) or
-            limited_question_text(first.get('question')) or
+    return (limited_question_text(first.get('question')) or
+            limited_question_text(first.get('title')) or
             limited_question_text(first.get('header')))
 
 
@@ -310,6 +312,24 @@ def detect_pending_question_records(records):
     a matching function_call_output, or a later turn boundary.
     """
     pending = {}
+    def add_async(item, timestamp):
+        if (not isinstance(item, dict) or
+                item.get('type') not in ('AgentMessage', 'agentMessage', 'agent_message') or
+                item.get('delivery') != 'async' or
+                not isinstance(item.get('questions'), list) or not item['questions']):
+            return
+        marker = safe_question_id(item.get('id'))
+        if not marker and isinstance(timestamp, str):
+            try:
+                datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                marker = safe_question_id(timestamp)
+            except ValueError:
+                pass
+        if marker:
+            pending['async:' + marker] = {
+                'text': question_from_arguments({'questions': item['questions']}),
+                'blocking': False,
+            }
     for row in records:
         payload = row.get('payload')
         if not isinstance(payload, dict):
@@ -326,6 +346,8 @@ def detect_pending_question_records(records):
                                 ('Codex 请求权限确认' if name == 'request_permissions' else None),
                         'blocking': True,
                     }
+            elif kind in ('agent_message', 'agentMessage', 'AgentMessage'):
+                add_async(payload, row.get('timestamp'))
             elif kind in ('function_call_output', 'custom_tool_call_output'):
                 call_id = safe_question_id(payload.get('call_id'))
                 if call_id:
@@ -338,22 +360,16 @@ def detect_pending_question_records(records):
         kind = payload.get('type')
         if kind == 'user_message':
             pending = {k: v for k, v in pending.items() if v['blocking']}
+        elif kind in ('agent_message', 'agentMessage', 'AgentMessage'):
+            # Legacy persistence saves AgentMessageEvent directly.
+            add_async(payload, row.get('timestamp'))
         elif kind == 'item_completed':
             item = payload.get('item')
             if not isinstance(item, dict):
                 continue
             if item.get('type') in ('UserMessage', 'userMessage'):
                 pending = {k: v for k, v in pending.items() if v['blocking']}
-            questions = item.get('questions')
-            if (item.get('type') in ('AgentMessage', 'agentMessage') and
-                    item.get('delivery') == 'async' and
-                    isinstance(questions, list) and questions):
-                call_id = safe_question_id(item.get('id'))
-                if call_id:
-                    pending['async:' + call_id] = {
-                        'text': question_from_arguments({'questions': questions}),
-                        'blocking': False,
-                    }
+            add_async(item, row.get('timestamp'))
         elif kind in ('turn_complete', 'task_complete', 'turn_aborted',
                       'turn_started', 'task_started'):
             pending = {k: v for k, v in pending.items() if not v['blocking']}
@@ -574,6 +590,7 @@ def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None):
         except (OSError, ValueError, RuntimeError):
             continue
     result, seen = [], set()
+    vscode_lookbacks = 0
     for modified, size, file in newest + extra:
         try:
             with file.open('rb') as handle:
@@ -582,8 +599,21 @@ def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None):
                 handle.seek(max(0, size - TAIL_BYTES))
                 tail = handle.read().decode('utf-8', errors='replace')
                 item = details(head, tail, file.name, clipped, modified, now)
-                if item['status'] == 'unknown' and clipped and now - modified <= RECENT_MS:
-                    length = min(EXTENDED_TAIL_BYTES, size)
+                recent = -10000 <= now - modified <= RECENT_MS
+                full_recovery = item['status'] == 'unknown' and clipped and recent
+                # VS Code can persist an async question before >192 KiB of
+                # subsequent tool output while the latest markers still imply
+                # "working" or "finished". Keep I/O bounded to 8 files per scan.
+                vscode_recovery = (not full_recovery and
+                    item['clientKind'] == 'vscode' and clipped and recent and
+                    not item.get('pendingQuestionToken') and
+                    item['status'] in ('working', 'finished') and
+                    vscode_lookbacks < MAX_VSCODE_QUESTION_LOOKBACKS)
+                if vscode_recovery:
+                    vscode_lookbacks += 1
+                if full_recovery or vscode_recovery:
+                    length = min(EXTENDED_TAIL_BYTES if full_recovery
+                                 else VSCODE_QUESTION_TAIL_BYTES, size)
                     handle.seek(max(0, size - length))
                     expanded = handle.read(length).decode('utf-8', errors='replace')
                     item = details(head, expanded, file.name, size > length, modified, now)

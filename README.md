@@ -279,6 +279,20 @@ Codex 官方 TUI 提供 `codex://threads/<UUID>` 的「在 Desktop 中打开线�
 
 **建议实机测试：** 在同一个 Windows Terminal 或 MobaXterm 窗口打开两个标签，在标签 A 提交一条 Codex 消息，切换到 B，再从 Monitor 点击 A 的「返回原窗口」。如果准确回到 A 并确认激活，A 的已有提醒应自动已读；如果只切回窗口、无法确认标签，应保留未读并给出提示。再测试两个不同的 VS Code 窗口，确认能够返回原窗口而不是另一个同进程窗口。CI 仅验证 Windows 原生代码编译及自动关联/去重模拟逻辑，不等于真实 GUI 测试通过。
 
+## VS Code 提问漏检：持久化证据与只读诊断
+
+Codex VS Code 扩展的提问不能全部从磁盘得知。Codex 上游 `rollout/src/policy.rs` 明确将实时 `RequestUserInput`、`RequestPermissions`、执行/文件变更审批等事件视为**不落盘**；只观察 `~/.codex/sessions/*.jsonl` 时不能保证发现这些请求。不要把日志静默、普通疑问句或刚刚发送的模型文本猜成一个可交互的阻塞式提问。
+
+已落盘的结构化提问则继续支持，包括 `response_item.function_call(request_user_input)`，分页型 `event_msg.item_completed.AgentMessage`、传统 `event_msg.agent_message` 以及 `response_item.agent_message`（`delivery:"async"` 和非空 `questions`）；通过 call ID 或消息 ID 去重，用户回复或工具响应后清除。为降低长会话中请求挤出 192 KiB 日志尾部的漏检，最近有写入、仍属执行中或刚结束的 VS Code 会话，会对最多 8 个会话做一次至多 2 MiB 的只读尾部核验；未落盘的请求仍然不可能凭此恢复，WSL/SSH 保留同样的边界。
+
+**若 VS Code 中确实显示了需要回答的提问，但 Monitor 未提醒**，在提问尚未回答时，于相同的 `CODEX_HOME` 环境执行：
+
+```powershell
+npm run diagnose:questions -- --thread-id <会话UUID>
+```
+
+远程 VS Code/WSL 请在拥有对应 `CODEX_HOME` 的机器上执行，或通过 `--home` 指定一个绝对的 Codex 根目录。命令仅从目标会话的本地 JSONL 读取最多 2 MiB 末尾及有限头部，返回 `pendingBlocking`、`pendingAsync`、`tailClipped` 与各事件计数；**不输出 UUID、会话路径、问题文字、工具参数或聊天内容**。若 `coverage=no-persisted-pending-evidence`，只能说明读取范围内没有可识别的持久化请求，不代表 VS Code 没有提出问题。下一阶段若追求准确覆盖未落盘审批，应验证访问该 VS Code 实例原有的 App Server 实时事件；新起的独立 App Server 无权替代它的实时状态。
+
 ## 问题 / 用户输入待回答提醒
 
 Codex Monitor 现在除既有生命周期事件外，还解析**已持久化的提问证据**：

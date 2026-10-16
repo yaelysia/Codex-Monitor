@@ -116,6 +116,70 @@ class TestLinuxCollector(unittest.TestCase):
         self.assertEqual(scanner.details('', '\n'.join(map(json.dumps, records)),
                          'x.jsonl', False, now - 1000, now)['status'], 'finished')
 
+    def test_vscode_large_rollout_recovers_question_beyond_short_tail(self):
+        now = int(time.time() * 1000)
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / 'sessions' / '2026' / '10' / '16'
+            folder.mkdir(parents=True)
+            file = folder / 'rollout-vscode-question.jsonl'
+            def record(kind, payload):
+                return json.dumps({'type': kind, 'payload':payload},ensure_ascii=False)+'\n'
+            header = record('session_meta', {
+                'id':'019aaaab-bbbb-7ccc-8ddd-111122223333',
+                'originator':'codex_vscode','cwd':'/project'})
+            question = record('response_item',{
+                'type':'agent_message','id':'ask-remote',
+                'delivery':'async','questions':[{'question':'该如何部署？'}]})
+            filler = ''.join(record('response_item',{
+                'type':'reasoning','summary':['X'*1400,str(i)]})
+                for i in range(185))
+            tail = record('event_msg',{'type':'turn_started','turn_id':'next-turn'})
+            file.write_text(header+question+filler+tail,encoding='utf-8')
+            os.utime(file,ns=(now*1000000,now*1000000))
+            result = scanner.scan(root, now=now)
+            self.assertEqual(len(result),1)
+            self.assertEqual(result[0]['clientKind'],'vscode')
+            self.assertEqual(result[0]['status'],'working')
+            self.assertEqual(result[0]['pendingQuestionToken'],'async:ask-remote')
+            self.assertEqual(result[0]['questionText'],'该如何部署？')
+
+    def test_legacy_event_msg_agent_message_async_questions(self):
+        now = 1_800_000_000_000
+        stamp='2026-10-12T12:00:01Z'
+        event = {'timestamp':stamp,'type':'event_msg','payload':{
+            'type':'agent_message','delivery':'async',
+            'questions':[{'question':'是否启用缓存？'}],
+            'message':'PRIVATE_RAW_MESSAGE'}}
+        state=scanner.details('',json.dumps(event,ensure_ascii=False),
+                              'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertEqual(state['pendingQuestionToken'],'async:'+stamp)
+        self.assertEqual(state['questionText'],'是否启用缓存？')
+        self.assertNotIn('PRIVATE_RAW_MESSAGE',json.dumps(state))
+        answered={'type':'event_msg','payload':{'type':'user_message','message':'yes'}}
+        next_state=scanner.details('','\n'.join(map(json.dumps,[event,answered])),
+                                    'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertIsNone(next_state['pendingQuestionToken'])
+
+    def test_vscode_persisted_response_agent_message_questions(self):
+        now = 1_800_000_000_000
+        stamp = '2026-10-12T12:00:00Z'
+        row = {'timestamp': stamp, 'type':'response_item','payload': {
+            'type':'agent_message', 'delivery':'async',
+            'questions':[{'id':'confirm','question':'现在继续吗？','title':'确认'}],
+            'content':[{'type':'text','text':'PRIVATE_OUTPUT_TEXT'}]}}
+        task = {'type':'event_msg', 'payload':{'type':'task_started'}}
+        completed = {'type':'event_msg', 'payload':{'type':'task_complete'}}
+        status = scanner.details('', '\n'.join(map(json.dumps,[task,row,completed])),
+                                 'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertEqual(status['pendingQuestionToken'],'async:'+stamp)
+        self.assertEqual(status['questionText'],'现在继续吗？')
+        self.assertEqual(status['status'],'unknown')
+        self.assertNotIn('PRIVATE_OUTPUT_TEXT', json.dumps(status))
+        answered={'type':'event_msg','payload':{'type':'user_message','message':'yes'}}
+        cleared=scanner.details('', '\n'.join(map(json.dumps,[task,row,completed,answered])),
+                                'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertIsNone(cleared['pendingQuestionToken'])
+
     def test_desktop_async_question_cannot_be_a_fully_completed_user_task(self):
         now = 1_800_000_000_000
         events = [

@@ -194,3 +194,30 @@ describe('local index integration with JSONL and the parsing cache', () => {
     expect(localScanDiagnostics(root)!.index.mode).toBe('full');
   });
 });
+
+describe('VS Code question in an extended recent rollout tail', () => {
+  it('recovers an async question buried behind 192 KiB of later activity without scanning the whole history', async () => {
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'monitor-vscode-question-'));
+    created.push(root);
+    const day=path.join(root,'sessions','2026','10','16');
+    await fs.mkdir(day,{recursive:true});
+    const file=path.join(day,'rollout-vscode-question.jsonl');
+    const event=(type:string,payload:Record<string,unknown>)=>JSON.stringify({type,payload})+'\n';
+    const now=Date.now();
+    const head=event('session_meta',{id:'019aaaab-bbbb-7ccc-8ddd-111122223333',
+      originator:'codex_vscode',cwd:'/project'});
+    const ask=event('response_item',{type:'agent_message',id:'ask-1',
+      delivery:'async',questions:[{question:'需要哪个版本？'}]});
+    const filler=Array.from({length:185},(_,i)=>
+      event('response_item',{type:'reasoning', summary:[String(i),'x'.repeat(1400)]})).join('');
+    const last=event('event_msg',{type:'turn_started',turn_id:'after-ask'});
+    await fs.writeFile(file,head+ask+filler+last);
+    await fs.utimes(file,new Date(now),new Date(now));
+    const result=await scanLocal(root,'local','Windows',now);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.clientKind).toBe('vscode');
+    expect(result[0]?.status).toBe('working');
+    expect(result[0]?.pendingQuestionToken).toBe('async:ask-1');
+    expect(result[0]?.questionText).toBe('需要哪个版本？');
+  });
+});
