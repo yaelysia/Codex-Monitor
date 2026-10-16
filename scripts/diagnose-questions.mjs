@@ -99,6 +99,7 @@ function evidence(text, clippedStart) {
         }
         message(item);
       } else if(kind==='user_message'){counts.userMessages++;pendingAsync.clear();}
+      else if(asyncNames.has(kind)) message(payload);
       else if(['turn_started','task_started','turn_complete','task_complete','turn_aborted'].includes(kind)){
         pendingBlocking.clear();
         if(['turn_complete','task_complete','turn_aborted'].includes(kind))

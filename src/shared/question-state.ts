@@ -87,6 +87,10 @@ export function detectPendingQuestionRows(rows: ReadonlyArray<Record<string, unk
     const kind = payload.type;
     if (kind === 'user_message') {
       for (const [key, item] of pending) if (!item.blocking) pending.delete(key);
+    } else if (kind === 'agent_message' || kind === 'agentMessage' || kind === 'AgentMessage') {
+      // Legacy rollouts persist this native event directly, rather than as
+      // paginated item_completed or response_item content.
+      addAsyncQuestion(payload, row.timestamp);
     } else if (kind === 'item_completed') {
       const item = obj(payload.item);
       if (item?.type === 'UserMessage' || item?.type === 'userMessage') {

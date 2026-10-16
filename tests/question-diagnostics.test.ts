@@ -54,6 +54,20 @@ describe('scoped read-only VS Code question evidence diagnosis',()=>{
     });
   });
 
+  it('recognizes legacy event_msg agent_message question without exposing raw text',()=>{
+    const {root,file}=makeRoot();
+    fs.writeFileSync(file,json('session_meta',{id:UUID,originator:'codex_vscode'})+
+      JSON.stringify({timestamp:'2026-10-16T02:05:00Z',
+        type:'event_msg',payload:{type:'agent_message',delivery:'async',
+          questions:[{question:'PRIVATE_QUESTION_BODY'}],message:'PRIVATE_TEXT'}})+'\n');
+    const output=run(root);
+    expect(JSON.parse(output.stdout)).toMatchObject({
+      pendingAsync:1,counts:{asyncQuestionItems:1},
+      coverage:'persisted-pending-evidence',
+    });
+    expect(output.stdout).not.toMatch(/PRIVATE_|019aaaab|\\\\|\/sessions\//);
+  });
+
   it('recognizes a legacy async question and its subsequent user response',()=>{
     const {root,file}=makeRoot();
     const asyncItem=json('response_item',{type:'agent_message',id:'msg-a',

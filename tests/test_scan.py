@@ -143,6 +143,23 @@ class TestLinuxCollector(unittest.TestCase):
             self.assertEqual(result[0]['pendingQuestionToken'],'async:ask-remote')
             self.assertEqual(result[0]['questionText'],'该如何部署？')
 
+    def test_legacy_event_msg_agent_message_async_questions(self):
+        now = 1_800_000_000_000
+        stamp='2026-10-12T12:00:01Z'
+        event = {'timestamp':stamp,'type':'event_msg','payload':{
+            'type':'agent_message','delivery':'async',
+            'questions':[{'question':'是否启用缓存？'}],
+            'message':'PRIVATE_RAW_MESSAGE'}}
+        state=scanner.details('',json.dumps(event,ensure_ascii=False),
+                              'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertEqual(state['pendingQuestionToken'],'async:'+stamp)
+        self.assertEqual(state['questionText'],'是否启用缓存？')
+        self.assertNotIn('PRIVATE_RAW_MESSAGE',json.dumps(state))
+        answered={'type':'event_msg','payload':{'type':'user_message','message':'yes'}}
+        next_state=scanner.details('','\n'.join(map(json.dumps,[event,answered])),
+                                    'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertIsNone(next_state['pendingQuestionToken'])
+
     def test_vscode_persisted_response_agent_message_questions(self):
         now = 1_800_000_000_000
         stamp = '2026-10-12T12:00:00Z'

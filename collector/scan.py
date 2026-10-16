@@ -360,6 +360,9 @@ def detect_pending_question_records(records):
         kind = payload.get('type')
         if kind == 'user_message':
             pending = {k: v for k, v in pending.items() if v['blocking']}
+        elif kind in ('agent_message', 'agentMessage', 'AgentMessage'):
+            # Legacy persistence saves AgentMessageEvent directly.
+            add_async(payload, row.get('timestamp'))
         elif kind == 'item_completed':
             item = payload.get('item')
             if not isinstance(item, dict):

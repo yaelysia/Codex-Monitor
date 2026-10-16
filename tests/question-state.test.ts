@@ -42,6 +42,19 @@ describe('Codex durable question evidence', () => {
     )).token).toBeNull();
   });
 
+  it('recovers legacy event_msg.agent_message requests and clears them after a user response', () => {
+    const stamp='2026-10-16T02:05:00.000Z';
+    const ask=JSON.stringify({ timestamp:stamp,type:'event_msg',
+      payload:{type:'agent_message',delivery:'async',
+        questions:[{id:'branch',question:'目标分支是哪个？'}],
+        message:'PRIVATE_RAW_MESSAGE'} });
+    expect(detectPendingQuestion(text(ask))).toEqual({
+      token:'async:'+stamp,blocking:false,text:'目标分支是哪个？',
+    });
+    const reply=row('event_msg',{type:'user_message',message:'main'});
+    expect(detectPendingQuestion(text(ask,reply)).token).toBeNull();
+  });
+
   it('recovers a timestamp-identified async question without a message ID', () => {
     const stamp='2026-10-16T02:00:00.000Z';
     const record=JSON.stringify({ timestamp:stamp, type:'response_item',
