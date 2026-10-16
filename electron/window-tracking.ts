@@ -1,7 +1,8 @@
 import { app, shell } from 'electron';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
-import { AutoWindowResolver, normalizeForegroundWindow } from '../src/shared/auto-window-binding';
+import { AutoWindowResolver, normalizeForegroundWindow,
+  type ForegroundToastReason, type ForegroundToastDecision } from '../src/shared/auto-window-binding';
 import { WindowBindingStore } from './window-bindings-store';
 import type { OriginalWindowFocusResult, OriginalWindowStatus, ScanResponse, SessionRecord } from '../src/shared/types';
 import { desktopThreadUrl } from '../src/shared/desktop-navigation';
@@ -9,6 +10,25 @@ import { openDesktopUrlKeepingGeometry } from './desktop-window-guard';
 
 const MAX_LINE_BYTES = 4096;
 const SCRIPT_TIMEOUT_MS = 8_000;
+const MAX_TOAST_DIAGNOSTICS = 48;
+const TOAST_DIAGNOSTIC_AGE_MS = 15 * 60_000;
+const TOAST_REASON_LABELS: Record<ForegroundToastReason | 'watcher-unavailable' | 'restored-unverified', string> = {
+  'unbound': '未找到该会话的原窗口绑定',
+  'no-foreground': '尚未收到原生前台窗口采样',
+  'stale-foreground': '最近前台采样已过期',
+  'other-app': '当前前台是其他应用',
+  'wrong-window': '当前前台窗口与该会话绑定的窗口不同',
+  'tab-unidentified': '无法识别多标签终端的目标标签',
+  'tab-mismatch': '当前终端标签与该会话不一致',
+  'shared-window': '同一窗口绑定多个会话，无法确定当前聊天',
+  'another-chat-newest': '此窗口最近交互的是其他 Codex 会话',
+  'input-ambiguous': '多个会话的输入时间过近，无法唯一确定',
+  'input-expired': '最近会话输入证据已超过时效',
+  'unique-window': '已识别该会话的前台原窗口（系统弹窗被抑制）',
+  'recent-vscode-input': '最近用户输入匹配此 VS Code 会话（系统弹窗被抑制）',
+  'watcher-unavailable': 'Windows 原生前台监听未就绪',
+  'restored-unverified': '上次启动保存的窗口绑定尚未通过新的输入确认',
+};
 
 /** Observe foreground focus via a long-lived Windows event hook (no polling).
  * Never captures window titles, prompts, tabs, paths, commands or screenshots.
@@ -25,6 +45,8 @@ export class AutoWindowTracker {
   private lastNativeError: string | null = null;
   private readonly bindingStore: WindowBindingStore | null;
   private readonly restoredKeys = new Set<string>();
+  /** Ephemeral reason codes only. Bounded; no raw window, prompt or token. */
+  private readonly toastDiagnostics = new Map<string, {at: number; reason: keyof typeof TOAST_REASON_LABELS}>();
 
   constructor(private readonly platform = process.platform, storageDirectory?: string,
     /** Triggered only after a valid native foreground observation or a fresh
@@ -168,6 +190,7 @@ export class AutoWindowTracker {
     child?.kill();
     this.bindingStore?.flush();
     this.restoredKeys.clear();
+    this.toastDiagnostics.clear();
     this.resolver.clear();
   }
 
@@ -189,9 +212,24 @@ export class AutoWindowTracker {
    * name. Restored bindings must be confirmed by a new live user submission.
    */
   isSessionForeground(sessionKey: string, now = Date.now()): boolean {
-    return this.platform === 'win32' && this.watching &&
-      !this.restoredKeys.has(sessionKey) &&
-      this.resolver.isSessionForeground(sessionKey, now);
+    let decision: ForegroundToastDecision | {
+      suppress: false; reason: 'watcher-unavailable' | 'restored-unverified';
+    };
+    if (this.platform !== 'win32' || !this.watching)
+      decision = { suppress: false, reason: 'watcher-unavailable' };
+    else if (this.restoredKeys.has(sessionKey))
+      decision = { suppress: false, reason: 'restored-unverified' };
+    else decision = this.resolver.evaluateForegroundToast(sessionKey, now);
+    this.toastDiagnostics.set(sessionKey, { at: now, reason: decision.reason });
+    if (this.toastDiagnostics.size > MAX_TOAST_DIAGNOSTICS)
+      this.toastDiagnostics.delete(this.toastDiagnostics.keys().next().value!);
+    return decision.suppress;
+  }
+
+  private recentToastDiagnostic(sessionKey: string, now = Date.now()): string {
+    const value = this.toastDiagnostics.get(sessionKey);
+    if (!value || now < value.at || now - value.at > TOAST_DIAGNOSTIC_AGE_MS) return '';
+    return '；最近一次系统通知判定：' + TOAST_REASON_LABELS[value.reason];
   }
 
   /** Positive read-confirmation check. Historical restored HWNDs and watcher
@@ -219,22 +257,25 @@ export class AutoWindowTracker {
     // native focus will independently validate the HWND, PID and start time.
     if (!this.watching && !found) return {
       ready: false,
-      message: this.restartCount >= 6
+      message: (this.restartCount >= 6
         ? 'Windows 原窗口监听连续失败，请检查 PowerShell/原生组件'
-        : 'Windows 原窗口监听正在恢复，请在原会话重新发送一次消息',
+        : 'Windows 原窗口监听正在恢复，请在原会话重新发送一次消息') +
+        this.recentToastDiagnostic(sessionKey),
     };
     return found ? {
       ready: true, host: found.app === 'other' ? undefined : found.app,
-      message: this.restoredKeys.has(sessionKey)
+      message: (this.restoredKeys.has(sessionKey)
         ? '已加载上次窗口绑定；点击跳转时会校验原窗口与进程身份，已关闭窗口不会误跳'
         : found.tabId ? '已自动关联原窗口及原标签（待实机验证）' :
         (found.tabCount != null && found.tabCount > 1) ||
           (found.tabHost === 'multi' && !found.tabId)
           ? '已关联原窗口，但多标签位置尚无可靠证据'
-          : '已关联原窗口（无法确认内部标签或 VS Code 对话）',
+          : '已关联原窗口（无法确认内部标签或 VS Code 对话）') +
+        this.recentToastDiagnostic(sessionKey),
     } : {
       ready: false,
-      message: '尚无可靠的原窗口关联；从原 Codex 窗口再次发送消息后会尝试自动识别',
+      message: '尚无可靠的原窗口关联；从原 Codex 窗口再次发送消息后会尝试自动识别' +
+        this.recentToastDiagnostic(sessionKey),
     };
   }
 
