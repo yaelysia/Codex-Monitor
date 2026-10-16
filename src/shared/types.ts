@@ -160,6 +160,10 @@ export interface MonitorPerformance {
 
 export interface MonitorState {
   scan: ScanResponse | null;
+  /** Increments only when a source snapshot or Desktop runtime projection is
+   * replaced, not for notification acknowledgement or watcher-status updates.
+   */
+  scanRevision?: number;
   /** Metadata-only performance counters; never emits session content or paths. */
   performance?: MonitorPerformance;
   alerts: MonitorAlert[];

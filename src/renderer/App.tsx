@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize, AlertKind, NotificationKinds } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { projectSessionsToLocalTime } from '../shared/session-time';
+import { nextScanRevision } from '../shared/monitor-render-state';
 import { alertKindLabel } from '../shared/alert-presentation';
 import { DEFAULT_NOTIFICATION_KINDS } from '../shared/notification-rules';
 import { isSourceAlertKind, sourceIdFromAlertKey } from '../shared/source-alert';
@@ -297,6 +298,7 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [sessionLimit, setSessionLimit] = useState(SESSION_PAGE_SIZE);
   const visible = useVisibleInterval(() => setNow(Date.now()), AGE_REFRESH_MS);
+  const acceptedScanRevision = useRef<number | null>(null);
   const pageScrollRef = useRef<HTMLDivElement>(null);
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -317,6 +319,17 @@ export default function App() {
     }
   }, []);
 
+  /** Alert read/mute/category changes shouldn't invalidate the full session
+   * list, workspace grouping, status lanes or selected session inspector.
+   */
+  const acceptScan = useCallback((state: import('../shared/types').MonitorState) => {
+    const next = nextScanRevision(acceptedScanRevision.current, state);
+    if (next === null || !state.scan) return;
+    acceptedScanRevision.current = next;
+    setScan(state.scan);
+    setNow(Date.now());
+  }, []);
+
   useEffect(() => {
     mounted.current = true;
     window.monitorApi.getConfig().then(value => {
@@ -331,10 +344,7 @@ export default function App() {
       setAlerts(state.alerts);
       setMuted(state.muted);
       setNotificationKinds(state.notificationKinds ?? { ...DEFAULT_NOTIFICATION_KINDS });
-      if (state.scan) {
-        setScan(state.scan);
-        setNow(Date.now());
-      }
+      acceptScan(state);
     });
     const unsubscribeFloating = window.monitorApi.onFloatingState(state => {
       if (!mounted.current) return;
@@ -390,7 +400,7 @@ export default function App() {
       setAlerts(state.alerts);
       setMuted(state.muted);
       setNotificationKinds(state.notificationKinds ?? { ...DEFAULT_NOTIFICATION_KINDS });
-      if (state.scan) setScan(state.scan);
+      acceptScan(state);
     }).catch(console.error);
     void refresh();
     return () => {
@@ -399,7 +409,7 @@ export default function App() {
       unsubscribeFloating();
       unsubscribeFocus();
     };
-  }, [refresh]);
+  }, [refresh, acceptScan]);
   useEffect(() => {
     try { localStorage.setItem(VIEW_PREFERENCES_KEY,
       JSON.stringify({ view, filter: view === 'sessions' ? filter : 'all', recentOnly, showSubagents })); }
