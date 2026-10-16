@@ -153,6 +153,17 @@ export class MonitorService {
     this.onChange(this.state());
     return this.state();
   }
+  /** Used by the existing native foreground hook; no work is done when there
+   * are no unread alerts associated with the verified original session.
+   */
+  unreadSessionKeys(): string[] { return this.tracker.unreadSessionKeys(); }
+  acknowledgeSessionAlerts(sessionKey: string): number {
+    const ids = this.tracker.unreadSessionAlertIds(sessionKey);
+    if (!ids.length) return 0;
+    this.acknowledgeMany(ids);
+    return ids.length;
+  }
+
   acknowledge(id: string): MonitorState { return this.acknowledgeMany([id]); }
   acknowledgeMany(ids: readonly string[]): MonitorState {
     if (!ids.length) return this.state();

@@ -649,3 +649,33 @@ describe('scan revision avoids heavy UI regrouping on notification-only state up
     expect(service.state().scanRevision).toBeGreaterThan(first);
   });
 });
+
+describe('automatic read when opening the original session window',()=>{
+  it('acknowledges only existing unread alerts for that session and broadcasts once',async()=>{
+    const parent=session('p','working',NOW);
+    const other=session('another','working',NOW);
+    const first=snapshot(NOW,[source('ssh:one',[parent,other])]);
+    const both=snapshot(NOW+3000,[source('ssh:one',[
+      {...session('p','finished',NOW+1000),finishedToken:'finish|p',byteSize:220},
+      {...session('another','finished',NOW+1000),finishedToken:'finish|another',byteSize:220},
+    ])]);
+    vi.mocked(collect).mockResolvedValueOnce(first).mockResolvedValueOnce(both);
+    const states:MonitorState[]=[];
+    service=new MonitorService(s=>states.push(s),()=>undefined);
+    await service.refresh(true);
+    vi.setSystemTime(NOW+3500);
+    await service.refresh(true);
+    expect(service.unreadSessionKeys()).toEqual(['ssh:one:p','ssh:one:another']);
+    const revision=service.state().scanRevision;
+    const count=states.length;
+    expect(service.acknowledgeSessionAlerts('ssh:one:p')).toBe(1);
+    expect(states).toHaveLength(count+1);
+    expect(service.state().scanRevision).toBe(revision);
+    expect(service.unreadSessionKeys()).toEqual(['ssh:one:another']);
+    expect(service.state().alerts.find(a=>a.sessionKey==='ssh:one:p')?.read).toBe(true);
+    expect(service.state().alerts.find(a=>a.sessionKey==='ssh:one:another')?.read).toBe(false);
+    expect(service.acknowledgeSessionAlerts('ssh:one:p')).toBe(0);
+    expect(service.acknowledgeSessionAlerts('unknown:session')).toBe(0);
+    expect(states).toHaveLength(count+1);
+  });
+});

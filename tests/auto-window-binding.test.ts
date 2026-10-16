@@ -535,3 +535,53 @@ describe('foreground session-specific notification suppression', () => {
     expect(resolver.isSessionForeground(key, NOW - 5000)).toBe(false);
   });
 });
+
+describe('read confirmation requires active original-session evidence', () => {
+  it('confirms only a uniquely bound and recently foreground window', () => {
+    const r=new AutoWindowResolver();
+    const key='local:active';
+    const win=(at:number,hwnd='0x1234')=>sample(at,'vscode',hwnd,123);
+    r.observeFocus(win(NOW-1000));
+    r.observeScan(makeScan(NOW,100,'vscode',key),NOW);
+    expect(r.isSessionForegroundForRead(key,NOW)).toBe(true);
+    expect(r.isSessionForegroundForRead('local:other',NOW)).toBe(false);
+    r.observeFocus(sample(NOW+1000,'other','0x2222',222));
+    expect(r.isSessionForegroundForRead(key,NOW+1100)).toBe(false);
+    r.observeFocus(win(NOW+2000));
+    expect(r.isSessionForegroundForRead(key,NOW+2100)).toBe(true);
+    expect(r.isSessionForegroundForRead(key,NOW+12_000)).toBe(false);
+  });
+
+  it('does not mark either VS Code conversation when two are bound to one window', () => {
+    const r=new AutoWindowResolver();
+    r.observeFocus(sample(NOW-2000,'vscode'));
+    r.observeScan(makeScan(NOW,100,'vscode','local:thread-one'),NOW);
+    r.observeScan(makeScan(NOW+500,100,'vscode','local:thread-two'),NOW+500);
+    expect(r.isSessionForegroundForRead('local:thread-one',NOW+600)).toBe(false);
+    expect(r.isSessionForegroundForRead('local:thread-two',NOW+600)).toBe(false);
+  });
+
+  it('requires the currently observed selected terminal tab, never a stale previous tab', () => {
+    const r=new AutoWindowResolver();
+    const tab=(at:number,id?:string)=>({
+      ...sample(at,'terminal'),tabHost:'multi' as const,tabCount:3,
+      ...(id?{tabId:id}:{}),
+    });
+    r.observeFocus(tab(NOW-5000,'rid:1.10'));
+    r.observeFocus(tab(NOW-1000,'rid:1.10'));
+    r.observeFocus(tab(NOW+200,'rid:1.10'));
+    r.observeScan(makeScan(NOW+100,100),NOW+300);
+    const key='ssh:server:thread';
+    expect(r.get(key)?.tabId).toBe('rid:1.10');
+    expect(r.isSessionForegroundForRead(key,NOW+300)).toBe(true);
+    r.observeFocus(tab(NOW+500));
+    expect(r.isSessionForeground(key,NOW+600)).toBe(true);
+    // Previous tab evidence might still suppress a toast conservatively,
+    // but MUST NOT irreversibly mark an unread message as read.
+    expect(r.isSessionForegroundForRead(key,NOW+600)).toBe(false);
+    r.observeFocus(tab(NOW+700,'rid:1.11'));
+    expect(r.isSessionForegroundForRead(key,NOW+800)).toBe(false);
+    r.observeFocus(tab(NOW+900,'rid:1.10'));
+    expect(r.isSessionForegroundForRead(key,NOW+950)).toBe(true);
+  });
+});

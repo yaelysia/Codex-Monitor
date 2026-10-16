@@ -525,3 +525,37 @@ describe('native Desktop completion alerts', () => {
       [native(NOW+1300)],NOW-1000,NOW+2000)).toHaveLength(0);
   });
 });
+
+describe('unread inbox selection by exact original Codex session identity',()=>{
+  it('collects multiple unread events for the same session without affecting other sessions or source alerts',()=>{
+    const tracker=new AlertTracker();
+    const parent='local:parent';
+    const other='local:another';
+    const parentAlert={id:JSON.stringify([parent,'waiting','ask']),
+      sessionKey:parent,sessionId:'parent',kind:'waiting' as const,
+      title:'Parent',sourceLabel:'Windows',workspace:null,at:NOW,
+      read:false,statusReason:'asking',questionText:'question'};
+    const finishedAlert={...parentAlert,
+      id:JSON.stringify([parent,'finished','turn-a']),kind:'finished' as const,
+      questionText:null};
+    const otherAlert={...parentAlert,
+      id:JSON.stringify([other,'failed','turn-b']),sessionKey:other,sessionId:'another',
+      kind:'failed' as const};
+    const sourceAlert={...parentAlert,
+      id:JSON.stringify(['@source:ssh:box','source-offline','123']),
+      sessionKey:'@source:ssh:box',sessionId:'ssh:box',kind:'source-offline' as const};
+    tracker.restore({
+      version:1,muted:false,alerts:[
+        parentAlert,finishedAlert,otherAlert,sourceAlert,
+      ],seenAlertIds:[],
+    });
+    expect(tracker.unreadSessionKeys()).toEqual([parent,other]);
+    expect(tracker.unreadSessionAlertIds(parent)).toEqual([parentAlert.id,finishedAlert.id]);
+    tracker.acknowledgeMany(tracker.unreadSessionAlertIds(parent));
+    expect(tracker.unreadSessionKeys()).toEqual([other]);
+    expect(tracker.getAlerts().filter(x=>x.sessionKey===parent).every(x=>x.read)).toBe(true);
+    expect(tracker.getAlerts().filter(x=>x.sessionKey!==parent).every(x=>!x.read)).toBe(true);
+    expect(tracker.unreadSessionAlertIds('ssh:box')).toEqual([]);
+    expect(tracker.unreadSessionAlertIds('@source:ssh:box')).toEqual([]);
+  });
+});

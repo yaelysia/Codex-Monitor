@@ -227,6 +227,21 @@ export class AlertTracker {
     return pending;
   }
 
+  /** Select only alerts already unread for this exact Codex session.
+   * Source collection health alerts use synthetic source IDs, never HWNDs.
+   * This scan is bounded by the 60-entry inbox (no polling or disk access).
+   */
+  unreadSessionAlertIds(sessionKey: string): string[] {
+    return this.alerts.filter(alert => !alert.read &&
+      alert.sessionKey === sessionKey && !isSourceAlertKind(alert.kind))
+      .map(alert => alert.id);
+  }
+
+  unreadSessionKeys(): string[] {
+    return [...new Set(this.alerts.filter(alert => !alert.read &&
+      !isSourceAlertKind(alert.kind)).map(alert => alert.sessionKey))];
+  }
+
   acknowledge(id: string): void { this.acknowledgeMany([id]); }
 
   /** Only alerts already present when navigation began may be acknowledged. */

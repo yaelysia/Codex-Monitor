@@ -326,3 +326,79 @@ describe('native foreground toast suppression through live tracker', () => {
     expect(unsupported.isSessionForeground(sessionKey)).toBe(false);
   });
 });
+
+describe('manual foreground switching triggers session read confirmation', () => {
+  it('emits an observation when an already-bound Codex window becomes foreground, never on a wrong window', () => {
+    const now=Date.now();
+    let unread=true;
+    const confirmed:string[]=[];
+    let tracker:AutoWindowTracker;
+    tracker=new AutoWindowTracker('win32',undefined,()=>{
+      if (unread && tracker.isSessionForegroundForRead(sessionKey)) {
+        unread=false;
+        confirmed.push(sessionKey);
+      }
+    });
+    try {
+      tracker.start();
+      const native=children.at(-1)!;
+      native.stdout.emit('data',Buffer.from(sample(now-1000)));
+      const scan:ScanResponse={scannedAt:now,sources:[{
+        id:'local',kind:'local',label:'Windows',error:null,
+        capturedAt:now,captureStartedAt:now,
+        sessions:[{
+          id:sessionKey.slice(6),key:sessionKey,sourceId:'local',sourceLabel:'Windows',
+          title:'VS Code task',workspace:null,clientKind:'vscode',
+          status:'finished',statusReason:'finished',updatedAt:now,
+          ageAtSourceMs:100,startedAt:null,lastUserInputAgeAtSourceMs:100,
+          lastUserInputAtSourceMs:now-100,
+        }],
+      }]};
+      tracker.observeScan(scan);
+      // Reading only starts after a notification exists. Existing foreground
+      // evidence is not silently replayed; the next user window activation is.
+      unread=true;
+      confirmed.length=0;
+      const other=JSON.stringify({
+        type:'foreground',at:now+400,hwnd:'0x9999',pid:9999,
+        startedAt:2000,app:'other',
+      })+'\n';
+      native.stdout.emit('data',Buffer.from(other));
+      expect(confirmed).toEqual([]);
+      vi.setSystemTime(now+900);
+      native.stdout.emit('data',Buffer.from(sample(now+700)));
+      expect(confirmed).toEqual([sessionKey]);
+      native.stdout.emit('data',Buffer.from(sample(now+800)));
+      expect(confirmed).toEqual([sessionKey]);
+    } finally {tracker.stop();}
+  });
+
+  it('does not auto-confirm old restored bindings before fresh input or while hook is down', () => {
+    const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codex-foreground-read-'));
+    const now=Date.now();
+    fs.writeFileSync(path.join(folder,'window-bindings.json'),JSON.stringify({
+      version:1,bindings:[{
+        sessionKey,savedAt:now-1000,inputToken:now-1000,
+        window:{at:now-1000,inputAt:now-1000,
+          hwnd:'0x1357',pid:1357,startedAt:1000,app:'vscode'},
+      }],
+    }));
+    const confirmed:string[]=[];
+    let tracker:AutoWindowTracker;
+    tracker=new AutoWindowTracker('win32',folder,()=>{
+      if(tracker.isSessionForegroundForRead(sessionKey)) confirmed.push(sessionKey);
+    });
+    try {
+      tracker.start();
+      const native=children.at(-1)!;
+      native.stdout.emit('data',Buffer.from(sample(now-500)));
+      expect(tracker.status(sessionKey).ready).toBe(true);
+      expect(confirmed).toEqual([]);
+      native.emit('exit',1);
+      expect(tracker.isSessionForegroundForRead(sessionKey)).toBe(false);
+    } finally {
+      tracker.stop();
+      fs.rmSync(folder,{recursive:true,force:true});
+    }
+  });
+});
