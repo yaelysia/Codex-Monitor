@@ -266,3 +266,14 @@ describe('automatic original window read integration', () => {
     expect(tracker).toContain('this.resolver.isSessionForegroundForRead(sessionKey, now)');
   });
 });
+
+describe('foreground popup diagnostics stay in the existing session inspector',()=>{
+  it('exposes a bounded reason code without content or new polling',()=>{
+    const tracker=readFileSync(new URL('../electron/window-tracking.ts',import.meta.url),'utf8');
+    const resolver=readFileSync(new URL('../src/shared/auto-window-binding.ts',import.meta.url),'utf8');
+    expect(tracker).toContain('this.recentToastDiagnostic(sessionKey)');
+    expect(tracker).toContain('TOAST_DIAGNOSTIC_AGE_MS = 15 * 60_000');
+    expect(resolver).toContain("reason: 'recent-vscode-input'");
+    expect(tracker).not.toContain('process.commandLine');
+  });
+});

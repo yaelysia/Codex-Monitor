@@ -257,9 +257,10 @@ export class AutoWindowTracker {
     // native focus will independently validate the HWND, PID and start time.
     if (!this.watching && !found) return {
       ready: false,
-      message: this.restartCount >= 6
+      message: (this.restartCount >= 6
         ? 'Windows 原窗口监听连续失败，请检查 PowerShell/原生组件'
-        : 'Windows 原窗口监听正在恢复，请在原会话重新发送一次消息',
+        : 'Windows 原窗口监听正在恢复，请在原会话重新发送一次消息') +
+        this.recentToastDiagnostic(sessionKey),
     };
     return found ? {
       ready: true, host: found.app === 'other' ? undefined : found.app,

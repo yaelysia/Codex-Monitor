@@ -608,7 +608,12 @@ describe('VS Code multi-conversation foreground toast fallback', () => {
     expect(resolver.get('local:chat-b')?.hwnd).toBe('0x1234');
     expect(resolver.get('local:chat-c')?.hwnd).toBe('0x1234');
     expect(resolver.isSessionForeground('local:chat-c',NOW+30_200)).toBe(true);
+    expect(resolver.evaluateForegroundToast('local:chat-c',NOW+30_200)).toEqual({
+      suppress:true,reason:'recent-vscode-input',
+    });
     expect(resolver.isSessionForeground('local:chat-b',NOW+30_200)).toBe(false);
+    expect(resolver.evaluateForegroundToast('local:chat-b',NOW+30_200).reason)
+      .toBe('another-chat-newest');
     expect(resolver.isSessionForeground('local:chat-a',NOW+30_200)).toBe(false);
     // A recent input is a popup-only hint, never proof the conversation was read.
     expect(resolver.isSessionForegroundForRead('local:chat-c',NOW+30_200)).toBe(false);
@@ -625,6 +630,8 @@ describe('VS Code multi-conversation foreground toast fallback', () => {
     bind(resolver,'local:first',NOW);
     bind(resolver,'local:second',NOW+1000);
     expect(resolver.isSessionForeground('local:second',NOW+1100)).toBe(false);
+    expect(resolver.evaluateForegroundToast('local:second',NOW+1100).reason)
+      .toBe('input-ambiguous');
     expect(resolver.isSessionForeground('local:first',NOW+1100)).toBe(false);
 
     bind(resolver,'local:second',NOW+10_000);
@@ -633,6 +640,8 @@ describe('VS Code multi-conversation foreground toast fallback', () => {
     const later=NOW+10_000+VSCODE_ACTIVE_INPUT_MAX_AGE_MS+100;
     resolver.observeFocus(initialWindow(later));
     expect(resolver.isSessionForeground('local:second',later)).toBe(false);
+    expect(resolver.evaluateForegroundToast('local:second',later).reason)
+      .toBe('input-expired');
     expect(resolver.isSessionForegroundForRead('local:second',later)).toBe(false);
   });
 

@@ -433,3 +433,43 @@ describe('real native observation wrapper in multi-conversation VS Code', () => 
     } finally { tracker.stop(); }
   });
 });
+
+describe('privacy-safe explanation of native toast suppression eligibility',()=>{
+  it('shows the recent suppression reason next to original window status',()=>{
+    const now=Date.now();
+    const tracker=new AutoWindowTracker('win32');
+    try {
+      tracker.start();
+      children.at(-1)!.stdout.emit('data',Buffer.from(sample(now-1000)));
+      const snapshot:ScanResponse={scannedAt:now,sources:[{
+        id:'local',label:'Windows',kind:'local',error:null,
+        capturedAt:now,captureStartedAt:now,
+        sessions:[{
+          key:sessionKey,id:sessionKey.slice(6),sourceId:'local',sourceLabel:'Windows',
+          title:'PRIVATE_SESSION_TITLE',status:'finished',statusReason:'private reason',
+          clientKind:'vscode',workspace:null,updatedAt:now,startedAt:null,
+          lastUserInputAgeAtSourceMs:100,lastUserInputAtSourceMs:now-100,
+        }],
+      }]};
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(false);
+      expect(tracker.status(sessionKey).message).toContain('未找到该会话的原窗口绑定');
+      tracker.observeScan(snapshot);
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(true);
+      const message=tracker.status(sessionKey).message;
+      expect(message).toContain('最近一次系统通知判定：');
+      expect(message).toContain('系统弹窗被抑制');
+      expect(message).not.toContain('PRIVATE_SESSION_TITLE');
+      expect(message).not.toContain(sessionKey);
+      vi.setSystemTime(now+16*60_000);
+      expect(tracker.status(sessionKey).message).not.toContain('最近一次系统通知判定');
+    } finally {tracker.stop();}
+  });
+
+  it('records watcher failure without inventing foreground data',()=>{
+    const tracker=new AutoWindowTracker('win32');
+    const now=Date.now();
+    expect(tracker.isSessionForeground(sessionKey,now)).toBe(false);
+    expect(tracker.status(sessionKey).message).toContain('Windows 原窗口监听正在恢复');
+    expect(tracker.status(sessionKey).message).toContain('Windows 原生前台监听未就绪');
+  });
+});
