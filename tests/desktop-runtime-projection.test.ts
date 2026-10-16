@@ -38,6 +38,17 @@ const inspect = (nativeEvent: DesktopLogEvent | null) =>
   });
 
 describe('end-to-end Desktop runtime evidence projection', () => {
+  it('reuses untouched source/session references when no native event can alter status',async()=>{
+    const original=thread({status:'working',clientKind:'terminal'});
+    const raw=snapshot(original);
+    const result=await projectDesktopRuntime(raw,NOW,{
+      platform:'win32',cache:new DesktopLogEventCache(),inspect:inspect(null),
+    });
+    expect(result.sources[0]).toBe(raw.sources[0]);
+    expect(result.sources[0]?.sessions[0]).toBe(original);
+    expect(result.scannedAt).toBe(raw.scannedAt);
+  });
+
   it('sets execution to working from a matched GUI start independent of CLI origin', async () => {
     const original = thread();
     const raw = snapshot(original);

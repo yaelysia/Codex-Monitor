@@ -5,6 +5,7 @@ import { windowWasActivated } from '../shared/window-navigation';
 import { visibleAlerts, visibleSessions } from '../shared/session-visibility';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { projectSessionsToLocalTime } from '../shared/session-time';
+import { keepStableScan } from '../shared/monitor-render-state';
 import { alertKindLabel } from '../shared/alert-presentation';
 import { isSourceAlertKind } from '../shared/source-alert';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -54,9 +55,13 @@ export default function FloatingApp() {
 
   useEffect(() => {
     let alive = true;
-    const offMonitor = window.monitorApi.onMonitorState(state => { if (alive) setMonitor(state); });
+    const offMonitor = window.monitorApi.onMonitorState(state => {
+      if (alive) setMonitor(previous => keepStableScan(previous, state));
+    });
     const offDock = window.monitorApi.onFloatingState(state => { if (alive) setDock(state); });
-    void window.monitorApi.getMonitorState().then(state => { if (alive) setMonitor(state); }).catch(console.error);
+    void window.monitorApi.getMonitorState().then(state => {
+      if (alive) setMonitor(previous => keepStableScan(previous, state));
+    }).catch(console.error);
     void window.monitorApi.getFloatingState().then(state => { if (alive) setDock(state); }).catch(console.error);
     return () => { alive = false; offMonitor(); offDock(); };
   }, []);
@@ -66,7 +71,7 @@ export default function FloatingApp() {
   const waiting = useMemo(() => sessions.filter(s => s.status === 'waiting' ||
     (s.status !== 'failed' && s.status !== 'interrupted' && !!s.pendingQuestionToken)),
     [sessions]);
-  const completed = recentParentCompletions(sessions, now);
+  const completed = useMemo(() => recentParentCompletions(sessions, now), [sessions, now]);
   const alerts = useMemo(() => visibleAlerts(monitor.alerts,
     monitor.scan?.sources.flatMap(source => source.sessions) || [])
     .sort((a, b) => b.at - a.at), [monitor.alerts, monitor.scan]);

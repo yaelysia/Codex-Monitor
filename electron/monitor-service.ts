@@ -48,6 +48,7 @@ export class MonitorService {
   private lastSourceScanDurationMs: number | null = null;
   private lastScan: ScanResponse | null = null;
   private rawLastScan: ScanResponse | null = null;
+  private scanRevision = 0;
   private nativeAuditTimer: ReturnType<typeof setInterval> | null = null;
   private nativeAuditInFlight = false;
   private lastNativeAuditAt = 0;
@@ -130,7 +131,8 @@ export class MonitorService {
 
   state(): MonitorState {
     return {
-      ...this.tracker.state(this.lastScan), eventChannels: this.watchers.status(),
+      ...this.tracker.state(this.lastScan), scanRevision: this.scanRevision,
+      eventChannels: this.watchers.status(),
       performance: {
         sourceScanDurationMs: this.lastSourceScanDurationMs,
         desktopAudit: this.platform === 'win32' ? getDesktopLogMetrics() : null,
@@ -199,6 +201,7 @@ export class MonitorService {
         projected, recentDesktopCompletions(), this.startedAt, Date.now());
       if (!changed && !alerts.length) return;
       this.lastScan = projected;
+      if (changed) this.scanRevision++;
       if (alerts.length) this.persistAlerts();
       this.onChange(this.state());
       if (!this.tracker.getMuted()) for (const alert of alerts)
@@ -288,6 +291,7 @@ export class MonitorService {
     const justScanned = projected.sources.filter(source => affected.has(source.id));
     this.rawLastScan = raw;
     this.lastScan = projected;
+    this.scanRevision++;
     for (const source of justScanned) {
       if (!source.error) this.sourceRetention.remember(source, Date.now());
       this.lastSourceScan.set(source.id, scannedAt);
@@ -358,6 +362,7 @@ export class MonitorService {
           sources: order.map(id => byId.get(id)!).filter(Boolean) };
         this.rawLastScan = { scannedAt: delta.scannedAt,
           sources: order.map(id => rawById.get(id)!).filter(Boolean) };
+        this.scanRevision++;
         this.lastFullScanAt = delta.scannedAt;
         if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);
       }
