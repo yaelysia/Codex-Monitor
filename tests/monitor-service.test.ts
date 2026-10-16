@@ -229,6 +229,14 @@ describe('Windows Desktop native lifecycle evidence without rescanning remote so
     vi.mocked(collect).mockImplementation(async () =>
       snapshot(Date.now(), [source('local', []), source('ssh:one', [desktopThread])]));
     let nativeReads = 0;
+    // Unlike an inconclusive native-log gap, an actual Desktop turn-complete
+    // must bypass the short continuity grace and retract running immediately.
+    vi.mocked(recentDesktopCompletions).mockImplementation(() => nativeReads >= 3 ? [{
+      threadId: desktopThread.id,
+      turnId: '019a21b0-aaaa-7ccc-8ddd-777788889999',
+      type: 'turn-displayed-complete' as const,
+      at: Date.now() - 100,
+    }] : []);
     vi.mocked(projectDesktopRuntime).mockImplementation(async baseline => {
       const result: ScanResponse = {
         ...baseline, sources: baseline.sources.map(src => ({
