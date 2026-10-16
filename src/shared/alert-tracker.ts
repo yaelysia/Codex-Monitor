@@ -2,6 +2,8 @@ import type { AlertKind, MonitorAlert, MonitorState, ScanResponse, SessionRecord
 import type { DesktopLogEvent } from './desktop-log-status';
 import { SourceHealthTracker, type SavedSourceHealth } from './source-health-alerts';
 import { isSourceAlertKind, sourceAlertKey } from './source-alert';
+import { DEFAULT_NOTIFICATION_KINDS, normalizeNotificationKinds } from './notification-rules';
+import type { NotificationKinds } from './types';
 
 const RECENT_EVENT_MS = 120_000;
 const CONTIGUOUS_SCAN_GAP_MS = 90_000;
@@ -22,6 +24,8 @@ export interface AlertTrackerPersistence {
   seenAlertIds: string[];
   /** Additive v1 metadata. Old saved inboxes remain loadable. */
   sourceHealth?: SavedSourceHealth[];
+  /** Additive v1 metadata: per-kind notification preferences. */
+  notificationKinds?: NotificationKinds;
 }
 
 type KnownSession = Pick<SessionRecord,
@@ -70,14 +74,32 @@ export class AlertTracker {
   private seenAlertIds = new Set<string>();
   private alerts: MonitorAlert[] = [];
   private muted = false;
+  private notificationKinds: NotificationKinds = { ...DEFAULT_NOTIFICATION_KINDS };
 
   setMuted(muted: boolean): void { this.muted = muted; }
   getMuted(): boolean { return this.muted; }
+  getNotificationKinds(): NotificationKinds { return { ...this.notificationKinds }; }
+
+  /** Disabled kinds are kept in the event timeline as already read, but never
+   * show a new unread badge or system popup. Re-enabling never replays them.
+   */
+  setNotificationKindEnabled(kind: AlertKind, enabled: boolean): void {
+    if (this.notificationKinds[kind] === enabled) return;
+    this.notificationKinds = { ...this.notificationKinds, [kind]: enabled };
+    if (!enabled) this.alerts = this.alerts.map(alert =>
+      alert.kind === kind && !alert.read ? { ...alert, read: true } : alert);
+  }
+
+  private applyNotificationKinds(alerts: MonitorAlert[]): void {
+    for (const alert of alerts)
+      if (!this.notificationKinds[alert.kind]) alert.read = true;
+  }
 
   /** Restore ONLY validated metadata, never stored conversation titles/prompts. */
   restore(snapshot: AlertTrackerPersistence | null): void {
     if (!snapshot) return;
     this.muted = snapshot.muted;
+    this.notificationKinds = normalizeNotificationKinds(snapshot.notificationKinds);
     this.sourceHealth.restore(snapshot.sourceHealth);
     this.seenAlertIds = new Set(snapshot.seenAlertIds.slice(-MAX_SEEN_ALERT_IDS));
     this.alerts = snapshot.alerts.slice(0, MAX_ALERTS).map(item => {
@@ -102,6 +124,7 @@ export class AlertTracker {
       })),
       seenAlertIds: [...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS),
       sourceHealth: this.sourceHealth.snapshot(),
+      notificationKinds: this.getNotificationKinds(),
     };
   }
 
@@ -196,6 +219,7 @@ export class AlertTracker {
       });
     }
     if (pending.length) {
+      this.applyNotificationKinds(pending);
       this.alerts = [...pending, ...this.alerts].slice(0, MAX_ALERTS);
       if (this.seenAlertIds.size > MAX_SEEN_ALERT_IDS)
         this.seenAlertIds = new Set([...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS));
@@ -214,7 +238,8 @@ export class AlertTracker {
   }
 
   state(scan: ScanResponse | null): MonitorState {
-    return { scan, alerts: this.getAlerts(scan), muted: this.muted };
+    return { scan, alerts: this.getAlerts(scan), muted: this.muted,
+      notificationKinds: this.getNotificationKinds() };
   }
 
   /** Deleting a configured source must not pretend it recovered. */
@@ -356,6 +381,7 @@ export class AlertTracker {
       this.known.set(source.id, current);
       this.scanned.set(source.id, now);
     }
+    this.applyNotificationKinds(pending);
     this.alerts = [...pending, ...this.alerts].slice(0, MAX_ALERTS);
     if (this.seenAlertIds.size > MAX_SEEN_ALERT_IDS) {
       this.seenAlertIds = new Set([...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS));

@@ -11,6 +11,7 @@ import type { MonitorService } from './monitor-service';
 import type { AutoWindowTracker } from './window-tracking';
 import { focusAndRead } from '../src/shared/focus-and-read';
 import { sourceIdFromAlertKey } from '../src/shared/source-alert';
+import { isNotificationKind } from '../src/shared/notification-rules';
 
 export function registerIpcHandlers(monitor: MonitorService,
   floating: FloatingWindowController, main: MainWindowController,
@@ -83,6 +84,11 @@ export function registerIpcHandlers(monitor: MonitorService,
   ipcMain.handle('monitor:set-muted', (_event, muted: unknown) => {
     if (typeof muted !== 'boolean') throw new Error('Invalid mute flag');
     return monitor.setMuted(muted);
+  });
+  ipcMain.handle('monitor:set-notification-kind', (_event, kind: unknown, enabled: unknown) => {
+    if (!isNotificationKind(kind) || typeof enabled !== 'boolean')
+      throw new Error('Invalid notification kind preference');
+    return monitor.setNotificationKindEnabled(kind, enabled);
   });
   ipcMain.handle('floating:get-state', () => floating.state());
   ipcMain.handle('floating:set-visible', (_event, visible: unknown) => {

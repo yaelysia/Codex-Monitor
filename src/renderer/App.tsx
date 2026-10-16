@@ -1,9 +1,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize } from '../shared/types';
+import type { ConfigResponse, ScanResponse, SessionRecord, SessionStatus, Settings, RecentReplyExcerpt, ResidentOptions, OriginalWindowStatus, MonitorAlert, SignalAppearance, FloatingCompactSize, AlertKind, NotificationKinds } from '../shared/types';
 import { sessionEvidenceLabel } from '../shared/session-evidence';
 import { projectSessionsToLocalTime } from '../shared/session-time';
 import { alertKindLabel } from '../shared/alert-presentation';
+import { DEFAULT_NOTIFICATION_KINDS } from '../shared/notification-rules';
 import { isSourceAlertKind, sourceIdFromAlertKey } from '../shared/source-alert';
 import { groupByExecutionLocation, workspaceGroupKey, type WorkspaceGroup } from '../shared/grouping';
 import { filterSessionsForView, summarizeDashboardSessions, type ViewFilter } from '../shared/monitor-view';
@@ -27,6 +28,16 @@ const STATUS_OPTIONS: readonly SignalSelectOption<ViewFilter['status']>[] = [
 type OverviewStatus = 'waiting' | 'abnormal' | 'working';
 const SESSION_PAGE_SIZE = 100;
 const AGE_REFRESH_MS = 15_000;
+const NOTIFICATION_OPTIONS: ReadonlyArray<{
+  kind: AlertKind; title: string; description: string;
+}> = [
+  { kind: 'waiting', title: '需要回答或确认', description: '提问、权限确认和待处理请求' },
+  { kind: 'failed', title: '本轮执行失败', description: '明确带错误的结束事件' },
+  { kind: 'finished', title: '本轮回复结束', description: '本轮正常完成，不等于整个任务结束' },
+  { kind: 'interrupted', title: '本轮已中断', description: '用户取消或其他明确中断事件' },
+  { kind: 'source-offline', title: '数据源采集异常', description: '持续无法读取 Windows、WSL 或 SSH 数据源' },
+  { kind: 'source-recovered', title: '数据源恢复', description: '异常数据源重新成功采集' },
+];
 
 type StoredViewPreferences = { view: View; recentOnly: boolean; filter: ViewFilter['status']; showSubagents: boolean };
 const VIEW_PREFERENCES_KEY = 'codex-monitor-view-v1';
@@ -279,6 +290,8 @@ export default function App() {
   const [compactSize, setCompactSize] = useState<FloatingCompactSize>('micro');
   const [alerts, setAlerts] = useState<MonitorAlert[]>([]);
   const [muted, setMuted] = useState(false);
+  const [notificationKinds, setNotificationKinds] = useState<NotificationKinds | null>(null);
+  const [notificationSaving, setNotificationSaving] = useState<AlertKind | null>(null);
   const [showAlerts, setShowAlerts] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -317,6 +330,7 @@ export default function App() {
       setPerformanceStats(state.performance ?? null);
       setAlerts(state.alerts);
       setMuted(state.muted);
+      setNotificationKinds(state.notificationKinds ?? { ...DEFAULT_NOTIFICATION_KINDS });
       if (state.scan) {
         setScan(state.scan);
         setNow(Date.now());
@@ -375,6 +389,7 @@ export default function App() {
       setPerformanceStats(state.performance ?? null);
       setAlerts(state.alerts);
       setMuted(state.muted);
+      setNotificationKinds(state.notificationKinds ?? { ...DEFAULT_NOTIFICATION_KINDS });
       if (state.scan) setScan(state.scan);
     }).catch(console.error);
     void refresh();
@@ -539,6 +554,19 @@ export default function App() {
     try { setCompactSize(next); const saved = await window.monitorApi.setFloatingCompactSize(next); setCompactSize(saved.compactSize); }
     catch (cause) { setResidentError(describeError(cause)); }
   }
+  async function updateNotificationKind(kind: AlertKind, enabled: boolean): Promise<void> {
+    if (notificationSaving !== null) return;
+    setNotificationSaving(kind);
+    setResidentError('');
+    try {
+      const state = await window.monitorApi.setNotificationKindEnabled(kind, enabled);
+      setNotificationKinds(state.notificationKinds ?? { ...DEFAULT_NOTIFICATION_KINDS });
+      // Disabling a kind also acknowledges existing unread events of that kind.
+      setAlerts(state.alerts);
+    } catch (cause) { setResidentError(describeError(cause)); }
+    finally { setNotificationSaving(null); }
+  }
+
   async function acknowledgeAlert(id: string): Promise<void> {
     try { const state = await window.monitorApi.acknowledgeAlert(id); setAlerts(state.alerts); }
     catch (cause) { setError(describeError(cause)); }
@@ -1061,8 +1089,8 @@ export default function App() {
     }}>
       <section className="modal resident-modal" role="dialog" aria-modal="true" aria-label="常驻设置">
         <header className="modal-top">
-          <div><h2>常驻与启动</h2>
-            <p>设置 Windows 托盘行为和可选开机启动，不影响 Codex 会话。</p>
+          <div><h2>常驻与通知</h2>
+            <p>管理任务提醒、后台运行和开机启动，不影响 Codex 会话。</p>
           </div>
           <button type="button" className="icon-button" aria-label="关闭常驻设置" onClick={() => setShowResident(false)}>×</button>
         </header>
@@ -1089,6 +1117,24 @@ export default function App() {
                 : '仅在正式打包的 Windows 版本中可设置；开发模式不会修改系统开机项。'}</small>
             </span>
           </label>
+          <section className="signal-notification-settings" aria-label="通知类型设置">
+            <div className="signal-notification-heading">
+              <strong>需要通知的情况</strong>
+              <small>单独开启或关闭各类提醒，修改立即生效并在重启后保留。</small>
+            </div>
+            <div className="signal-notification-grid">
+              {NOTIFICATION_OPTIONS.map(option => <label className="signal-notification-option"
+                key={option.kind}>
+                <input type="checkbox" aria-label={'通知：' + option.title}
+                  checked={notificationKinds?.[option.kind] ?? true}
+                  disabled={!notificationKinds || notificationSaving !== null}
+                  onChange={event => void updateNotificationKind(option.kind, event.target.checked)}/>
+                <span><strong>{option.title}</strong>
+                  <small>{option.description}</small></span>
+              </label>)}
+            </div>
+            <p>关闭后不会弹系统通知，也不增加未读数量；事件仍保留在收件箱与事件轨迹中。全局静音仅控制系统弹窗。</p>
+          </section>
           <section className="signal-compact-setting" aria-label="悬浮窗收起尺寸">
             <div><strong>悬浮窗收起尺寸</strong>
               <small>极简 38×78 px（默认）；紧凑 42×120 px。只改变收起时的原生窗口占用区域。</small></div>

@@ -574,3 +574,57 @@ describe('monitor service source alert integration', () => {
     expect(service.state().scan?.sources.map(s=>s.id)).toEqual(['local']);
   });
 });
+
+describe('selective notification delivery across both scan and native pathways', () => {
+  it('suppresses disabled scan-toasts and unread counts but preserves future enabled turns', async () => {
+    const base=snapshot(NOW,[source('ssh:one',[session('p','working',NOW)])]);
+    const ended=snapshot(NOW+1000,[source('ssh:one',[{
+      ...session('p','finished',NOW+1000),finishedToken:'end|first',
+    }])]);
+    const next=snapshot(NOW+3000,[source('ssh:one',[{
+      ...session('p','finished',NOW+3000),finishedToken:'end|second',byteSize:300,
+    }])]);
+    vi.mocked(collect).mockResolvedValueOnce(base).mockResolvedValueOnce(ended)
+      .mockResolvedValueOnce(next);
+    const toasts: MonitorAlert[] = [];
+    const states: MonitorState[] = [];
+    service=new MonitorService(state=>states.push(state),alert=>toasts.push(alert));
+    await service.refresh(true);
+    expect(service.state().notificationKinds?.finished).toBe(true);
+    service.setNotificationKindEnabled('finished',false);
+    vi.setSystemTime(NOW+1500);
+    await service.refresh(true);
+    expect(toasts).toHaveLength(0);
+    expect(service.state().alerts).toMatchObject([{kind:'finished',read:true}]);
+    expect(states.at(-1)?.notificationKinds?.finished).toBe(false);
+    service.setNotificationKindEnabled('finished',true);
+    vi.setSystemTime(NOW+3500);
+    await service.refresh(true);
+    expect(toasts).toMatchObject([{kind:'finished',read:false}]);
+    expect(service.state().alerts.filter(a=>!a.read)).toHaveLength(1);
+  });
+
+  it('suppresses native Desktop OS delivery using the same persisted kind rule', async () => {
+    const thread='019a21b0-aaaa-7ccc-8ddd-111122223333';
+    const turn='019a21b0-aaaa-7ccc-8ddd-777788889999';
+    fake.health={local:'active'};
+    const sessionRow={...session(thread,'working',NOW),key:'local:'+thread,
+      sourceId:'local',sourceLabel:'Windows',clientKind:'desktop' as const};
+    vi.mocked(collect).mockResolvedValue(snapshot(NOW,[source('local',[sessionRow])]));
+    const sent: MonitorAlert[]=[];
+    service=new MonitorService(()=>undefined, alert=>sent.push(alert),()=>undefined,'win32');
+    service.setNotificationKindEnabled('finished',false);
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(recentDesktopCompletions).mockReturnValue([{
+      threadId:thread,type:'turn-displayed-complete',turnId:turn,at:NOW+3000,
+    }]);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(sent).toEqual([]);
+    expect(service.state().alerts).toMatchObject([{kind:'finished',read:true}]);
+    service.setNotificationKindEnabled('finished',true);
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(sent).toEqual([]);
+    expect(service.state().alerts).toHaveLength(1);
+  });
+});

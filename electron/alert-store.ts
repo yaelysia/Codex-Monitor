@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { AlertTrackerPersistence, SavedAlert } from '../src/shared/alert-tracker';
 import { isSourceAlertKind, sourceIdFromAlertKey } from '../src/shared/source-alert';
 import type { SavedSourceHealth } from '../src/shared/source-health-alerts';
+import { normalizeNotificationKinds } from '../src/shared/notification-rules';
 
 const MAX_FILE_BYTES = 128 * 1024;
 const MAX_ALERTS = 60;
@@ -83,7 +84,8 @@ export function normalizeAlertState(raw: unknown, now = Date.now()): AlertTracke
     });
   }
   return { version: 1, muted: row.muted, alerts,
-    seenAlertIds: [...seen].slice(-MAX_SEEN_IDS), sourceHealth };
+    seenAlertIds: [...seen].slice(-MAX_SEEN_IDS), sourceHealth,
+    notificationKinds: normalizeNotificationKinds(row.notificationKinds) };
 }
 
 /** Atomic, debounced, tiny local store. Never writes prompts, titles or paths. */

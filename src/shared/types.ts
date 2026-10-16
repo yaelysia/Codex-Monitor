@@ -112,6 +112,8 @@ export interface ConfigResponse {
 
 export type AlertKind =
   'finished' | 'waiting' | 'interrupted' | 'failed' | 'source-offline' | 'source-recovered';
+/** True enables new unread badge + native popup for that event type. */
+export type NotificationKinds = Record<AlertKind, boolean>;
 export type FloatingSide = 'left' | 'right';
 export type SignalAppearance = 'moonsea' | 'ember' | 'mist';
 export type FloatingCompactSize = 'micro' | 'compact';
@@ -162,6 +164,8 @@ export interface MonitorState {
   performance?: MonitorPerformance;
   alerts: MonitorAlert[];
   muted: boolean;
+  /** Optional for backwards-compatible renderer mocks; live Monitor always supplies it. */
+  notificationKinds?: NotificationKinds;
   /** Per-source event watcher health. "fallback" still has periodic scans. */
   eventChannels?: Record<string, EventChannelMode>;
 }
@@ -217,6 +221,7 @@ export interface MonitorApi {
   onMonitorState(listener: (state: MonitorState) => void): () => void;
   acknowledgeAlert(id: string): Promise<MonitorState>;
   setNotificationsMuted(muted: boolean): Promise<MonitorState>;
+  setNotificationKindEnabled(kind: AlertKind, enabled: boolean): Promise<MonitorState>;
   getFloatingState(): Promise<FloatingWindowState>;
   setFloatingVisible(visible: boolean): Promise<FloatingWindowState>;
   setFloatingExpanded(expanded: boolean): Promise<FloatingWindowState>;

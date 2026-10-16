@@ -10,7 +10,7 @@ import { DesktopLogFolderWatcher } from './desktop-log-watch';
 import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
 import { SourceRetention } from '../src/shared/source-retention';
 import { NotificationPerformance } from '../src/shared/notification-performance';
-import type { SourceResult } from '../src/shared/types';
+import type { SourceResult, AlertKind } from '../src/shared/types';
 
 const POLLING_FALLBACK_MS = 12_000;
 const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
@@ -144,6 +144,13 @@ export class MonitorService {
     this.onChange(this.state());
     return this.state();
   }
+  /** Update one kind atomically: rapid UI toggles cannot overwrite each other. */
+  setNotificationKindEnabled(kind: AlertKind, enabled: boolean): MonitorState {
+    this.tracker.setNotificationKindEnabled(kind, enabled);
+    this.persistAlerts();
+    this.onChange(this.state());
+    return this.state();
+  }
   acknowledge(id: string): MonitorState { return this.acknowledgeMany([id]); }
   acknowledgeMany(ids: readonly string[]): MonitorState {
     if (!ids.length) return this.state();
@@ -194,7 +201,8 @@ export class MonitorService {
       this.lastScan = projected;
       if (alerts.length) this.persistAlerts();
       this.onChange(this.state());
-      if (!this.tracker.getMuted()) for (const alert of alerts) this.onAlert(alert);
+      if (!this.tracker.getMuted()) for (const alert of alerts)
+        if (!alert.read) this.onAlert(alert);
     } catch {
       // A locked/rotating Desktop log is not a reason to stop other monitoring.
     } finally {
@@ -292,7 +300,8 @@ export class MonitorService {
       this.persistAlerts();
     }
     this.onChange(this.state());
-    if (!this.tracker.getMuted()) for (const alert of alerts) this.onAlert(alert);
+    if (!this.tracker.getMuted()) for (const alert of alerts)
+      if (!alert.read) this.onAlert(alert);
   }
 
   /** Manual and fallback scans are full; a watcher provides affected source IDs. */
