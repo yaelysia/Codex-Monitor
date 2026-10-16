@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { shouldDisplayNativeAlert } from '../src/shared/foreground-notification';
 import type { AlertKind } from '../src/shared/types';
 
@@ -27,8 +28,11 @@ describe('session-scoped native toast suppression policy',()=>{
     expect(shouldDisplayNativeAlert(event('finished'),()=>{throw Error('down');})).toBe(true);
   });
 
-  it('uses the existing native boundary, does not change unread inbox semantics',()=>{
-    const main=import.meta.url;
-    expect(main).toContain('foreground-notification');
+  it('applies foreground policy before constructing a native toast, not during alert tracking',()=>{
+    const main=readFileSync(new URL('../electron/main.ts', import.meta.url),'utf8');
+    expect(main).toMatch(/if \(!shouldDisplayNativeAlert\(alert,[\s\S]*?\)\) return;[\s\S]*?showDesktopAlert\(alert/);
+    const source=readFileSync(new URL('../collector/window-tracker.ps1',import.meta.url),'utf8');
+    expect(source).toContain('Interlocked.Read(ref lastEmittedAt) < 5000');
+    expect(source).toContain('if (periodic && app != "terminal"');
   });
 });

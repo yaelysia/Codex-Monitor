@@ -484,11 +484,13 @@ describe('foreground session-specific notification suppression', () => {
     expect(resolver.isSessionForeground('local:thread-b', NOW + 500)).toBe(false);
     // Both sessions still have identities; activating one on a distinct HWND
     // makes the foreground match unambiguous again.
-    resolver.observeFocus(vscode(NOW + 1000, '0xabcd', 321));
-    resolver.observeScan(makeScan(NOW + 1100, 100, 'vscode', 'local:thread-b'),
-      NOW + 1100);
-    expect(resolver.isSessionForeground('local:thread-b', NOW + 1200)).toBe(true);
-    expect(resolver.isSessionForeground('local:thread-a', NOW + 1200)).toBe(false);
+    // A distinct new user input must fall outside the original input-token
+    // 1.5s dedupe window, or it is correctly treated as the same submission.
+    resolver.observeFocus(vscode(NOW + 3500, '0xabcd', 321));
+    resolver.observeScan(makeScan(NOW + 3600, 100, 'vscode', 'local:thread-b'),
+      NOW + 3600);
+    expect(resolver.isSessionForeground('local:thread-b', NOW + 3700)).toBe(true);
+    expect(resolver.isSessionForeground('local:thread-a', NOW + 3700)).toBe(false);
   });
 
   it('requires the exact selected tab in multi-tab terminals, not just their window', () => {
