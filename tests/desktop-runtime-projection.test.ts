@@ -108,7 +108,7 @@ describe('end-to-end Desktop runtime evidence projection', () => {
     });
   });
 
-  it('recovers a 20-hour GUI turn while labeling stale status as unverified', async () => {
+  it('never projects a 20-hour native start as current activity without corroboration', async () => {
     const longStart = event('turn-start-accepted', NOW - 20 * 60 * 60_000);
     const raw = snapshot(thread({ status: 'unknown', ageAtSourceMs: 20 * 60 * 60_000 }));
     const cache = new DesktopLogEventCache();
@@ -117,8 +117,7 @@ describe('end-to-end Desktop runtime evidence projection', () => {
       platform: 'win32', cache, inspect: inspect(null),
     });
     const row = result.sources[0]!.sessions[0]!;
-    expect(row.status).toBe('working');
-    expect(row.statusReason).toContain('未实时确认');
+    expect(row.status).toBe('unknown');
     expect(row.desktopRuntimeObserved).toBeUndefined();
     expect(raw.sources[0]!.sessions[0]!.status).toBe('unknown');
   });
