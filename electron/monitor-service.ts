@@ -10,6 +10,7 @@ import { DesktopLogFolderWatcher } from './desktop-log-watch';
 import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
 import { SourceRetention } from '../src/shared/source-retention';
 import { NotificationPerformance } from '../src/shared/notification-performance';
+import { RunningContinuity, TRANSIENT_RUNNING_GAP_MS } from '../src/shared/running-continuity';
 import type { SourceResult, AlertKind } from '../src/shared/types';
 
 const POLLING_FALLBACK_MS = 12_000;
@@ -43,6 +44,7 @@ function desktopProjectionChanged(a: ScanResponse | null, b: ScanResponse): bool
 export class MonitorService {
   private tracker = new AlertTracker();
   private readonly sourceRetention = new SourceRetention();
+  private readonly runningContinuity = new RunningContinuity();
   private readonly notificationPerformance = new NotificationPerformance();
   private readonly alertStore: AlertStateStore | null;
   private lastSourceScanDurationMs: number | null = null;
@@ -193,6 +195,14 @@ export class MonitorService {
    * The raw filesystem snapshot remains immutable; overlay can be removed or
    * superseded by newer native completion evidence on the next tick.
    */
+  /** Recent native turn-complete must defeat even a temporary running hold. */
+  private recentlyCompletedThreads(events: ReturnType<typeof recentDesktopCompletions>,
+    now: number): Set<string> {
+    return new Set(events.filter(event => now >= event.at &&
+      now - event.at <= TRANSIENT_RUNNING_GAP_MS)
+      .map(event => event.threadId.toLowerCase()));
+  }
+
   private async auditDesktopRuntime(): Promise<void> {
     const baseline = this.rawLastScan;
     if (!this.running || !baseline) return;
@@ -207,11 +217,15 @@ export class MonitorService {
       if (this.running && this.eventsEnabled) this.desktopLogWatcher.reconcile(
         getDesktopLogWatchDirectories());
       if (!this.running || this.inFlight || this.rawLastScan !== baseline) return;
-      const changed = desktopProjectionChanged(this.lastScan, projected);
+      const now = Date.now();
+      const completions = recentDesktopCompletions(now);
+      const displayed = this.runningContinuity.project(this.lastScan, projected,
+        now, this.recentlyCompletedThreads(completions, now));
+      const changed = desktopProjectionChanged(this.lastScan, displayed);
       const alerts = this.tracker.observeDesktopCompletions(
-        projected, recentDesktopCompletions(), this.startedAt, Date.now());
+        projected, completions, this.startedAt, now);
       if (!changed && !alerts.length) return;
-      this.lastScan = projected;
+      this.lastScan = displayed;
       if (changed) this.scanRevision++;
       if (alerts.length) this.persistAlerts();
       this.onChange(this.state());
@@ -298,10 +312,14 @@ export class MonitorService {
     // Native GUI evidence must be projected on the whole known source scope.
     // This retains exact-thread matching and current native completion safety.
     const projected = await projectDesktopRuntime(raw, Date.now());
+    const now = Date.now();
+    const completions = this.running ? recentDesktopCompletions(now) : [];
+    const displayed = this.runningContinuity.project(this.lastScan, projected,
+      now, this.recentlyCompletedThreads(completions, now));
     const affected = new Set(sources.map(source => source.id));
-    const justScanned = projected.sources.filter(source => affected.has(source.id));
+    const justScanned = displayed.sources.filter(source => affected.has(source.id));
     this.rawLastScan = raw;
-    this.lastScan = projected;
+    this.lastScan = displayed;
     this.scanRevision++;
     for (const source of justScanned) {
       if (!source.error) this.sourceRetention.remember(source, Date.now());
@@ -309,7 +327,7 @@ export class MonitorService {
     }
     const alerts = this.tracker.observe({ scannedAt, sources: justScanned });
     if (this.running) alerts.push(...this.tracker.observeDesktopCompletions(
-      projected, recentDesktopCompletions(), this.startedAt, Date.now()));
+      projected, completions, this.startedAt, now));
     if (alerts.length) {
       this.notificationPerformance.observe(alerts, projected, Date.now());
       this.persistAlerts();

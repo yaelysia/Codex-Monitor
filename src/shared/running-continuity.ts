@@ -1,4 +1,4 @@
-import type { ScanResponse, SessionRecord, SourceResult } from './types';
+import type { ScanResponse, SessionRecord } from './types';
 
 /** Short display-only continuity for an intermittent "unknown"/missing row.
  * This must never become fresh execution evidence or manufacture a completion.
@@ -20,7 +20,7 @@ export class RunningContinuity {
   reset(): void { this.gaps.clear(); }
 
   project(previous: ScanResponse | null, incoming: ScanResponse,
-    now = Date.now()): ScanResponse {
+    now = Date.now(), nativeCompleted: ReadonlySet<string> = new Set()): ScanResponse {
     if (!previous) return incoming;
     const bySource = new Map(previous.sources.map(source => [source.id, source]));
     const stillPresent = new Set<string>();
@@ -44,6 +44,7 @@ export class RunningContinuity {
         stillPresent.add(row.key);
         // A concrete lifecycle result always beats provisional display.
         if (row.status !== 'unknown' || row.isSubagent ||
+            nativeCompleted.has(row.id.toLowerCase()) ||
             row.pendingQuestionToken || row.waitingToken ||
             row.finishedToken || row.interruptedToken || row.failedToken) {
           this.gaps.delete(row.key);
@@ -62,7 +63,8 @@ export class RunningContinuity {
       for (const oldRow of old.sessions) {
         if (appended >= MAX_HELD_ROWS_PER_SOURCE) break;
         if (found.has(oldRow.key) || oldRow.isSubagent ||
-            !oldRow.rolloutPath && oldRow.clientKind !== 'desktop') continue;
+            nativeCompleted.has(oldRow.id.toLowerCase()) ||
+            (!oldRow.rolloutPath && oldRow.clientKind !== 'desktop')) continue;
         const held = this.tryHold({
           ...oldRow, status: 'unknown', evidenceKind: undefined,
           statusReason: '本次采集未包含先前活动会话',
