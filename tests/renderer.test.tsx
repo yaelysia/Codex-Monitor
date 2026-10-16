@@ -251,5 +251,6 @@ describe('renderer state revision regression guards',()=>{
     expect(primary).toContain('acceptScan(state)');
     expect(dock).toContain('setMonitor(previous => keepStableScan(previous, state))');
     expect(dock).toContain('useMemo(() => recentSessions(monitor), [monitor.scan])');
+    expect(dock).toContain('useMemo(() => recentParentCompletions(sessions, now), [sessions, now])');
   });
 });
