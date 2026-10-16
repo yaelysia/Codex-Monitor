@@ -116,6 +116,33 @@ class TestLinuxCollector(unittest.TestCase):
         self.assertEqual(scanner.details('', '\n'.join(map(json.dumps, records)),
                          'x.jsonl', False, now - 1000, now)['status'], 'finished')
 
+    def test_vscode_large_rollout_recovers_question_beyond_short_tail(self):
+        now = int(time.time() * 1000)
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / 'sessions' / '2026' / '10' / '16'
+            folder.mkdir(parents=True)
+            file = folder / 'rollout-vscode-question.jsonl'
+            def record(kind, payload):
+                return json.dumps({'type': kind, 'payload':payload},ensure_ascii=False)+'\n'
+            header = record('session_meta', {
+                'id':'019aaaab-bbbb-7ccc-8ddd-111122223333',
+                'originator':'codex_vscode','cwd':'/project'})
+            question = record('response_item',{
+                'type':'agent_message','id':'ask-remote',
+                'delivery':'async','questions':[{'question':'该如何部署？'}]})
+            filler = ''.join(record('response_item',{
+                'type':'reasoning','summary':['X'*1400,str(i)]})
+                for i in range(185))
+            tail = record('event_msg',{'type':'turn_started','turn_id':'next-turn'})
+            file.write_text(header+question+filler+tail,encoding='utf-8')
+            os.utime(file,ns=(now*1000000,now*1000000))
+            result = scanner.scan(root, now=now)
+            self.assertEqual(len(result),1)
+            self.assertEqual(result[0]['clientKind'],'vscode')
+            self.assertEqual(result[0]['status'],'working')
+            self.assertEqual(result[0]['pendingQuestionToken'],'async:ask-remote')
+            self.assertEqual(result[0]['questionText'],'该如何部署？')
+
     def test_vscode_persisted_response_agent_message_questions(self):
         now = 1_800_000_000_000
         stamp = '2026-10-12T12:00:00Z'
