@@ -39,6 +39,16 @@ const SELECTED_TAB_SAMPLE_MAX_AGE_MS = 3_500;
  */
 export const VSCODE_ACTIVE_INPUT_MAX_AGE_MS = 60 * 60_000;
 const VSCODE_ACTIVE_INPUT_SEPARATION_MS = 2_000;
+/** Machine-readable reason codes are not thread IDs, titles or app content. */
+export type ForegroundToastReason =
+  'unbound' | 'no-foreground' | 'stale-foreground' | 'other-app' |
+  'wrong-window' | 'tab-unidentified' | 'tab-mismatch' |
+  'shared-window' | 'another-chat-newest' | 'input-ambiguous' |
+  'input-expired' | 'unique-window' | 'recent-vscode-input';
+export type ForegroundToastDecision = {
+  suppress: boolean;
+  reason: ForegroundToastReason;
+};
 const SAFE_SESSION_KEY = /^[^\s\u0000-\u001f]{1,350}$/;
 
 export function normalizeSavedWindowBinding(raw: unknown, now = Date.now()): PersistedWindowBinding | null {
@@ -288,32 +298,32 @@ export class AutoWindowResolver {
     return this.bindings.get(sessionKey) ?? null;
   }
 
-  /** Suppress an OS toast only for a foreground window that is positively
-   * associated with this exact session. Never use a matching app name alone.
-   * Multiple VS Code/desktop conversations in one HWND are intentionally
-   * ambiguous unless native UI evidence identifies the exact terminal tab.
+  /** Return a tiny reason code so one failed-to-suppress popup can be
+   * diagnosed from Monitor's existing session inspector, without collecting
+   * window titles, chat content, paths, or process command lines.
    */
-  isSessionForeground(sessionKey: string, now = Date.now()): boolean {
+  evaluateForegroundToast(sessionKey: string, now = Date.now()): ForegroundToastDecision {
+    const fail = (reason: ForegroundToastReason): ForegroundToastDecision =>
+      ({ suppress: false, reason });
     const selected = this.bindings.get(sessionKey);
     const foreground = this.history.at(-1);
-    if (!selected || !foreground || foreground.app === 'other' ||
-        now - foreground.at > FOREGROUND_NOTIFICATION_SAMPLE_MAX_AGE_MS ||
-        foreground.at > now + 1_000) return false;
+    if (!selected) return fail('unbound');
+    if (!foreground) return fail('no-foreground');
+    if (foreground.app === 'other') return fail('other-app');
+    if (now - foreground.at > FOREGROUND_NOTIFICATION_SAMPLE_MAX_AGE_MS ||
+        foreground.at > now + 1_000) return fail('stale-foreground');
 
     const sameWindow = (item: ForegroundWindow): boolean =>
       item.hwnd === foreground.hwnd && item.pid === foreground.pid &&
       item.startedAt === foreground.startedAt && item.app === foreground.app;
-    if (!sameWindow(selected)) return false;
+    if (!sameWindow(selected)) return fail('wrong-window');
 
     const multiTab = foreground.app === 'terminal' &&
       (foreground.tabHost === 'multi' || selected.tabHost === 'multi' ||
         (foreground.tabCount ?? 0) > 1 || (selected.tabCount ?? 0) > 1);
     if (multiTab) {
-      if (!selected.tabId) return false;
-      // Native foreground hooks expose the top-level window immediately;
-      // an asynchronous UIA/MSAA selected-tab sample may follow. Accept a
-      // recent tab identity only while every subsequent sample is the SAME
-      // HWND/PID/process instance. Never guess a tab from a shared host.
+      if (!selected.tabId) return fail('tab-unidentified');
+      // The selected tab must still match during this foreground interval.
       let currentTab: string | null = null;
       for (let i = this.history.length - 1; i >= 0; i--) {
         const item = this.history[i]!;
@@ -321,25 +331,31 @@ export class AutoWindowResolver {
         if (!sameWindow(item)) break;
         if (item.tabId) { currentTab = item.tabId; break; }
       }
-      return currentTab === selected.tabId;
+      return currentTab === selected.tabId
+        ? { suppress: true, reason: 'unique-window' } : fail('tab-mismatch');
     }
 
-    // There may be multiple saved VS Code Codex chats in the SAME HWND.
-    // Previously every such window was categorically disallowed, so the
-    // foreground notification feature silently never worked in a normal
-    // multi-chat editor. Use the newest independently observed user input as
-    // an active-chat hint, WITHOUT claiming to identify the selected chat.
-    // All other (older/background) bound chats keep notifying as usual.
     const matching = [...this.bindings].filter(([,bound]) => sameWindow(bound));
-    if (matching.length === 1) return true;
-    if (foreground.app !== 'vscode' || matching.length < 2) return false;
+    if (matching.length === 1) return { suppress: true, reason: 'unique-window' };
+    if (foreground.app !== 'vscode' || matching.length < 2) return fail('shared-window');
+    // A VS Code HWND can have several historical Codex conversations. A
+    // recent, independently observed user message identifies ONE plausible
+    // active conversation without globally muting the whole editor.
     matching.sort((a,b) => b[1].inputAt - a[1].inputAt);
     const [leaderKey, leader] = matching[0]!;
     const runnerUp = matching[1]![1];
+    if (leaderKey !== sessionKey) return fail('another-chat-newest');
     const age = now - leader.inputAt;
-    return leaderKey === sessionKey &&
-      age >= -1_000 && age <= VSCODE_ACTIVE_INPUT_MAX_AGE_MS &&
-      leader.inputAt - runnerUp.inputAt > VSCODE_ACTIVE_INPUT_SEPARATION_MS;
+    if (age < -1_000 || age > VSCODE_ACTIVE_INPUT_MAX_AGE_MS)
+      return fail('input-expired');
+    if (leader.inputAt - runnerUp.inputAt <= VSCODE_ACTIVE_INPUT_SEPARATION_MS)
+      return fail('input-ambiguous');
+    return { suppress: true, reason: 'recent-vscode-input' };
+  }
+
+  /** Keep the existing boolean API used at the native OS popup boundary. */
+  isSessionForeground(sessionKey: string, now = Date.now()): boolean {
+    return this.evaluateForegroundToast(sessionKey, now).suppress;
   }
 
   /** Acknowledging is irreversible from the UI. Require the exact CURRENT
