@@ -20,6 +20,8 @@ const api: MonitorApi = {
   },
   acknowledgeAlert: id => ipcRenderer.invoke('monitor:ack-alert', id),
   setNotificationsMuted: muted => ipcRenderer.invoke('monitor:set-muted', muted),
+  setNotificationKindEnabled: (kind, enabled) =>
+    ipcRenderer.invoke('monitor:set-notification-kind', kind, enabled),
   getFloatingState: () => ipcRenderer.invoke('floating:get-state'),
   setFloatingVisible: visible => ipcRenderer.invoke('floating:set-visible', visible),
   setFloatingExpanded: expanded => ipcRenderer.invoke('floating:set-expanded', expanded),
