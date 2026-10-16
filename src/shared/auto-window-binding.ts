@@ -25,6 +25,12 @@ export interface PersistedWindowBinding {
 }
 const MAX_BINDINGS = 200;
 const MAX_BINDING_AGE_MS = 30 * 24 * 60 * 60_000;
+/** A foreground event is a snapshot, not a permanent "currently active" lock.
+ * Native watch heartbeats known apps every five seconds. Missing heartbeats
+ * or a stopped watcher must never suppress a valid alert.
+ */
+export const FOREGROUND_NOTIFICATION_SAMPLE_MAX_AGE_MS = 8_000;
+const SELECTED_TAB_SAMPLE_MAX_AGE_MS = 3_500;
 const SAFE_SESSION_KEY = /^[^\s\u0000-\u001f]{1,350}$/;
 
 export function normalizeSavedWindowBinding(raw: unknown, now = Date.now()): PersistedWindowBinding | null {
@@ -272,6 +278,52 @@ export class AutoWindowResolver {
 
   get(sessionKey: string): OriginalWindow | null {
     return this.bindings.get(sessionKey) ?? null;
+  }
+
+  /** Suppress an OS toast only for a foreground window that is positively
+   * associated with this exact session. Never use a matching app name alone.
+   * Multiple VS Code/desktop conversations in one HWND are intentionally
+   * ambiguous unless native UI evidence identifies the exact terminal tab.
+   */
+  isSessionForeground(sessionKey: string, now = Date.now()): boolean {
+    const selected = this.bindings.get(sessionKey);
+    const foreground = this.history.at(-1);
+    if (!selected || !foreground || foreground.app === 'other' ||
+        now - foreground.at > FOREGROUND_NOTIFICATION_SAMPLE_MAX_AGE_MS ||
+        foreground.at > now + 1_000) return false;
+
+    const sameWindow = (item: ForegroundWindow): boolean =>
+      item.hwnd === foreground.hwnd && item.pid === foreground.pid &&
+      item.startedAt === foreground.startedAt && item.app === foreground.app;
+    if (!sameWindow(selected)) return false;
+
+    const multiTab = foreground.app === 'terminal' &&
+      (foreground.tabHost === 'multi' || selected.tabHost === 'multi' ||
+        (foreground.tabCount ?? 0) > 1 || (selected.tabCount ?? 0) > 1);
+    if (multiTab) {
+      if (!selected.tabId) return false;
+      // Native foreground hooks expose the top-level window immediately;
+      // an asynchronous UIA/MSAA selected-tab sample may follow. Accept a
+      // recent tab identity only while every subsequent sample is the SAME
+      // HWND/PID/process instance. Never guess a tab from a shared host.
+      let currentTab: string | null = null;
+      for (let i = this.history.length - 1; i >= 0; i--) {
+        const item = this.history[i]!;
+        if (now - item.at > SELECTED_TAB_SAMPLE_MAX_AGE_MS) break;
+        if (!sameWindow(item)) break;
+        if (item.tabId) { currentTab = item.tabId; break; }
+      }
+      return currentTab === selected.tabId;
+    }
+
+    // A single VS Code / Codex Desktop HWND can display more than one Codex
+    // conversation. With multiple known bindings to the same window, none is
+    // proven to be the visible conversation; let normal notifications through.
+    let matching = 0;
+    for (const bound of this.bindings.values()) {
+      if (sameWindow(bound) && ++matching > 1) return false;
+    }
+    return matching === 1;
   }
 
   invalidate(sessionKey: string): void {

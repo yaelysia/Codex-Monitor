@@ -11,6 +11,7 @@ import { AutoWindowTracker } from './window-tracking';
 import { configureDesktopEvidenceStorage, flushDesktopEvidenceStorage } from './collector';
 import { windowWasActivated } from '../src/shared/window-navigation';
 import { sourceIdFromAlertKey } from '../src/shared/source-alert';
+import { shouldDisplayNativeAlert } from '../src/shared/foreground-notification';
 
 if (process.platform === 'win32' && process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX === '1') {
   app.commandLine.appendSwitch('disable-gpu-sandbox');
@@ -55,7 +56,12 @@ if (firstInstance) {
     windowTracker.start();
     monitor = new MonitorService(
       state => broadcast('monitor:state', state),
-      alert => showDesktopAlert(alert, key => {
+      alert => {
+        // Only the EXACT foreground Codex session skips its OS popup. Inbox
+        // events remain unread and unrelated sessions/sources still notify.
+        if (!shouldDisplayNativeAlert(alert,
+          key => windowTracker?.isSessionForeground(key) ?? false)) return;
+        showDesktopAlert(alert, key => {
         // Source notifications have no Codex thread to focus.
         const sourceId = sourceIdFromAlertKey(key);
         if (sourceId) {
@@ -72,7 +78,8 @@ if (firstInstance) {
         void windowTracker.focusOriginalWindow(key, record).then(result => {
           if (!windowWasActivated(result)) mainWindow?.show(key);
         }).catch(() => mainWindow?.show(key));
-      }, id => { monitor?.acknowledge(id); }),
+        }, id => { monitor?.acknowledge(id); });
+      },
       snapshot => windowTracker?.observeScan(snapshot),
       process.platform, app.getPath('userData'),
     );

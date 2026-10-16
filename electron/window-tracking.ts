@@ -176,6 +176,16 @@ export class AutoWindowTracker {
     this.bindingStore?.update(this.resolver.savedBindings());
   }
 
+  /** Read-only foreground test for native OS notification suppression.
+   * It does not query HWNDs, focus windows or infer a conversation from app
+   * name. Restored bindings must be confirmed by a new live user submission.
+   */
+  isSessionForeground(sessionKey: string, now = Date.now()): boolean {
+    return this.platform === 'win32' && this.watching &&
+      !this.restoredKeys.has(sessionKey) &&
+      this.resolver.isSessionForeground(sessionKey, now);
+  }
+
   status(sessionKey: string, session?: SessionRecord): OriginalWindowStatus {
     if (this.platform !== 'win32') return {
       ready: false, message: '原窗口自动定位仅支持 Windows Monitor',
