@@ -52,7 +52,16 @@ if (firstInstance) {
       state => resident?.updateDock(state),
     );
     configureDesktopEvidenceStorage(app.getPath('userData'));
-    windowTracker = new AutoWindowTracker(process.platform, app.getPath('userData'));
+    windowTracker = new AutoWindowTracker(process.platform, app.getPath('userData'), () => {
+      // A manual Alt+Tab, HWND activation or exact selected-tab change can
+      // reveal that the user opened a session without clicking Monitor.
+      // Mark only its existing unread alerts. No polling or broad "VS Code is
+      // foreground" inference; ambiguity leaves messages unread.
+      for (const key of monitor?.unreadSessionKeys() ?? []) {
+        if (windowTracker?.isSessionForegroundForRead(key))
+          monitor?.acknowledgeSessionAlerts(key);
+      }
+    });
     windowTracker.start();
     monitor = new MonitorService(
       state => broadcast('monitor:state', state),
@@ -76,6 +85,11 @@ if (firstInstance) {
           const record = monitor.state().scan?.sources.flatMap(source => source.sessions)
             .find(session => session.key === key);
           void windowTracker.focusOriginalWindow(key, record).then(result => {
+            // The popup's click already marks that event read. Also clear
+            // other unread notices from this same session after a verified
+            // focus or the OS accepts its official Codex Desktop deep-link.
+            if (result.state === 'focused' || result.state === 'opened')
+              monitor?.acknowledgeSessionAlerts(key);
             if (!windowWasActivated(result)) mainWindow?.show(key);
           }).catch(() => mainWindow?.show(key));
         }, id => { monitor?.acknowledge(id); });

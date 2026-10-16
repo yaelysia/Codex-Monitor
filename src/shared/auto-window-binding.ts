@@ -326,6 +326,22 @@ export class AutoWindowResolver {
     return matching === 1;
   }
 
+  /** Acknowledging is irreversible from the UI. Require the exact CURRENT
+   * selected tab on multi-tab terminals rather than inferring it from the
+   * previous UIA sample (which may precede a tab switch). Reuse the strict
+   * foreground/window/session disambiguation above for every other client.
+   */
+  isSessionForegroundForRead(sessionKey: string, now = Date.now()): boolean {
+    if (!this.isSessionForeground(sessionKey, now)) return false;
+    const bound = this.bindings.get(sessionKey);
+    const current = this.history.at(-1);
+    if (!bound || !current) return false;
+    const multiTab = current.app === 'terminal' &&
+      (current.tabHost === 'multi' || bound.tabHost === 'multi' ||
+        (current.tabCount ?? 0) > 1 || (bound.tabCount ?? 0) > 1);
+    return !multiTab || (!!bound.tabId && current.tabId === bound.tabId);
+  }
+
   invalidate(sessionKey: string): void {
     this.bindings.delete(sessionKey);
     this.pendingTabs.delete(sessionKey);

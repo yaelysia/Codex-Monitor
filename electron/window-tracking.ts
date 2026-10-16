@@ -26,7 +26,11 @@ export class AutoWindowTracker {
   private readonly bindingStore: WindowBindingStore | null;
   private readonly restoredKeys = new Set<string>();
 
-  constructor(private readonly platform = process.platform, storageDirectory?: string) {
+  constructor(private readonly platform = process.platform, storageDirectory?: string,
+    /** Triggered only after a valid native foreground observation or a fresh
+     * session/window binding. Caller decides which unread alerts to acknowledge.
+     */
+    private readonly onForegroundObservation: () => void = () => {}) {
     this.bindingStore = storageDirectory ? new WindowBindingStore(storageDirectory) : null;
   }
 
@@ -134,6 +138,7 @@ export class AutoWindowTracker {
             }
             const upgraded = this.resolver.observeFocus(foreground);
             if (upgraded.length) this.bindingStore?.update(this.resolver.savedBindings());
+            this.onForegroundObservation();
           } else if ('ok' in raw && raw.ok === false &&
               'reason' in raw && raw.reason === 'native_bridge_unavailable') {
             this.lastNativeError = 'native_bridge_unavailable';
@@ -174,6 +179,9 @@ export class AutoWindowTracker {
     // The restored identity should no longer be described as unverified.
     for (const key of changed) this.restoredKeys.delete(key);
     this.bindingStore?.update(this.resolver.savedBindings());
+    // User may have opened the original Codex window BEFORE this delayed
+    // JSONL scan established the binding; don't require another focus switch.
+    this.onForegroundObservation();
   }
 
   /** Read-only foreground test for native OS notification suppression.
@@ -184,6 +192,15 @@ export class AutoWindowTracker {
     return this.platform === 'win32' && this.watching &&
       !this.restoredKeys.has(sessionKey) &&
       this.resolver.isSessionForeground(sessionKey, now);
+  }
+
+  /** Positive read-confirmation check. Historical restored HWNDs and watcher
+   * downtime are not enough; multi-tab terminal needs CURRENT selected tab.
+   */
+  isSessionForegroundForRead(sessionKey: string, now = Date.now()): boolean {
+    return this.platform === 'win32' && this.watching &&
+      !this.restoredKeys.has(sessionKey) &&
+      this.resolver.isSessionForegroundForRead(sessionKey, now);
   }
 
   status(sessionKey: string, session?: SessionRecord): OriginalWindowStatus {
