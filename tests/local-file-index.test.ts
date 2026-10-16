@@ -89,3 +89,66 @@ describe('bounded event-assisted local file discovery', () => {
       .toContain(file);
   });
 });
+
+describe('incremental order maintenance without historical re-sort', () => {
+  it('reuses order on idle scans, selectively repositions changes, and rebuilds after bulk changes', async () => {
+    const {root,day}=await fixture();
+    const index=new LocalFileIndex();
+    const files: string[] = [];
+    for(let i=0;i<48;i++){
+      const file=path.join(day,'rollout-'+String(i).padStart(3,'0')+'.jsonl');
+      await fs.writeFile(file,'{}');
+      await fs.utimes(file,new Date(NOW-50_000+i),new Date(NOW-50_000+i));
+      files.push(file);
+    }
+    const initial=await index.candidates(root,NOW,false);
+    expect(initial).toHaveLength(48);
+    expect(index.diagnostics().sortRebuilds).toBe(1);
+    for(let i=0;i<25;i++){
+      const next=await index.candidates(root,NOW+1000+i,true);
+      expect(next.map(x=>x.file)).toEqual(initial.map(x=>x.file));
+      expect(index.diagnostics().sortRebuilds).toBe(1);
+      expect(index.diagnostics().statCalls).toBe(0);
+    }
+
+    await fs.utimes(files[0]!,new Date(NOW+200),new Date(NOW+200));
+    index.note(root,'2026/10/15/'+path.basename(files[0]!));
+    expect((await index.candidates(root,NOW+2000,true))[0]?.file).toBe(files[0]);
+    expect(index.diagnostics()).toMatchObject({
+      mode:'incremental',statCalls:1,sortRebuilds:1,
+    });
+
+    // Bulk changes take a single O(n log n) rebuild instead of 33 O(n) splices.
+    for(let i=1;i<=33;i++){
+      await fs.utimes(files[i]!,new Date(NOW+1000+i),new Date(NOW+1000+i));
+      index.note(root,'2026/10/15/'+path.basename(files[i]!));
+    }
+    const incremental=await index.candidates(root,NOW+3000,true);
+    expect(index.diagnostics()).toMatchObject({sortRebuilds:2,statCalls:33});
+    const full=await index.candidates(root,NOW+4000,false);
+    expect(index.diagnostics().sortRebuilds).toBe(3);
+    expect(incremental.map(x=>x.file)).toEqual(full.map(x=>x.file));
+  });
+
+  it('preserves deterministic ordering for equal timestamps after incremental add/remove', async () => {
+    const {root,day}=await fixture();
+    const index=new LocalFileIndex();
+    for(const name of ['rollout-b.jsonl','rollout-a.jsonl']){
+      const file=path.join(day,name);
+      await fs.writeFile(file,'{}');
+      await fs.utimes(file,new Date(NOW),new Date(NOW));
+    }
+    const first=await index.candidates(root,NOW,false);
+    expect(first.map(x=>path.basename(x.file))).toEqual(['rollout-a.jsonl','rollout-b.jsonl']);
+    await fs.rm(path.join(day,'rollout-a.jsonl'));
+    index.note(root,'2026/10/15/rollout-a.jsonl');
+    const removed=await index.candidates(root,NOW+1000,true);
+    expect(removed.map(x=>path.basename(x.file))).toEqual(['rollout-b.jsonl']);
+    const file=path.join(day,'rollout-a.jsonl');
+    await fs.writeFile(file,'{}');
+    await fs.utimes(file,new Date(NOW),new Date(NOW));
+    index.note(root,'2026/10/15/rollout-a.jsonl');
+    expect((await index.candidates(root,NOW+2000,true)).map(x=>path.basename(x.file)))
+      .toEqual(first.map(x=>path.basename(x.file)));
+  });
+});

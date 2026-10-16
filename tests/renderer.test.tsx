@@ -242,3 +242,14 @@ describe('notification-kind settings UI contract', () => {
     expect(source).toContain('关闭后不会弹系统通知，也不增加未读数量');
   });
 });
+
+describe('renderer state revision regression guards',()=>{
+  it('prevents heavy session recompute after alert-only IPC events',()=>{
+    const primary=readFileSync(new URL('../src/renderer/App.tsx', import.meta.url),'utf8');
+    const dock=readFileSync(new URL('../src/renderer/FloatingApp.tsx', import.meta.url),'utf8');
+    expect(primary).toContain('nextScanRevision(acceptedScanRevision.current, state)');
+    expect(primary).toContain('acceptScan(state)');
+    expect(dock).toContain('setMonitor(previous => keepStableScan(previous, state))');
+    expect(dock).toContain('useMemo(() => recentSessions(monitor), [monitor.scan])');
+  });
+});

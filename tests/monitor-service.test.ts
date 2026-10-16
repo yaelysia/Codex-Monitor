@@ -628,3 +628,24 @@ describe('selective notification delivery across both scan and native pathways',
     expect(service.state().alerts).toHaveLength(1);
   });
 });
+
+describe('scan revision avoids heavy UI regrouping on notification-only state updates',()=>{
+  it('advances for new scans but not for mute, unread, or notification preference changes',async()=>{
+    vi.mocked(collect).mockResolvedValue(snapshot(NOW,[
+      source('local',[session('parent','working',NOW)]),
+    ]));
+    const emitted:MonitorState[]=[];
+    service=new MonitorService(state=>emitted.push(state),()=>undefined);
+    expect(service.state().scanRevision).toBe(0);
+    await service.refresh(true);
+    const first=service.state().scanRevision!;
+    expect(first).toBeGreaterThan(0);
+    service.setMuted(true);
+    service.setNotificationKindEnabled('finished',false);
+    service.acknowledge('unknown-id');
+    expect(service.state().scanRevision).toBe(first);
+    expect(emitted.at(-1)?.scanRevision).toBe(first);
+    await service.refresh(true);
+    expect(service.state().scanRevision).toBeGreaterThan(first);
+  });
+});
