@@ -679,3 +679,52 @@ describe('automatic read when opening the original session window',()=>{
     expect(states).toHaveLength(count+1);
   });
 });
+
+describe('running indicator does not blink on incomplete short scans',()=>{
+  it('keeps the active badge across a 3-second unknown and resets promptly for a real terminal event',async()=>{
+    const started=session('p','working',NOW);
+    started.rolloutPath='2026/10/16/rollout-p.jsonl';
+    const uncertain={...session('p','unknown',NOW),rolloutPath:started.rolloutPath};
+    const finished={...session('p','finished',NOW+12_000),
+      rolloutPath:started.rolloutPath,finishedToken:'finish|p'};
+    vi.mocked(collect)
+      .mockResolvedValueOnce(snapshot(NOW,[source('local',[started])]))
+      .mockResolvedValueOnce(snapshot(NOW+3000,[source('local',[uncertain])]))
+      .mockResolvedValueOnce(snapshot(NOW+6000,[source('local',[uncertain])]))
+      .mockResolvedValueOnce(snapshot(NOW+12_000,[source('local',[finished])]));
+    const delivered:MonitorAlert[]=[];
+    service=new MonitorService(()=>{},alert=>delivered.push(alert));
+    await service.refresh(true);
+    expect(service.state().scan?.sources[0]?.sessions[0]?.status).toBe('working');
+    vi.setSystemTime(NOW+3000);
+    await service.refresh(true);
+    expect(service.state().scan?.sources[0]?.sessions[0]).toMatchObject({
+      status:'working',evidenceKind:'retained-activity',
+    });
+    vi.setSystemTime(NOW+6000);
+    await service.refresh(true);
+    expect(service.state().scan?.sources[0]?.sessions[0]?.status).toBe('working');
+    vi.setSystemTime(NOW+12_000);
+    await service.refresh(true);
+    expect(service.state().scan?.sources[0]?.sessions[0]?.status).toBe('finished');
+    expect(delivered.filter(event=>event.kind==='finished')).toHaveLength(1);
+  });
+
+  it('does not hide source outage by extending last-known executing statuses',async()=>{
+    const active=session('p','working',NOW);
+    active.rolloutPath='2026/10/16/rollout-p.jsonl';
+    const broken=source('ssh:one',[]);
+    broken.error='SSH collection temporarily failed';
+    vi.mocked(collect)
+      .mockResolvedValueOnce(snapshot(NOW,[source('ssh:one',[active])]))
+      .mockResolvedValueOnce(snapshot(NOW+3000,[broken]));
+    service=new MonitorService(()=>{},()=>{});
+    await service.refresh(true);
+    vi.setSystemTime(NOW+3000);
+    await service.refresh(true);
+    const current=service.state().scan?.sources[0];
+    expect(current?.error).toBeTruthy();
+    expect(current?.stale).toBe(true);
+    expect(current?.sessions[0]?.status).toBe('unknown');
+  });
+});
