@@ -31,6 +31,14 @@ const MAX_BINDING_AGE_MS = 30 * 24 * 60 * 60_000;
  */
 export const FOREGROUND_NOTIFICATION_SAMPLE_MAX_AGE_MS = 8_000;
 const SELECTED_TAB_SAMPLE_MAX_AGE_MS = 3_500;
+/** VS Code usually hosts many Codex chats in one HWND. The most recently
+ * submitted user message is the only available read-only conversation-level
+ * evidence when the editor doesn't expose an active thread/tab identity.
+ * Limit that hint to live, separately attributable interactions. It is
+ * sufficient to silence a popup, but NOT to mark messages as read.
+ */
+export const VSCODE_ACTIVE_INPUT_MAX_AGE_MS = 60 * 60_000;
+const VSCODE_ACTIVE_INPUT_SEPARATION_MS = 2_000;
 const SAFE_SESSION_KEY = /^[^\s\u0000-\u001f]{1,350}$/;
 
 export function normalizeSavedWindowBinding(raw: unknown, now = Date.now()): PersistedWindowBinding | null {
@@ -316,14 +324,22 @@ export class AutoWindowResolver {
       return currentTab === selected.tabId;
     }
 
-    // A single VS Code / Codex Desktop HWND can display more than one Codex
-    // conversation. With multiple known bindings to the same window, none is
-    // proven to be the visible conversation; let normal notifications through.
-    let matching = 0;
-    for (const bound of this.bindings.values()) {
-      if (sameWindow(bound) && ++matching > 1) return false;
-    }
-    return matching === 1;
+    // There may be multiple saved VS Code Codex chats in the SAME HWND.
+    // Previously every such window was categorically disallowed, so the
+    // foreground notification feature silently never worked in a normal
+    // multi-chat editor. Use the newest independently observed user input as
+    // an active-chat hint, WITHOUT claiming to identify the selected chat.
+    // All other (older/background) bound chats keep notifying as usual.
+    const matching = [...this.bindings].filter(([,bound]) => sameWindow(bound));
+    if (matching.length === 1) return true;
+    if (foreground.app !== 'vscode' || matching.length < 2) return false;
+    matching.sort((a,b) => b[1].inputAt - a[1].inputAt);
+    const [leaderKey, leader] = matching[0]!;
+    const runnerUp = matching[1]![1];
+    const age = now - leader.inputAt;
+    return leaderKey === sessionKey &&
+      age >= -1_000 && age <= VSCODE_ACTIVE_INPUT_MAX_AGE_MS &&
+      leader.inputAt - runnerUp.inputAt > VSCODE_ACTIVE_INPUT_SEPARATION_MS;
   }
 
   /** Acknowledging is irreversible from the UI. Require the exact CURRENT
@@ -339,7 +355,18 @@ export class AutoWindowResolver {
     const multiTab = current.app === 'terminal' &&
       (current.tabHost === 'multi' || bound.tabHost === 'multi' ||
         (current.tabCount ?? 0) > 1 || (bound.tabCount ?? 0) > 1);
-    return !multiTab || (!!bound.tabId && current.tabId === bound.tabId);
+    if (multiTab) return !!bound.tabId && current.tabId === bound.tabId;
+    // The newest VS Code input is only a heuristic for popup suppression.
+    // NEVER use it for irreversible read acknowledgement of a shared HWND.
+    if (current.app === 'vscode') {
+      let associations = 0;
+      for (const other of this.bindings.values()) {
+        if (other.hwnd === current.hwnd && other.pid === current.pid &&
+            other.startedAt === current.startedAt && other.app === current.app &&
+            ++associations > 1) return false;
+      }
+    }
+    return true;
   }
 
   invalidate(sessionKey: string): void {
