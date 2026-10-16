@@ -798,3 +798,24 @@
 @media(prefers-reduced-motion:reduce){
   .signal-app .signal-ribbon-tracer{animation:none!important}
 }
+
+/* Notification category controls share the existing resident dialog. */
+.signal-app .signal-notification-settings{padding:15px;border:1px solid var(--s-stroke-strong);
+  background:var(--s-tint);border-radius:10px;display:flex;flex-direction:column;gap:12px}
+.signal-app .signal-notification-heading{display:flex;flex-direction:column;gap:6px}
+.signal-app .signal-notification-heading strong{color:var(--s-text);font-size:12px;font-weight:650}
+.signal-app .signal-notification-heading small,.signal-app .signal-notification-settings p{
+  color:var(--s-muted);font-size:11px;line-height:1.6}
+.signal-app .signal-notification-settings p{margin:0}
+.signal-app .signal-notification-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.signal-app .signal-notification-option{display:flex;align-items:flex-start;gap:9px;min-width:0;
+  background:var(--s-panel);border:1px solid var(--s-stroke);border-radius:8px;padding:11px;
+  cursor:pointer;transition:border-color .18s ease,background-color .18s ease}
+.signal-app .signal-notification-option:hover{border-color:var(--s-stroke-strong)}
+.signal-app .signal-notification-option:focus-within{border-color:var(--s-accent)}
+.signal-app .signal-notification-option:has(input:disabled){opacity:.58;cursor:default}
+.signal-app .signal-notification-option input{flex:0 0 auto;margin:2px 0 0;accent-color:var(--s-accent)}
+.signal-app .signal-notification-option span{display:flex;flex-direction:column;gap:5px;min-width:0}
+.signal-app .signal-notification-option strong{font-size:11px;color:var(--s-text);font-weight:625}
+.signal-app .signal-notification-option small{font-size:10px;color:var(--s-muted);line-height:1.5}
+@media(max-width:500px){.signal-app .signal-notification-grid{grid-template-columns:1fr}}
