@@ -300,7 +300,8 @@ export async function projectDesktopRuntime(
       if (source.error) return source;
       const sessions = source.sessions.map(session => ({ ...session }));
       applyDesktopLogEvidence(sessions, evidence, now,
-        source.capturedAt ?? snapshot.scannedAt);
+        source.capturedAt ?? snapshot.scannedAt,
+        source.captureStartedAt ?? source.capturedAt ?? snapshot.scannedAt);
       for (const row of sessions) {
         // An exact GUI-owned UUID hit is evidence that Desktop, rather than
         // the recorded session creator, currently owns this thread.

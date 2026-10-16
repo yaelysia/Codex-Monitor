@@ -189,6 +189,13 @@ npm run probe:app-server -- --duration 20 --thread-id "真实会话UUID" --show-
 
 运行 `npm run test:probe` 可以在不连接真实账号/会话的前提下，用模拟 App Server 验证 WebSocket/JSON-RPC、状态 flags、批准请求绝不代答等行为。**下一阶段**在独立测试服务上验证 `thread/resume` 的第二客户端订阅、审批请求分发与断线回退后，才考虑可选地接入正式 Monitor。不可用独立进程假装共享所有已有会话。
 
+## Desktop 历史启动状态误判修复（2026-10）
+
+- **补齐原生结束证据**：除了 `[desktop-notifications] show turn-complete`，只读解析器现在也识别带有准确 `conversationId` 与 `turnId` 的 `[desktop-notifications] received turn-complete`。部分 Desktop 版本只记录接收完成，不会记录显示系统通知；两种记录对应同一个真实结束事件，不会重复生成完成提醒。
+- **取消超长启动推断**：`turn/start` 请求被接受，仅证明当时启动了轮次，不是实时执行状态。最多在与原有日志活动连续性相同的 **8 分钟无新活动宽限范围内**，才将来源状态未知暂时投影成「可能执行中」；旧启动记录仍保留最多 72 小时以保证新旧事件排序，但不会独立导致长期「执行中」误报。已经有可靠 JSONL 增长证据的任务，仍按原有扫描与活动延续判断，不会凭静默推断任务完成。
+- **新用户输入的优先级**：如来源自身的时间年龄和采集起始界限能够证明出现了晚于 Desktop 原生启动的新提交消息，先前启动事件不再把该轮重新判成执行中。适用于跨 SSH/WSL 时钟偏移，且不采用远程系统绝对时间进行比较。
+- **当前边界**：没有可信结束事件时，超出宽限后展示「状态未知」，**不是**「本轮完成」。Monitor 仍不接管私有 App Server；只有真实会话结束证据才能发完成通知。
+
 ## Codex Desktop 状态追踪边界与修复
 
 Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Monitor 默认读取的是只读 JSONL 与少量 SQLite 元数据，并没有订阅该 Desktop 进程的实时 JSON-RPC 事件。因此仅凭任务日志，不能承诺 100% 捕获运行中、等待审批或等待用户输入；单独连接新的 App Server 并不能观察 Desktop 私有服务里的活动线程。
@@ -205,7 +212,7 @@ Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Mon
 
 当 Desktop 日志确认该会话新的 `turn/start` 成功、且没有后续明确结束证据时，在有限时间窗口内显示“可能执行中”。相反，持久化的本轮结束事件如果更晚，仍优先判定为结束；日志不全时不根据静默倒推出完成。现在改为每 **4 秒**单独读取 Windows Desktop 的有限量日志摘要，以准确 UUID 补充**任意创建来源**（Desktop、VS Code 或 CLI）的已有本地、WSL、SSH 会话；不再因为一次新状态就重新扫描所有远程文件系统。GUI 日志里存在 `turn/start` 才能临时补足执行中的证据，更晚的完成事件会撤销它；来源元数据仍保持原始值，不假装创建来源等于当前执行客户端。Desktop 日志写入变化也会触发本地文件事件检查。远程会话只按准确 UUID 关联，不通过标题或工作目录猜测。会话详情的「状态判断依据」会标明是有匹配事件，还是日志缺失、格式不受支持、会话 ID 不匹配。
 
-**Monitor 重启后的 Desktop 状态回归修复：** Desktop GUI 已明确报告过的会话生命周期信号，会以最小字段集保存到 Electron 用户数据目录的 `desktop-runtime-evidence.json`（最多 200 条，只含 UUID、`turn-start-accepted` 或 `turn-displayed-complete`、事件时间和可选 turn UUID）。此前这部分状态只在内存中，一旦重启 Monitor，Desktop 的 `turn/start` 若已滚出最近 320 KiB 日志尾部，就失去依据。新版本会在重新启动时校验并加载最近 **45 分钟**的已保存事件；出现更晚的 Desktop 完成记录会覆盖旧开始。若旧 JSONL 结束事件没有有效时间戳，只有在来源文件最后写入时间**可以证明早于新的 Desktop 开始事件**时才判为“可能执行中”；时间来源不可信时仍保留原状态。所有这些记录都是只读观察的派生信息，不包含终端内容、任务文本、文件路径或账户凭证。
+**Monitor 重启后的 Desktop 状态回归修复：** Desktop GUI 已明确报告过的会话生命周期信号，会以最小字段集保存到 Electron 用户数据目录的 `desktop-runtime-evidence.json`（最多 200 条，只含 UUID、`turn-start-accepted` 或 `turn-displayed-complete`、事件时间和可选 turn UUID）。此前这部分状态只在内存中，一旦重启 Monitor，Desktop 的 `turn/start` 若已滚出最近 320 KiB 日志尾部，就失去依据。新版本会在重新启动时校验并加载最多 **72 小时**的已保存事件用于生命周期排序；但只有近 **8 分钟**内、没有明确终止证据的启动响应，才会临时补充「可能执行中」。出现更晚的 Desktop 完成记录会覆盖旧开始。若旧 JSONL 结束事件没有有效时间戳，只有在来源文件最后写入时间**可以证明早于新的 Desktop 开始事件**时才判为“可能执行中”；时间来源不可信时仍保留原状态。所有这些记录都是只读观察的派生信息，不包含终端内容、任务文本、文件路径或账户凭证。
 
 **能力边界：** Desktop 的私有 stdio App Server 仍未向 Monitor 开放可靠的只读状态订阅。本功能不保证捕获后台所有会话，更不保证有 `waitingOnApproval` / `waitingOnUserInput` 的完整实时状态，不能据此称“100% 追踪”。如果 Desktop 应用日志不记载某个轮次、从其它客户端发起任务、仅显示云端远程任务或日志与 JSONL 使用不同的会话 ID，当前仍可能未知。未验证前**不调用** `thread/resume`、`turn/start`、审批回答，也不会启动新服务去冒充 Desktop。
 

@@ -12,7 +12,7 @@ const make = (status: SessionRecord['status']): SessionRecord => ({
   status, statusReason: 'raw',
 });
 describe('provenance distinct from tentative activity', () => {
-  it('labels exact Desktop recent/historical starts without certifying process liveness', () => {
+  it('keeps historical Desktop starts as unknown while recent ones stay tentative', () => {
     const recent = make('unknown');
     const old = make('unknown');
     applyDesktopLogEvidence([recent], new Map([[ID, {
@@ -22,8 +22,9 @@ describe('provenance distinct from tentative activity', () => {
       threadId: ID, at: NOW - 20 * 60 * 60_000, type: 'turn-start-accepted',
     }]]), NOW);
     expect(recent).toMatchObject({ status: 'working', evidenceKind: 'recent-start' });
-    expect(old).toMatchObject({ status: 'working', evidenceKind: 'historical-start' });
-    expect(sessionEvidenceLabel(old)).toContain('未实时确认');
+    expect(old).toMatchObject({ status: 'unknown', statusReason: 'raw' });
+    expect(old.evidenceKind).toBeUndefined();
+    expect(sessionEvidenceLabel(old)).toContain('未确认');
   });
   it('treats source activity and retained silence separately', () => {
     const tracker = new SessionActivityTracker();

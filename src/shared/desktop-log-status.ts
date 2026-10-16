@@ -1,4 +1,5 @@
 import type { SessionRecord } from './types';
+import { SILENCE_GRACE_MS } from './activity-tracker';
 
 export type DesktopLogEvent = {
   threadId: string;
@@ -6,10 +7,14 @@ export type DesktopLogEvent = {
   type: 'turn-start-accepted' | 'turn-displayed-complete';
   turnId?: string;
 };
-// A turn may keep running for many hours without further Desktop lifecycle
-// messages. Retain its trusted start/end ordering for up to three days; never
-// treat age alone as a completion signal.
+// A turn may keep running for hours without a lifecycle log. Retain the
+// start/end ORDERING for up to three days, but an accepted turn/start alone
+// cannot be trusted as ongoing execution for that whole period.
 export const DESKTOP_LOG_EVENT_MAX_AGE_MS = 72 * 60 * 60_000;
+/** A single native start is bounded by the same silence grace as real JSONL
+ * activity. Long turns with fresh file evidence keep their own status.
+ */
+export const DESKTOP_START_STATUS_MAX_AGE_MS = SILENCE_GRACE_MS;
 // Only recent starts establish CURRENT Desktop ownership for deep links.
 const DESKTOP_ACTIVE_EVIDENCE_MS = 45 * 60_000;
 const FILE_FINISH_SAFETY_MS = 2_000;
@@ -19,7 +24,7 @@ const MAX_PERSISTED_EVENTS = 200;
 const MAX_PERSISTED_AGE_MS = DESKTOP_LOG_EVENT_MAX_AGE_MS;
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const START = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,9}Z\s+info\s+\[AppServerConnection\]\s+response_routed\b/;
-const END = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,9}Z\s+info\s+\[electron-message-handler\]\s+\[desktop-notifications\]\s+show turn-complete\b/;
+const END = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{1,9}Z\s+info\s+\[electron-message-handler\]\s+\[desktop-notifications\]\s+(?:received|show) turn-complete\b/;
 
 /** Read *only* field markers from a known Desktop log grammar. Do not log,
  * retain or return any unrecognized text, and never trust "unknown conversation"
@@ -46,6 +51,8 @@ export function parseDesktopLogEvent(line: string, now = Date.now()): DesktopLog
   }
   const turnId = field(line, 'turnId');
   if (!turnId || !UUID.test(turnId)) return null;
+  // Keep the persisted event type for backwards compatibility. "received"
+  // is valid terminal evidence even when no OS toast is shown.
   return { threadId: threadId.toLowerCase(), at, type: 'turn-displayed-complete',
     turnId: turnId.toLowerCase() };
 }
@@ -81,11 +88,11 @@ export function isActiveDesktopStart(
     now - event.at >= -5000 && now - event.at <= DESKTOP_ACTIVE_EVIDENCE_MS;
 }
 
-/** Supplement local Desktop metadata with exact GUI-owned turn/start events.
- * A start older than 45 minutes is an explicitly UNVERIFIED long turn: expose
- * it as "possibly running" until the bounded 72-hour evidence horizon, not as
- * current Desktop ownership. Never override explicit waiting, failure, abort or
- * a newer durable completion, and never claim definitive runtime state.
+/** Native turn/start acceptance is not a subscription to running state.
+ * For a short bounded grace period it can supplement ambiguous rollout
+ * metadata; an older start stays cached only for start/end ordering. Once
+ * stale, it must not turn "unknown" back into "working". Never override
+ * explicit terminal / waiting evidence or a definitely later user input.
  */
 export function applyDesktopLogEvidence(
   rows: SessionRecord[], latest: ReadonlyMap<string, DesktopLogEvent>, now = Date.now(),
@@ -93,6 +100,10 @@ export function applyDesktopLogEvidence(
    * source-relative age be compared with Windows native event timestamps.
    */
   sourceObservedAt = now,
+  /** Earliest local clock of the source scan, to conservatively bound a
+   * newer input when a slow SSH scan spans multiple seconds.
+   */
+  sourceCaptureStartedAt = sourceObservedAt,
 ): void {
   for (const row of rows) {
     // The recorded originator identifies who CREATED the thread, not who is
@@ -102,9 +113,16 @@ export function applyDesktopLogEvidence(
     if (row.isSubagent) continue;
     const event = latest.get(row.id.toLowerCase());
     if (!event || event.type !== 'turn-start-accepted' ||
-        now - event.at < -5000 || now - event.at > DESKTOP_LOG_EVENT_MAX_AGE_MS) continue;
+        now - event.at < -5000 || now - event.at > DESKTOP_START_STATUS_MAX_AGE_MS) continue;
     if (row.status === 'waiting' || row.status === 'failed' || row.status === 'interrupted' ||
         row.pendingQuestionToken) continue;
+    // Another user submission after the observed Desktop start invalidates
+    // that turn's liveness. Compare source-relative age with the EARLIEST scan
+    // boundary, not a remote host wall clock or the end of a slow SSH scan.
+    const inputAge = row.lastUserInputAgeAtSourceMs;
+    if (typeof inputAge === 'number' && Number.isFinite(inputAge) && inputAge >= 0 &&
+        Number.isFinite(sourceCaptureStartedAt) &&
+        sourceCaptureStartedAt - inputAge > event.at + FILE_FINISH_SAFETY_MS) continue;
     const completionAt = finishedAt(row.finishedToken);
     if (completionAt !== null && completionAt >= event.at - 2000) continue;
     // Older (sometimes truncated) rollout JSONL has turn_complete with NO
@@ -123,10 +141,10 @@ export function applyDesktopLogEvidence(
     if (row.status === 'working') continue; // Preserve existing, stronger evidence.
     row.status = 'working';
     row.finishedToken = null;
-    row.evidenceKind = isActiveDesktopStart(event, now) ? 'recent-start' : 'historical-start';
-    row.statusReason = isActiveDesktopStart(event, now)
-      ? 'Codex Desktop 自身日志确认本会话 turn/start 已被接受，尚未观察到匹配的结束信号；可能执行中（非实时订阅）'
-      : 'Codex Desktop 曾确认本会话 turn/start，但已超过实时启动证据窗口，尚未发现可靠结束事件；长期任务可能仍执行中（未实时确认）';
+    row.evidenceKind = 'recent-start';
+    row.statusReason =
+      'Codex Desktop 自身日志确认近期 turn/start 已被接受，尚未看到对应结束事件；仅临时推断可能执行中。' +
+      '若持续没有新的执行证据，将回退为状态未知（不是判定完成）';
   }
 }
 

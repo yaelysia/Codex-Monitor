@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseDesktopLogEvent, newestDesktopEvents, applyDesktopLogEvidence,
-  DesktopLogEventCache } from
+  DesktopLogEventCache, DESKTOP_START_STATUS_MAX_AGE_MS } from
   '../src/shared/desktop-log-status';
 import { findDesktopLogRoots, readDesktopLogSignals, inspectDesktopLogSignals } from '../electron/desktop-runtime-logs';
 import { DesktopLogFollower } from '../scripts/desktop-log-follower.mjs';
@@ -19,9 +19,9 @@ const accepted = (at: number, id = SESSION) =>
   time(at) + ' info [AppServerConnection] response_routed broadcastFallback=false ' +
     'conversationId=' + id + ' durationMs=10 errorCode=null ' +
     'method=turn/start originWebcontentsId=1 requestId=PRIVATE_REQUEST_ID';
-const completed = (at: number, id = SESSION) =>
+const completed = (at: number, id = SESSION, verb: 'show' | 'received' = 'show') =>
   time(at) + ' info [electron-message-handler] [desktop-notifications] ' +
-    'show turn-complete conversationId=' + id + ' turnId=' + TURN +
+    verb + ' turn-complete conversationId=' + id + ' turnId=' + TURN +
     ' rendererWindowAppearance=primary';
 const roots: string[] = [];
 const temp = () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-log-reader-')); roots.push(dir); return dir; };
@@ -66,6 +66,15 @@ describe('strict Windows Desktop lifecycle evidence', () => {
     expect(parseDesktopLogEvent(completed(-1), NOW)).toEqual({
       threadId: SESSION, at: NOW - 1000, turnId: TURN, type: 'turn-displayed-complete',
     });
+    // "received" is emitted by newer Desktop builds before or instead of an
+    // optional "show" toast. Both carry the exact thread and turn UUIDs.
+    expect(parseDesktopLogEvent(completed(-2, SESSION, 'received'), NOW))
+      .toMatchObject({ threadId: SESSION, at: NOW - 2000,
+        turnId: TURN, type: 'turn-displayed-complete' });
+    expect(parseDesktopLogEvent(completed(-1, SESSION, 'received')
+      .replace('turnId=' + TURN, 'turnId=invalid'), NOW)).toBeNull();
+    expect(parseDesktopLogEvent(completed(-1, SESSION, 'received')
+      .replace('[desktop-notifications]', '[unrelated-log]'), NOW)).toBeNull();
     expect(parseDesktopLogEvent(time(-1) + ' error [electron-message-handler] ' +
       'Received turn/completed for unknown conversation conversationId=' + SESSION, NOW))
       .toBeNull();
@@ -105,11 +114,60 @@ describe('strict Windows Desktop lifecycle evidence', () => {
     expect(stable.status).toBe('unknown');
     const longTurn = row('unknown');
     applyDesktopLogEvidence([longTurn], event, NOW + 50 * 60_000);
-    expect(longTurn.status).toBe('working');
-    expect(longTurn.statusReason).toContain('未实时确认');
+    // Historical start remains cached for ordering, not claimed as activity.
+    expect(longTurn.status).toBe('unknown');
     const stale = row('unknown');
     applyDesktopLogEvidence([stale], event, NOW + 73 * 60 * 60_000);
     expect(stale.status).toBe('unknown');
+  });
+});
+
+describe('Desktop native start trust and false-running regression', () => {
+  it('expires uncorroborated accepted starts but retains ordering metadata for late completions', () => {
+    const native = parseDesktopLogEvent(accepted(-10), NOW)!;
+    const cache = new DesktopLogEventCache();
+    const activeEvidence = cache.observe(new Map([[SESSION, native]]), NOW);
+    const initially = row('unknown');
+    applyDesktopLogEvidence([initially], activeEvidence, NOW);
+    expect(initially.status).toBe('working');
+    expect(initially.evidenceKind).toBe('recent-start');
+
+    const later = NOW + DESKTOP_START_STATUS_MAX_AGE_MS + 1;
+    const retained = cache.observe(new Map(), later);
+    expect(retained.get(SESSION)?.type).toBe('turn-start-accepted');
+    const uncertain = row('unknown');
+    applyDesktopLogEvidence([uncertain], retained, later);
+    expect(uncertain.status).toBe('unknown');
+
+    // A real native completion continues to override the old start even when
+    // that start was no longer eligible for active-state projection.
+    const done = parseDesktopLogEvent(completed(1, SESSION, 'received'), later)!;
+    const closed = cache.observe(new Map([[SESSION, done]]), later);
+    expect(closed.get(SESSION)?.type).toBe('turn-displayed-complete');
+    const noReactivation = row('unknown');
+    applyDesktopLogEvidence([noReactivation], closed, later);
+    expect(noReactivation.status).toBe('unknown');
+  });
+
+  it('does not replay old native liveness after a newer user input', () => {
+    const evidence = newestDesktopEvents([parseDesktopLogEvent(accepted(-20), NOW)!]);
+    const latestInput = row('unknown');
+    latestInput.lastUserInputAgeAtSourceMs = 1000;
+    applyDesktopLogEvidence([latestInput], evidence, NOW, NOW, NOW);
+    expect(latestInput.status).toBe('unknown');
+
+    const initialInput = row('unknown');
+    initialInput.lastUserInputAgeAtSourceMs = 30_000;
+    applyDesktopLogEvidence([initialInput], evidence, NOW, NOW, NOW);
+    expect(initialInput.status).toBe('working');
+
+    // Delayed SSH reads cannot turn an old input into an apparently newer one.
+    const slowRemote = row('unknown');
+    slowRemote.sourceId = 'ssh:box';
+    slowRemote.lastUserInputAgeAtSourceMs = 5000;
+    applyDesktopLogEvidence([slowRemote], evidence, NOW,
+      NOW, NOW - 90_000);
+    expect(slowRemote.status).toBe('working');
   });
 });
 
@@ -125,7 +183,7 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
     });
   });
 
-  it('recovers a 20-hour uncompleted GUI start on first Monitor scan', async () => {
+  it('retains a 20-hour start without claiming ongoing execution', async () => {
     const root = temp();
     write(root, [accepted(-20 * 3600)]);
     // Cold boot reads the historical first-party event without any in-memory
@@ -137,20 +195,33 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
     const longTurn = row('unknown');
     longTurn.updatedAt = NOW - 20 * 60 * 60_000;
     applyDesktopLogEvidence([longTurn], events, NOW);
-    expect(longTurn.status).toBe('working');
-    expect(longTurn.statusReason).toContain('未实时确认');
+    // Historical start remains cached for ordering, not claimed as activity.
+    expect(longTurn.status).toBe('unknown');
   });
 
   it('reads the actual local Desktop app log instead of a separate app server', async () => {
     const root = temp();
-    write(root, [accepted(-30), completed(-10), accepted(-5, OTHER)]);
+    write(root, [accepted(-30), completed(-12, SESSION, 'received'),
+      completed(-10), accepted(-5, OTHER)]);
     const map = await readDesktopLogSignals(NOW, root);
     expect(map.get(SESSION)?.type).toBe('turn-displayed-complete');
     expect(map.get(OTHER)?.type).toBe('turn-start-accepted');
     expect(JSON.stringify([...map.values()])).not.toMatch(/PRIVATE_REQUEST_ID|requestId/);
     const details = await inspectDesktopLogSignals(NOW, root);
     expect(details.logFilesRead).toBe(1);
-    expect(details.signalCount).toBe(3);
+    expect(details.signalCount).toBe(4);
+  });
+
+  it('accepts a received completion even if no show event was ever logged', async () => {
+    const root = temp();
+    write(root, [accepted(-25), completed(-4, SESSION, 'received')]);
+    const result = await readDesktopLogSignals(NOW, root);
+    expect(result.get(SESSION)?.type).toBe('turn-displayed-complete');
+    const restored = new DesktopLogEventCache();
+    const events = restored.observe(result, NOW);
+    const unknown = row('unknown');
+    applyDesktopLogEvidence([unknown], events, NOW);
+    expect(unknown.status).toBe('unknown');
   });
 
   it('finds MSIX virtualized Codex/Logs and ignores unrelated package paths', async () => {
@@ -323,7 +394,7 @@ describe('long running Desktop log rotation continuity', () => {
     const retained = memory.observe(new Map(), NOW + 18 * 60_000);
     const active = row('unknown');
     applyDesktopLogEvidence([active], retained, NOW + 18 * 60_000);
-    expect(active.status).toBe('working');
+    expect(active.status).toBe('unknown');
     // A real completion seen after the start must suppress stale liveness.
     const completedEvent = new Map([[SESSION, parseDesktopLogEvent(
       completed(-5), NOW)!]]);
@@ -398,8 +469,7 @@ describe('persisted Desktop lifecycle evidence normalization', () => {
     restored.restore(saved, NOW + 1000);
     const visible = row('unknown');
     applyDesktopLogEvidence([visible], restored.observe(new Map(), NOW + 1000), NOW + 1000);
-    expect(visible.status).toBe('working');
-    expect(visible.statusReason).toContain('未实时确认');
+    expect(visible.status).toBe('unknown');
   });
 
   it('prefers a later completion after restart and will not revive stale work', () => {
