@@ -143,7 +143,7 @@ export function applyDesktopLogEvidence(
     row.finishedToken = null;
     row.evidenceKind = 'recent-start';
     row.statusReason =
-      'Codex Desktop 日志确认近期 turn/start 已被接受，尚未看到对应结束事件；仅临时推断可能执行中。' +
+      'Codex Desktop 自身日志确认近期 turn/start 已被接受，尚未看到对应结束事件；仅临时推断可能执行中。' +
       '若持续没有新的执行证据，将回退为状态未知（不是判定完成）';
   }
 }
