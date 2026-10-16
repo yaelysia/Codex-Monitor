@@ -283,7 +283,7 @@ Codex 官方 TUI 提供 `codex://threads/<UUID>` 的「在 Desktop 中打开线�
 
 Codex VS Code 扩展的提问不能全部从磁盘得知。Codex 上游 `rollout/src/policy.rs` 明确将实时 `RequestUserInput`、`RequestPermissions`、执行/文件变更审批等事件视为**不落盘**；只观察 `~/.codex/sessions/*.jsonl` 时不能保证发现这些请求。不要把日志静默、普通疑问句或刚刚发送的模型文本猜成一个可交互的阻塞式提问。
 
-已落盘的结构化提问则继续支持，包括 `response_item.function_call(request_user_input)`，分页型 `event_msg.item_completed.AgentMessage` 以及传统 `response_item.agent_message`（`delivery:"async"` 和非空 `questions`）；通过 call ID 或消息 ID 去重，用户回复或工具响应后清除。为降低长会话中请求挤出 192 KiB 日志尾部的漏检，最近有写入、仍属执行中或刚结束的 VS Code 会话，会对最多 8 个会话做一次至多 2 MiB 的只读尾部核验；未落盘的请求仍然不可能凭此恢复，WSL/SSH 保留同样的边界。
+已落盘的结构化提问则继续支持，包括 `response_item.function_call(request_user_input)`，分页型 `event_msg.item_completed.AgentMessage`、传统 `event_msg.agent_message` 以及 `response_item.agent_message`（`delivery:"async"` 和非空 `questions`）；通过 call ID 或消息 ID 去重，用户回复或工具响应后清除。为降低长会话中请求挤出 192 KiB 日志尾部的漏检，最近有写入、仍属执行中或刚结束的 VS Code 会话，会对最多 8 个会话做一次至多 2 MiB 的只读尾部核验；未落盘的请求仍然不可能凭此恢复，WSL/SSH 保留同样的边界。
 
 **若 VS Code 中确实显示了需要回答的提问，但 Monitor 未提醒**，在提问尚未回答时，于相同的 `CODEX_HOME` 环境执行：
 
