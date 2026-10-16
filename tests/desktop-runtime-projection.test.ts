@@ -82,6 +82,23 @@ describe('end-to-end Desktop runtime evidence projection', () => {
     expect(state.sources[0]!.sessions[0]!.desktopRuntimeObserved).toBeUndefined();
   });
 
+  it('uses a newer received completion to retract a previously projected native start', async () => {
+    const cache = new DesktopLogEventCache();
+    const raw = snapshot(thread({ status: 'unknown' }));
+    const starting = await projectDesktopRuntime(raw, NOW, {
+      platform: 'win32', cache,
+      inspect: inspect(event('turn-start-accepted', NOW - 8000)),
+    });
+    expect(starting.sources[0]!.sessions[0]!.status).toBe('working');
+    const finished = await projectDesktopRuntime(raw, NOW + 1000, {
+      platform: 'win32', cache,
+      inspect: inspect(event('turn-displayed-complete', NOW - 1000)),
+    });
+    expect(finished.sources[0]!.sessions[0]!.status).toBe('unknown');
+    expect(finished.sources[0]!.sessions[0]!.desktopRuntimeObserved).toBeUndefined();
+    expect(cache.snapshot(NOW + 1000)[0]?.type).toBe('turn-displayed-complete');
+  });
+
   it('does not interpret historical Desktop completion as currently running client', async () => {
     const original = snapshot(thread({ status: 'unknown' }));
     const cache = new DesktopLogEventCache();

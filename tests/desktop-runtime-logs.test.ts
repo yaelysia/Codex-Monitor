@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseDesktopLogEvent, newestDesktopEvents, applyDesktopLogEvidence,
-  DesktopLogEventCache } from
+  DesktopLogEventCache, DESKTOP_START_STATUS_MAX_AGE_MS } from
   '../src/shared/desktop-log-status';
 import { findDesktopLogRoots, readDesktopLogSignals, inspectDesktopLogSignals } from '../electron/desktop-runtime-logs';
 import { DesktopLogFollower } from '../scripts/desktop-log-follower.mjs';
@@ -122,6 +122,55 @@ describe('strict Windows Desktop lifecycle evidence', () => {
   });
 });
 
+describe('Desktop native start trust and false-running regression', () => {
+  it('expires uncorroborated accepted starts but retains ordering metadata for late completions', () => {
+    const native = parseDesktopLogEvent(accepted(-10), NOW)!;
+    const cache = new DesktopLogEventCache();
+    const activeEvidence = cache.observe(new Map([[SESSION, native]]), NOW);
+    const initially = row('unknown');
+    applyDesktopLogEvidence([initially], activeEvidence, NOW);
+    expect(initially.status).toBe('working');
+    expect(initially.evidenceKind).toBe('recent-start');
+
+    const later = NOW + DESKTOP_START_STATUS_MAX_AGE_MS + 1;
+    const retained = cache.observe(new Map(), later);
+    expect(retained.get(SESSION)?.type).toBe('turn-start-accepted');
+    const uncertain = row('unknown');
+    applyDesktopLogEvidence([uncertain], retained, later);
+    expect(uncertain.status).toBe('unknown');
+
+    // A real native completion continues to override the old start even when
+    // that start was no longer eligible for active-state projection.
+    const done = parseDesktopLogEvent(completed(1, SESSION, 'received'), later)!;
+    const closed = cache.observe(new Map([[SESSION, done]]), later);
+    expect(closed.get(SESSION)?.type).toBe('turn-displayed-complete');
+    const noReactivation = row('unknown');
+    applyDesktopLogEvidence([noReactivation], closed, later);
+    expect(noReactivation.status).toBe('unknown');
+  });
+
+  it('does not replay old native liveness after a newer user input', () => {
+    const evidence = newestDesktopEvents([parseDesktopLogEvent(accepted(-20), NOW)!]);
+    const latestInput = row('unknown');
+    latestInput.lastUserInputAgeAtSourceMs = 1000;
+    applyDesktopLogEvidence([latestInput], evidence, NOW, NOW, NOW);
+    expect(latestInput.status).toBe('unknown');
+
+    const initialInput = row('unknown');
+    initialInput.lastUserInputAgeAtSourceMs = 30_000;
+    applyDesktopLogEvidence([initialInput], evidence, NOW, NOW, NOW);
+    expect(initialInput.status).toBe('working');
+
+    // Delayed SSH reads cannot turn an old input into an apparently newer one.
+    const slowRemote = row('unknown');
+    slowRemote.sourceId = 'ssh:box';
+    slowRemote.lastUserInputAgeAtSourceMs = 5000;
+    applyDesktopLogEvidence([slowRemote], evidence, NOW,
+      NOW, NOW - 90_000);
+    expect(slowRemote.status).toBe('working');
+  });
+});
+
 describe('Desktop log discovery including Windows MSIX virtualized LocalCache', () => {
   it('does not touch missing directories, and returns no made-up runtime evidence', async () => {
     const root = temp();
@@ -152,14 +201,15 @@ describe('Desktop log discovery including Windows MSIX virtualized LocalCache', 
 
   it('reads the actual local Desktop app log instead of a separate app server', async () => {
     const root = temp();
-    write(root, [accepted(-30), completed(-10), accepted(-5, OTHER)]);
+    write(root, [accepted(-30), completed(-12, SESSION, 'received'),
+      completed(-10), accepted(-5, OTHER)]);
     const map = await readDesktopLogSignals(NOW, root);
     expect(map.get(SESSION)?.type).toBe('turn-displayed-complete');
     expect(map.get(OTHER)?.type).toBe('turn-start-accepted');
     expect(JSON.stringify([...map.values()])).not.toMatch(/PRIVATE_REQUEST_ID|requestId/);
     const details = await inspectDesktopLogSignals(NOW, root);
     expect(details.logFilesRead).toBe(1);
-    expect(details.signalCount).toBe(3);
+    expect(details.signalCount).toBe(4);
   });
 
   it('accepts a received completion even if no show event was ever logged', async () => {

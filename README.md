@@ -189,6 +189,13 @@ npm run probe:app-server -- --duration 20 --thread-id "真实会话UUID" --show-
 
 运行 `npm run test:probe` 可以在不连接真实账号/会话的前提下，用模拟 App Server 验证 WebSocket/JSON-RPC、状态 flags、批准请求绝不代答等行为。**下一阶段**在独立测试服务上验证 `thread/resume` 的第二客户端订阅、审批请求分发与断线回退后，才考虑可选地接入正式 Monitor。不可用独立进程假装共享所有已有会话。
 
+## Desktop 历史启动状态误判修复（2026-10）
+
+- **补齐原生结束证据**：除了 `[desktop-notifications] show turn-complete`，只读解析器现在也识别带有准确 `conversationId` 与 `turnId` 的 `[desktop-notifications] received turn-complete`。部分 Desktop 版本只记录接收完成，不会记录显示系统通知；两种记录对应同一个真实结束事件，不会重复生成完成提醒。
+- **取消超长启动推断**：`turn/start` 请求被接受，仅证明当时启动了轮次，不是实时执行状态。最多在与原有日志活动连续性相同的 **8 分钟无新活动宽限范围内**，才将来源状态未知暂时投影成「可能执行中」；旧启动记录仍保留最多 72 小时以保证新旧事件排序，但不会独立导致长期「执行中」误报。已经有可靠 JSONL 增长证据的任务，仍按原有扫描与活动延续判断，不会凭静默推断任务完成。
+- **新用户输入的优先级**：如来源自身的时间年龄和采集起始界限能够证明出现了晚于 Desktop 原生启动的新提交消息，先前启动事件不再把该轮重新判成执行中。适用于跨 SSH/WSL 时钟偏移，且不采用远程系统绝对时间进行比较。
+- **当前边界**：没有可信结束事件时，超出宽限后展示「状态未知」，**不是**「本轮完成」。Monitor 仍不接管私有 App Server；只有真实会话结束证据才能发完成通知。
+
 ## Codex Desktop 状态追踪边界与修复
 
 Desktop 使用的 App Server 可能运行于**独立 stdio 进程**，现有 Monitor 默认读取的是只读 JSONL 与少量 SQLite 元数据，并没有订阅该 Desktop 进程的实时 JSON-RPC 事件。因此仅凭任务日志，不能承诺 100% 捕获运行中、等待审批或等待用户输入；单独连接新的 App Server 并不能观察 Desktop 私有服务里的活动线程。
