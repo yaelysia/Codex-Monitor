@@ -254,3 +254,15 @@ describe('renderer state revision regression guards',()=>{
     expect(dock).toContain('useMemo(() => recentParentCompletions(sessions, now), [sessions, now])');
   });
 });
+
+describe('automatic original window read integration', () => {
+  it('connects the native foreground event to authoritative per-session acknowledgement', () => {
+    const main=readFileSync(new URL('../electron/main.ts',import.meta.url),'utf8');
+    const tracker=readFileSync(new URL('../electron/window-tracking.ts',import.meta.url),'utf8');
+    expect(main).toContain('monitor?.unreadSessionKeys()');
+    expect(main).toContain('windowTracker?.isSessionForegroundForRead(key)');
+    expect(main).toContain('monitor?.acknowledgeSessionAlerts(key)');
+    expect(tracker).toContain('this.onForegroundObservation();');
+    expect(tracker).toContain('this.resolver.isSessionForegroundForRead(sessionKey, now)');
+  });
+});
