@@ -127,6 +127,8 @@ export class MonitorService {
     this.wakeTimer = null;
     this.pendingSources.clear();
     this.watchers.stop();
+    // Presentation gaps cannot be revalidated after the observer restarts.
+    this.runningContinuity.reset();
     this.persistAlerts();
     this.alertStore?.flush();
   }
