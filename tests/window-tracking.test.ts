@@ -261,3 +261,68 @@ describe('Desktop official deep-link navigation', () => {
     } finally { tracker.stop(); }
   });
 });
+
+describe('native foreground toast suppression through live tracker', () => {
+  it('does not suppress until a live bound foreground sample, nor during watcher downtime', () => {
+    const tracker = new AutoWindowTracker('win32');
+    const now = Date.now();
+    try {
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
+      tracker.start();
+      children.at(-1)!.stdout.emit('data', Buffer.from(sample(now - 1000)));
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
+      const snapshot: ScanResponse = {scannedAt:now,sources:[{
+        id:'local',kind:'local',label:'Windows',error:null,
+        capturedAt:now,captureStartedAt:now,
+        sessions:[{
+          key:sessionKey,id:sessionKey.slice(6),sourceId:'local',sourceLabel:'Windows',
+          status:'working',statusReason:'working',title:null,workspace:null,
+          updatedAt:now,startedAt:null,clientKind:'vscode',
+          lastUserInputAgeAtSourceMs:100,lastUserInputAtSourceMs:now-100,
+        }],
+      }]};
+      tracker.observeScan(snapshot);
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(true);
+      children.at(-1)!.emit('exit', 1);
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
+    } finally { tracker.stop(); }
+    expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
+  });
+
+  it('does not trust restored HWND bindings for popup suppression before a new input', () => {
+    const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codex-foreground-binding-'));
+    const now=Date.now();
+    const record={
+      version:1,bindings:[{
+        sessionKey,savedAt:now-2000,inputToken:now-2000,
+        window:{ at:now-2000,inputAt:now-2000,hwnd:'0x1357',pid:1357,
+          startedAt:1000,app:'vscode' },
+      }],
+    };
+    fs.writeFileSync(path.join(folder,'window-bindings.json'),JSON.stringify(record));
+    const tracker=new AutoWindowTracker('win32',folder);
+    try {
+      tracker.start();
+      children.at(-1)!.stdout.emit('data',Buffer.from(sample(now-1000)));
+      expect(tracker.status(sessionKey).ready).toBe(true);
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
+      const scan:ScanResponse={scannedAt:now,sources:[{
+        id:'local',label:'Windows',kind:'local',error:null,
+        capturedAt:now,captureStartedAt:now,
+        sessions:[{
+          key:sessionKey,id:sessionKey.slice(6),sourceId:'local',sourceLabel:'Windows',
+          status:'working',statusReason:'live',title:null,workspace:null,
+          updatedAt:now,startedAt:null,clientKind:'vscode',
+          lastUserInputAgeAtSourceMs:100,lastUserInputAtSourceMs:now-100,
+        }],
+      }]};
+      tracker.observeScan(scan);
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(true);
+    } finally { tracker.stop(); fs.rmSync(folder,{recursive:true,force:true}); }
+  });
+
+  it('does not suppress if native tracking is unavailable or disabled', () => {
+    const unsupported=new AutoWindowTracker('linux');
+    expect(unsupported.isSessionForeground(sessionKey)).toBe(false);
+  });
+});

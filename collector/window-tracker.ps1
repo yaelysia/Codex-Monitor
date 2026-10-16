@@ -131,7 +131,14 @@ namespace CodexMonitor {
           }
         } catch { /* Still emit an unknown transition, never reuse old focus. */ }
       }
-      if (periodic && app != "terminal") return;
+      // Terminal tab probes keep their existing 1.1s cadence. VS Code and
+      // Codex Desktop only emit a lightweight HWND/PID heartbeat at most once
+      // per five seconds; without it a foreground sample could be hours old.
+      // Never poll UI Automation for those apps or emit background "other"
+      // heartbeats. The WinEvent foreground hook still detects app switches.
+      if (periodic && app != "terminal" &&
+          (app == "other" || DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() -
+            Interlocked.Read(ref lastEmittedAt) < 5000)) return;
       // Immediate HWND sample is the primary reliable input. A slow/malformed
       // UIA provider must never prevent window evidence for ANY application.
       WriteSample(app, handle, pid, startedAt, tabHost, null, periodic);

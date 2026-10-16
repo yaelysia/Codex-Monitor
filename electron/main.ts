@@ -11,6 +11,7 @@ import { AutoWindowTracker } from './window-tracking';
 import { configureDesktopEvidenceStorage, flushDesktopEvidenceStorage } from './collector';
 import { windowWasActivated } from '../src/shared/window-navigation';
 import { sourceIdFromAlertKey } from '../src/shared/source-alert';
+import { shouldDisplayNativeAlert } from '../src/shared/foreground-notification';
 
 if (process.platform === 'win32' && process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX === '1') {
   app.commandLine.appendSwitch('disable-gpu-sandbox');
@@ -55,24 +56,30 @@ if (firstInstance) {
     windowTracker.start();
     monitor = new MonitorService(
       state => broadcast('monitor:state', state),
-      alert => showDesktopAlert(alert, key => {
-        // Source notifications have no Codex thread to focus.
-        const sourceId = sourceIdFromAlertKey(key);
-        if (sourceId) {
-          mainWindow?.show(monitor?.state().scan?.sources.some(src => src.id === sourceId)
-            ? key : undefined);
-          return;
-        }
-        if (!monitor || !windowTracker) { mainWindow?.show(key); return; }
-        // The notification itself acknowledged only its own alert on click.
-        // A partial result means the original window IS foreground; do not
-        // immediately cover it with Monitor merely because the tab is unknown.
-        const record = monitor.state().scan?.sources.flatMap(source => source.sessions)
-          .find(session => session.key === key);
-        void windowTracker.focusOriginalWindow(key, record).then(result => {
-          if (!windowWasActivated(result)) mainWindow?.show(key);
-        }).catch(() => mainWindow?.show(key));
-      }, id => { monitor?.acknowledge(id); }),
+      alert => {
+        // Only the EXACT foreground Codex session skips its OS popup. Inbox
+        // events remain unread and unrelated sessions/sources still notify.
+        if (!shouldDisplayNativeAlert(alert,
+          key => windowTracker?.isSessionForeground(key) ?? false)) return;
+        showDesktopAlert(alert, key => {
+          // Source notifications have no Codex thread to focus.
+          const sourceId = sourceIdFromAlertKey(key);
+          if (sourceId) {
+            mainWindow?.show(monitor?.state().scan?.sources.some(src => src.id === sourceId)
+              ? key : undefined);
+            return;
+          }
+          if (!monitor || !windowTracker) { mainWindow?.show(key); return; }
+          // The notification itself acknowledged only its own alert on click.
+          // A partial result means the original window IS foreground; do not
+          // immediately cover it with Monitor merely because the tab is unknown.
+          const record = monitor.state().scan?.sources.flatMap(source => source.sessions)
+            .find(session => session.key === key);
+          void windowTracker.focusOriginalWindow(key, record).then(result => {
+            if (!windowWasActivated(result)) mainWindow?.show(key);
+          }).catch(() => mainWindow?.show(key));
+        }, id => { monitor?.acknowledge(id); });
+      },
       snapshot => windowTracker?.observeScan(snapshot),
       process.platform, app.getPath('userData'),
     );
