@@ -36,13 +36,27 @@ function questionFromArguments(value: unknown): string | null {
   const questions = obj(parsed)?.questions;
   if (!Array.isArray(questions)) return null;
   const first = obj(questions[0]);
-  return safeText(first?.title) ?? safeText(first?.question) ?? safeText(first?.header);
+  return safeText(first?.question) ?? safeText(first?.title) ?? safeText(first?.header);
 }
 const tokenFor = (kind: string, id: string) => kind + ':' + id;
 
 /** Accepts bounded JSONL content. "clippedStart" drops its potentially partial first row. */
 export function detectPendingQuestionRows(rows: ReadonlyArray<Record<string, unknown>>): PendingQuestion {
   const pending = new Map<string, { text: string | null; blocking: boolean }>();
+  const addAsyncQuestion = (item: ObjectValue | null, timestamp: unknown): void => {
+    if (!item || !['AgentMessage', 'agentMessage', 'agent_message'].includes(String(item.type)) ||
+        item.delivery !== 'async' ||
+        !Array.isArray(item.questions) || !item.questions.length) return;
+    // Legacy response_item AgentMessage can carry the same structured async
+    // questions as paginated event_msg.item_completed. Prefer the item ID,
+    // then a validated stable persisted row timestamp if the item has no ID.
+    const stamp = typeof timestamp === 'string' && Number.isFinite(Date.parse(timestamp))
+      ? timestamp : null;
+    const id = validId(item.id) ?? stamp;
+    if (id) pending.set(tokenFor('async', id), {
+      text: questionFromArguments({ questions: item.questions }), blocking: false,
+    });
+  };
   for (const row of rows) {
     const payload = obj(row.payload);
     if (!payload) continue;
@@ -59,6 +73,8 @@ export function detectPendingQuestionRows(rows: ReadonlyArray<Record<string, unk
             blocking: true,
           });
         }
+      } else if (kind === 'agent_message' || kind === 'agentMessage' || kind === 'AgentMessage') {
+        addAsyncQuestion(payload, row.timestamp);
       } else if (kind === 'function_call_output' || kind === 'custom_tool_call_output') {
         const call = validId(payload.call_id);
         if (call) pending.delete(tokenFor('blocking', call));
@@ -76,13 +92,7 @@ export function detectPendingQuestionRows(rows: ReadonlyArray<Record<string, unk
       if (item?.type === 'UserMessage' || item?.type === 'userMessage') {
         for (const [key, value] of pending) if (!value.blocking) pending.delete(key);
       }
-      if ((item?.type === 'AgentMessage' || item?.type === 'agentMessage') &&
-          item.delivery === 'async' && Array.isArray(item.questions) && item.questions.length) {
-        const id = validId(item.id);
-        if (id) pending.set(tokenFor('async', id), {
-          text: questionFromArguments({ questions: item.questions }), blocking: false,
-        });
-      }
+      addAsyncQuestion(item, row.timestamp);
     } else if (kind === 'turn_complete' || kind === 'task_complete' ||
       kind === 'turn_aborted' || kind === 'turn_started' || kind === 'task_started') {
       // A completed/interrupted or new turn cannot still be blocked on the old

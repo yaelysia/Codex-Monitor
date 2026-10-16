@@ -293,8 +293,8 @@ def question_from_arguments(value):
     if not isinstance(questions, list) or not questions or not isinstance(questions[0], dict):
         return None
     first = questions[0]
-    return (limited_question_text(first.get('title')) or
-            limited_question_text(first.get('question')) or
+    return (limited_question_text(first.get('question')) or
+            limited_question_text(first.get('title')) or
             limited_question_text(first.get('header')))
 
 
@@ -310,6 +310,24 @@ def detect_pending_question_records(records):
     a matching function_call_output, or a later turn boundary.
     """
     pending = {}
+    def add_async(item, timestamp):
+        if (not isinstance(item, dict) or
+                item.get('type') not in ('AgentMessage', 'agentMessage', 'agent_message') or
+                item.get('delivery') != 'async' or
+                not isinstance(item.get('questions'), list) or not item['questions']):
+            return
+        marker = safe_question_id(item.get('id'))
+        if not marker and isinstance(timestamp, str):
+            try:
+                datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                marker = safe_question_id(timestamp)
+            except ValueError:
+                pass
+        if marker:
+            pending['async:' + marker] = {
+                'text': question_from_arguments({'questions': item['questions']}),
+                'blocking': False,
+            }
     for row in records:
         payload = row.get('payload')
         if not isinstance(payload, dict):
@@ -326,6 +344,8 @@ def detect_pending_question_records(records):
                                 ('Codex 请求权限确认' if name == 'request_permissions' else None),
                         'blocking': True,
                     }
+            elif kind in ('agent_message', 'agentMessage', 'AgentMessage'):
+                add_async(payload, row.get('timestamp'))
             elif kind in ('function_call_output', 'custom_tool_call_output'):
                 call_id = safe_question_id(payload.get('call_id'))
                 if call_id:
@@ -344,16 +364,7 @@ def detect_pending_question_records(records):
                 continue
             if item.get('type') in ('UserMessage', 'userMessage'):
                 pending = {k: v for k, v in pending.items() if v['blocking']}
-            questions = item.get('questions')
-            if (item.get('type') in ('AgentMessage', 'agentMessage') and
-                    item.get('delivery') == 'async' and
-                    isinstance(questions, list) and questions):
-                call_id = safe_question_id(item.get('id'))
-                if call_id:
-                    pending['async:' + call_id] = {
-                        'text': question_from_arguments({'questions': questions}),
-                        'blocking': False,
-                    }
+            add_async(item, row.get('timestamp'))
         elif kind in ('turn_complete', 'task_complete', 'turn_aborted',
                       'turn_started', 'task_started'):
             pending = {k: v for k, v in pending.items() if not v['blocking']}

@@ -14,6 +14,8 @@ const TAIL_BYTES = 192 * 1024;
 // Avoid rescanning full transcripts: only read further for recently modified,
 // still-unknown sessions whose lifecycle markers left the short tail.
 const EXTENDED_TAIL_BYTES = 8 * 1024 * 1024;
+const VSCODE_QUESTION_TAIL_BYTES = 2 * 1024 * 1024;
+const MAX_VSCODE_QUESTION_LOOKBACKS = 8;
 const RECENT_MS = 5 * 60_000;
 const MAX_RETURNED = 200;
 const cache = new LocalScanCache();
@@ -49,8 +51,9 @@ async function readEdges(file: string, size: number): Promise<{ head: string; ta
   } finally { await handle.close(); }
 }
 
-async function readExtendedTail(file: string, size: number): Promise<{ text: string; clipped: boolean }> {
-  const length = Math.min(size, EXTENDED_TAIL_BYTES);
+async function readExtendedTail(file: string, size: number,
+  budget = EXTENDED_TAIL_BYTES): Promise<{ text: string; clipped: boolean }> {
+  const length = Math.min(size, budget);
   const handle = await fs.open(file, 'r');
   try {
     const buffer = Buffer.alloc(length);
@@ -88,6 +91,7 @@ export async function scanLocal(root: string, sourceId = 'local',
   });
   const selected = [...newest, ...extras.filter((row): row is NonNullable<typeof row> => !!row)];
   const cacheBefore = cache.stats();
+  let vscodeQuestionLookbacks = 0;
   const sessions = await mapLimited(selected, 12, async ({ file, mtime, size }): Promise<SessionRecord | null> => {
     try {
       const stored = cache.get(file, mtime, size, now);
@@ -100,8 +104,20 @@ export async function scanLocal(root: string, sourceId = 'local',
       let inputTail = tail;
       let inputTailClipped = clipped;
       let state = inferStatus(tail, mtime, now, clipped);
-      if (state.status === 'unknown' && clipped && now - mtime <= RECENT_MS) {
-        const extended = await readExtendedTail(file, size);
+      const newlyWritten = now - mtime >= -10_000 && now - mtime <= RECENT_MS;
+      const fullRecovery = state.status === 'unknown' && clipped && newlyWritten;
+      // A VS Code request may be buried behind >192 KiB of tool output while
+      // the short tail still says "working" or "finished". Limit deeper reads
+      // to eight recently modified VS Code rows per scan, and reuse the parse
+      // cache on unchanged files.
+      const vscodeRecovery = !fullRecovery && clientKind === 'vscode' && clipped &&
+        newlyWritten && !state.pendingQuestionToken &&
+        (state.status === 'working' || state.status === 'finished') &&
+        vscodeQuestionLookbacks < MAX_VSCODE_QUESTION_LOOKBACKS;
+      if (vscodeRecovery) vscodeQuestionLookbacks++;
+      if (fullRecovery || vscodeRecovery) {
+        const extended = await readExtendedTail(file, size,
+          fullRecovery ? EXTENDED_TAIL_BYTES : VSCODE_QUESTION_TAIL_BYTES);
         state = inferStatus(extended.text, mtime, now, extended.clipped);
         inputTail = extended.text;
         inputTailClipped = extended.clipped;
