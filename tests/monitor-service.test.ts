@@ -696,10 +696,10 @@ describe('running indicator does not blink on incomplete short scans',()=>{
     const finished={...session('p','finished',NOW+12_000),
       rolloutPath:started.rolloutPath,finishedToken:'finish|p'};
     vi.mocked(collect)
-      .mockResolvedValueOnce(snapshot(NOW,[source('local',[started])]))
-      .mockResolvedValueOnce(snapshot(NOW+3000,[source('local',[uncertain])]))
-      .mockResolvedValueOnce(snapshot(NOW+6000,[source('local',[uncertain])]))
-      .mockResolvedValueOnce(snapshot(NOW+12_000,[source('local',[finished])]));
+      .mockResolvedValueOnce(snapshot(NOW,[source('ssh:one',[started])]))
+      .mockResolvedValueOnce(snapshot(NOW+3000,[source('ssh:one',[uncertain])]))
+      .mockResolvedValueOnce(snapshot(NOW+6000,[source('ssh:one',[uncertain])]))
+      .mockResolvedValueOnce(snapshot(NOW+12_000,[source('ssh:one',[finished])]));
     const delivered:MonitorAlert[]=[];
     service=new MonitorService(()=>{},alert=>delivered.push(alert));
     await service.refresh(true);

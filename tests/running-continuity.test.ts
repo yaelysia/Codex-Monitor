@@ -70,11 +70,11 @@ describe('bounded continuity for transient missing activity',()=>{
   it('never treats pending async questions or terminal markers masked by unknown as running',()=>{
     const tracker=new RunningContinuity();
     const working=scan(NOW,[row()]);
-    const blocked=scan(NOW+3000,[row('unknown',{
+    const blocked=scan(NOW+3000,[row('unknown','local:long-turn',{
       pendingQuestionToken:'async:question-one',
     })]);
     expect(keyStatus(tracker.project(working,blocked,NOW+3000))).toBe('unknown');
-    const failed=scan(NOW+5000,[row('unknown',{
+    const failed=scan(NOW+5000,[row('unknown','local:long-turn',{
       failedToken:'event:error',
     })]);
     expect(keyStatus(tracker.project(working,failed,NOW+5000))).toBe('unknown');
