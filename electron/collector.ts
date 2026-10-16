@@ -298,6 +298,13 @@ export async function projectDesktopRuntime(
     ...snapshot,
     sources: snapshot.sources.map(source => {
       if (source.error) return source;
+      // Most CLI/WSL/SSH sessions have no native Desktop evidence.
+      // Preserve their source/session references instead of cloning hundreds
+      // of rows during every four-second native-log audit.
+      const needsProjection = source.sessions.some(session => !session.isSubagent &&
+        (evidence.has(session.id.toLowerCase()) ||
+          (session.clientKind === 'desktop' && session.status === 'unknown')));
+      if (!needsProjection) return source;
       const sessions = source.sessions.map(session => ({ ...session }));
       applyDesktopLogEvidence(sessions, evidence, now,
         source.capturedAt ?? snapshot.scannedAt,
