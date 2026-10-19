@@ -215,10 +215,13 @@ export class NativeMonitor {
             if (!row) { unsupported++; this.drop(slot, target.key); continue; }
             if (row.state === 'notLoaded' || row.isSubagent) { unavailable++; this.drop(slot, target.key); continue; }
             const old = slot.samples.get(target.key), prior = slot.previous.get(target.key);
-            // Do not publish a pending transition superseded by a newer file write.
-            if (prior && isNativeWaiting(row) && !isNativeWaiting(prior) &&
-                (latest.changedAt == null || latest.changedAt <= at)) waiting.push(target.key);
-            slot.previous.set(target.key, { state: row.state, flags: row.flags });
+            // An observation older than a concurrent file write cannot advance
+            // the alert baseline either: the next valid read must still be
+            // able to report this newly pending state.
+            if (latest.changedAt == null || latest.changedAt <= at) {
+              if (prior && isNativeWaiting(row) && !isNativeWaiting(prior)) waiting.push(target.key);
+              slot.previous.set(target.key, { state: row.state, flags: row.flags });
+            }
             if (signature(old) !== signature(row) || (old && latest.changedAt != null &&
                 old.at < latest.changedAt && at >= latest.changedAt)) this.revision++;
             slot.samples.set(target.key, { ...row, key: target.key, sourceId: slot.config.sourceId, at });
