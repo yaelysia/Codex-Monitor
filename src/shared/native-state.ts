@@ -17,6 +17,8 @@ export interface NativeHealth {
   sourceId: string; transport: NativeConnection['transport']; state: NativeHealthState;
   reason: NativeHealthReason; loaded: number; matched: number; covered: number;
   listComplete: boolean; lastSuccessAt: number | null; retries: number; ignoredRequests: number;
+  /** Cumulative metadata reads and matched passive hint events (no message bodies). */
+  readRequests?: number; passiveHints?: number;
 }
 export const NATIVE_SAMPLE_TTL_MS = 15_000;
 export const MAX_NATIVE_CONNECTIONS = 8;

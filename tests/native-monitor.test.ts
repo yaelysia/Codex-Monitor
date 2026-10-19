@@ -160,3 +160,114 @@ describe('optional existing-server native monitor', () => {
     expect(JSON.stringify(run.native.health())).not.toContain('SECRET');
   });
 });
+
+
+describe('adaptive read budget and optional passive wake hints', () => {
+  it('reduces unchanged idle reads fourfold without extending the 15 s evidence lifetime', async () => {
+    const client = new Client(); client.status = { type: 'idle' };
+    const run = setup(client);
+    await vi.advanceTimersByTimeAsync(0);
+    const count = () => client.request.mock.calls.filter(([method]) => method === 'thread/read').length;
+    expect(count()).toBe(1);
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(count()).toBe(1);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(count()).toBe(2);
+    expect(run.native.health()[0]).toMatchObject({ readRequests: 2 });
+    // An artificial stale sample is not kept alive merely because its last
+    // read was quiet; project() still uses the existing TTL.
+    expect(run.native.project(run.scan, Date.now() + 15001)).toBe(run.scan);
+  });
+
+  it('keeps active/waiting reads at three seconds and slows idle loaded-list discovery', async () => {
+    const client = new Client();
+    const run = setup(client); await vi.advanceTimersByTimeAsync(9000);
+    expect(client.request.mock.calls.filter(([method]) => method === 'thread/read')).toHaveLength(4);
+    expect(client.request.mock.calls.filter(([method]) => method === 'thread/loaded/list')).toHaveLength(1);
+    run.native.stop(); native = undefined;
+
+    const quiet = new Client(); quiet.status = { type: 'idle' };
+    setup(quiet); await vi.advanceTimersByTimeAsync(30_000);
+    expect(quiet.request.mock.calls.filter(([method]) => method === 'thread/loaded/list')).toHaveLength(2);
+    expect(quiet.request.mock.calls.filter(([method]) => method === 'thread/read')).toHaveLength(3);
+  });
+
+  it('gives active threads the fast lane without rereading idle neighbors each tick', async () => {
+    const client = new Client();
+    client.ids = [uuid(0), uuid(1)];
+    const old = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === 'thread/read') return {
+        thread: { id: params?.threadId, status: params?.threadId === uuid(0)
+          ? { type: 'active', activeFlags: [] } : { type: 'idle' } },
+      };
+      return old(method, params);
+    });
+    setup(client, snapshot(2)); await vi.advanceTimersByTimeAsync(9000);
+    const ids = client.request.mock.calls.filter(([method]) => method === 'thread/read')
+      .map(([, params]) => params?.threadId);
+    expect(ids.filter(id => id === uuid(0))).toHaveLength(4);
+    expect(ids.filter(id => id === uuid(1))).toHaveLength(1);
+  });
+
+  it('treats exact-source passive status/turn hints only as an early read trigger', async () => {
+    const client = new Client(), changed = vi.fn();
+    let emit = (_hint: { method?: unknown; threadId?: unknown; serverRequestIgnored?: unknown }) => {};
+    const factory = vi.fn((_endpoint: unknown, onEvent: typeof emit) => {
+      emit = onEvent; return client;
+    });
+    native = new NativeMonitor('/home/test/.codex', changed, factory);
+    const scan = snapshot(); native.configure([config]); native.setTargets(scan); native.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.project(scan)?.sources[0]?.sessions[0]?.status).toBe('working');
+    client.status = { type: 'active', activeFlags: ['waitingOnUserInput'] };
+
+    // The event itself never becomes authority (the read has not happened).
+    emit({ method: 'thread/status/changed', threadId: uuid(0) });
+    expect(native.project(scan)?.sources[0]?.sessions[0]?.status).toBe('working');
+    await vi.advanceTimersByTimeAsync(149);
+    expect(native.project(scan)?.sources[0]?.sessions[0]?.status).toBe('working');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(native.project(scan)?.sources[0]?.sessions[0]?.status).toBe('waiting');
+    expect(changed.mock.calls.flatMap(([keys]) => keys)).toEqual(['local:' + uuid(0)]);
+    expect(native.health()[0]).toMatchObject({ readRequests: 2, passiveHints: 1 });
+    expect(client.request.mock.calls.every(([method]) =>
+      method === 'thread/read' || method === 'thread/loaded/list')).toBe(true);
+  });
+
+  it('ignores unrelated, malformed, server-request and old-generation hints', async () => {
+    const client = new Client(), changed = vi.fn();
+    let emit = (_hint: { method?: unknown; threadId?: unknown; serverRequestIgnored?: unknown }) => {};
+    const factory = vi.fn((_endpoint: unknown, onEvent: typeof emit) => {
+      emit = onEvent; return client;
+    });
+    native = new NativeMonitor('/home/test/.codex', changed, factory);
+    native.configure([config]); native.setTargets(snapshot()); native.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const before = client.request.mock.calls.length;
+    emit({ method: 'thread/status/changed', threadId: uuid(999) });
+    emit({ method: 'item/tool/requestUserInput', threadId: uuid(0), serverRequestIgnored: true });
+    emit({ method: 'thread/status/changed', threadId: 'BAD' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(client.request.mock.calls.length).toBe(before);
+    expect(native.health()[0]?.passiveHints).toBe(0);
+    native.configure([]);
+    emit({ method: 'thread/status/changed', threadId: uuid(0) });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(client.request.mock.calls.length).toBe(before);
+  });
+
+  it('wakes for a new filesystem observation instead of waiting for the idle timer', async () => {
+    const client = new Client(); client.status = { type: 'idle' };
+    const run = setup(client); await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    client.status = { type: 'active', activeFlags: [] };
+    const changed = snapshot();
+    changed.sources[0]!.capturedAt = Date.now();
+    changed.sources[0]!.sessions[0]!.ageAtSourceMs = 0;
+    run.native.setTargets(changed);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(client.request.mock.calls.filter(([method]) => method === 'thread/read')).toHaveLength(2);
+    expect(run.native.project(changed)?.sources[0]?.sessions[0]?.status).toBe('working');
+  });
+});

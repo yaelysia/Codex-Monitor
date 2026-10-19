@@ -116,7 +116,7 @@ export default function DiagnosticsApp() {
         {!report?.native.length && <p>尚未启用原生接入。现有日志监控保持不变，可在「原生状态接入」中配置。</p>}
         {report?.native.map(row => <article className="health-row" key={row.source}>
           <div><b>{row.source} · {row.transport}</b><p>{REASON[row.reason]}</p></div>
-          <div>已加载 {row.loaded} · 匹配 {row.matched} · 有效证据 {row.covered}<p>最近成功 {time(row.lastSuccessAt)} · 重试 {row.retries} · 未代答请求 {row.ignoredRequests}</p></div>
+          <div>已加载 {row.loaded} · 匹配 {row.matched} · 有效证据 {row.covered}<p>最近成功 {time(row.lastSuccessAt)} · 重试 {row.retries} · 未代答请求 {row.ignoredRequests} · 状态读取 {row.readRequests ?? 0} · 被动唤醒 {row.passiveHints ?? 0}</p></div>
         </article>)}
       </section>
       <aside className="help">导出只含时间、计数、状态和本次运行的匿名编号。不含对话、标题、工作区、连接地址、原始错误、窗口句柄或进程 ID。未自动上传任何报告。</aside>
