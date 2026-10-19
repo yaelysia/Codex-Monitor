@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { localScanCacheStats, scanLocal } from '../electron/local';
 import { LocalScanCache } from '../src/shared/local-scan-cache';
+import { AutoWindowResolver } from '../src/shared/auto-window-binding';
 import type { SessionRecord } from '../src/shared/types';
 
 const created: string[] = [];
@@ -131,6 +132,36 @@ describe('local cache preserves original user input timing across unchanged roll
     };
     cache.put('missing',1000,400,source);
     expect(cache.get('missing',1000,400,3000)?.lastUserInputAgeAtSourceMs).toBeNull();
+  });
+});
+
+describe('cached input timestamp must not falsely rebind an old VS Code message',()=>{
+  it('refuses a stale user message even if a different VS Code window is now foreground',()=>{
+    const cache=new LocalScanCache();
+    const lastInput=1_800_000_000_000;
+    const lastModified=lastInput+1000;
+    const now=lastInput+100_000;
+    const snapshot:SessionRecord={
+      key:'local:old-thread',id:'old-thread',sourceId:'local',sourceLabel:'Windows',
+      title:'existing',workspace:null,clientKind:'vscode',
+      status:'working',statusReason:'still running',
+      updatedAt:lastModified,startedAt:null,
+      lastUserInputAtSourceMs:lastInput,lastUserInputAgeAtSourceMs:1000,
+    };
+    cache.put('/cached-rollout',lastModified,900,snapshot);
+    const row=cache.get('/cached-rollout',lastModified,900,now)!;
+    expect(row.lastUserInputAgeAtSourceMs).toBe(100_000);
+    const resolver=new AutoWindowResolver();
+    resolver.observeFocus({
+      at:now-1000,app:'vscode',hwnd:'0x1234',pid:1234,startedAt:9000,
+    });
+    resolver.observeScan({scannedAt:now,sources:[{
+      id:'local',label:'Windows',kind:'local',
+      error:null,
+      capturedAt:now,captureStartedAt:now,sessions:[row],
+    }]},now);
+    expect(resolver.get(row.key)).toBeNull();
+    expect(resolver.associationReason(row.key,now)).toBe('input-outdated');
   });
 });
 
