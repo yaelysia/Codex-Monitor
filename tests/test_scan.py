@@ -29,8 +29,36 @@ class TestLinuxCollector(unittest.TestCase):
             'type': 'session_meta', 'payload': {'originator': 'Codex Desktop'}})),
             'desktop')
         self.assertEqual(scanner.client_kind_from_header(json.dumps({
-            'type': 'session_meta', 'payload': {'source': 'vscode'}})), 'unknown')
+            'type': 'session_meta', 'payload': {'source': 'vscode'}})), 'vscode')
+        self.assertEqual(scanner.client_kind_from_header(json.dumps({
+            'type':'session_meta','payload':{'source':'cli'}})), 'terminal')
+        self.assertEqual(scanner.client_kind_from_header(json.dumps({
+            'type':'session_meta','payload':{
+                'originator':'codex_desktop','source':'vscode'}})), 'desktop')
 
+
+    def test_canonical_source_metadata_recovers_vscode_without_originator(self):
+        base = {'type':'session_meta','payload':{
+            'id':'019a1000-0000-7000-8000-222222222222',
+            'source':'vscode', 'originator':None}}
+        head=json.dumps(base)
+        now=int(datetime.fromisoformat('2026-10-12T09:00:02+00:00').timestamp()*1000)
+        tail=json.dumps({'type':'event_msg','timestamp':'2026-10-12T09:00:00Z',
+                         'payload':{'type':'user_message','message':'PRIVATE_CONTENT'}})
+        result=scanner.details(head,tail,'rollout-vscode.jsonl',False,now-1000,now)
+        self.assertEqual(result['clientKind'],'vscode')
+        self.assertEqual(result['lastUserInputAgeAtSourceMs'],2000)
+        self.assertNotIn('PRIVATE_CONTENT',json.dumps(result))
+
+        long_head=json.dumps({'type':'session_meta','payload':{
+            'source':'vscode','base_instructions':'X'*160000}})[:128*1024]
+        self.assertEqual(scanner.client_kind_from_header(long_head),'vscode')
+        self.assertEqual(scanner.client_kind_from_header(json.dumps({
+            'type':'session_meta','payload':{
+                'base_instructions':'source vscode', 'cwd':'/project'}})),'unknown')
+        self.assertEqual(scanner.client_kind_from_header(json.dumps({
+            'type':'session_meta','payload':{
+                'source':{'subagent':'review'},'originator':None}})),'unknown')
 
     def test_failed_turn_history_survives_new_turns(self):
         now = 1_800_000_000_000

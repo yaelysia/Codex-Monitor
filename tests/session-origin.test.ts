@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { classifySessionOrigin, extractSessionOrigin } from '../src/shared/session-origin';
+import { classifySessionOrigin, extractSessionOrigin,
+  classifyClientKind, extractSessionClientKind } from '../src/shared/session-origin';
 
 const PARENT = '00000000-0000-4000-8000-000000000001';
 const CHILD = '00000000-0000-4000-8000-000000000002';
@@ -59,5 +60,27 @@ describe('Codex session origin', () => {
   it('does not mark regular forks as subagents', () => {
     const fork = meta({ id: CHILD, session_id: CHILD, source: 'vscode', forked_from_id: PARENT });
     expect(extractSessionOrigin(fork).isSubagent).toBe(false);
+  });
+});
+
+describe('canonical Codex session source used only when originator is unavailable',()=>{
+  it('identifies VS Code and CLI from explicit canonical source, without guessing process by cwd',()=>{
+    expect(extractSessionClientKind(meta({id:PARENT,source:'vscode',originator:null})))
+      .toBe('vscode');
+    expect(extractSessionClientKind(meta({id:PARENT,source:'cli'}))).toBe('terminal');
+    expect(classifyClientKind('codex_desktop','vscode')).toBe('desktop');
+    expect(classifyClientKind('codex_cli_rs','vscode')).toBe('terminal');
+    expect(classifyClientKind(null,{subagent:'review'})).toBe('unknown');
+    expect(classifyClientKind(null,'exec')).toBe('unknown');
+    expect(classifyClientKind(null,'appServer')).toBe('unknown');
+  });
+
+  it('safely handles an oversized session_meta while extracting source before base_instructions',()=>{
+    const head=meta({id:PARENT,source:'vscode',base_instructions:'PRIVATE_PROMPT'.repeat(20_000)})
+      .slice(0,128*1024);
+    expect(extractSessionClientKind(head)).toBe('vscode');
+    expect(extractSessionClientKind(meta({
+      id:PARENT,base_instructions:'{ "source": "vscode" }',
+    }).slice(0,128*1024))).toBe('unknown');
   });
 });
