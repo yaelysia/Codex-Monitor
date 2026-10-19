@@ -14,11 +14,9 @@ import { sourceIdFromAlertKey } from '../src/shared/source-alert';
 import { shouldDisplayNativeAlert } from '../src/shared/foreground-notification';
 import { DiagnosticsWindowController } from './diagnostics-window';
 import { registerDiagnosticsIpc } from './diagnostics-ipc';
+import { configureGpuStartup } from '../scripts/runtime/gpu-startup.mjs';
 
-if (process.platform === 'win32' && process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX === '1') {
-  app.commandLine.appendSwitch('disable-gpu-sandbox');
-  console.warn('[Codex Monitor] GPU sandbox disabled by CODEX_MONITOR_DISABLE_GPU_SANDBOX=1');
-}
+const gpuStartup = configureGpuStartup(app);
 if (process.platform === 'win32') app.setAppUserModelId('dev.yaelysia.codex-monitor');
 
 // Only one resident monitor may own watchers and desktop notifications.
@@ -41,6 +39,13 @@ function broadcast(channel: string, state: MonitorState | FloatingWindowState): 
 }
 
 if (firstInstance) {
+  let gpuFailureReported = false;
+  app.on('child-process-gone', (_event, details) => {
+    if (details.type !== 'GPU' || details.reason === 'clean-exit' || gpuFailureReported) return;
+    gpuFailureReported = true;
+    console.error(`[Codex Monitor] GPU child failure: reason=${details.reason}, exitCode=${details.exitCode}, mode=${gpuStartup.mode}. ` +
+      'See docs/windows-gpu-startup.md; use npm run gpu:status to check the saved startup mode.');
+  });
   app.on('second-instance', () => mainWindow?.show());
   app.whenReady().then(() => {
     resident = new ResidentStore(app.getPath('userData'));

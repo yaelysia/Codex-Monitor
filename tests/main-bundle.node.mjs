@@ -9,6 +9,7 @@ import { runInThisContext } from 'node:vm';
 import test from 'node:test';
 import { resolveConfig } from 'electron-vite';
 import { build as viteBuild } from 'vite';
+import { saveGpuMode } from '../scripts/runtime/gpu-startup.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -18,17 +19,27 @@ const manifest = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf
  * the instance lock avoids opening windows, reading user data or starting
  * collectors. Every non-Electron import must resolve from the isolated app.
  */
-async function loadMain(entry) {
+async function loadMain(entry, appData, expectedMode = 'default') {
   const runtimeRequire = createRequire(entry);
   for (const name of ['bufferutil', 'utf-8-validate']) {
     assert.throws(() => runtimeRequire.resolve(name), { code: 'MODULE_NOT_FOUND' },
       `${name} must be absent for this regression`);
   }
-  let lockChecks = 0, quits = 0, transport;
+  let lockChecks = 0, quits = 0, transport, hardwareDisabled = 0;
+  const switches = [];
+  const expected = process.platform === 'win32' ? expectedMode : 'default';
   const electron = { app: {
-    commandLine: { appendSwitch() {} },
+    isReady() { return false; },
+    getPath(name) { assert.equal(name, 'appData'); return appData; },
+    disableHardwareAcceleration() { hardwareDisabled++; },
+    commandLine: { appendSwitch(flag) { switches.push(flag); } },
     setAppUserModelId() {},
-    requestSingleInstanceLock() { lockChecks++; return false; },
+    requestSingleInstanceLock() {
+      // Assert at this early boundary, not merely after module evaluation.
+      assert.deepEqual(switches, expected === 'compat' ? ['disable-gpu-sandbox'] : []);
+      assert.equal(hardwareDisabled, expected === 'software' ? 1 : 0);
+      lockChecks++; return false;
+    },
     quit() { quits++; },
     on() {},
   } };
@@ -82,7 +93,8 @@ for (const mode of ['development', 'production']) {
   test(`${mode} main loads with production ws and no native addons`, { timeout: 60000 }, async t => {
     const temporary = await mkdtemp(path.join(os.tmpdir(), 'codex-monitor-startup-'));
     t.after(() => rm(temporary, { recursive: true, force: true, maxRetries: 3 }));
-    const names = ['NODE_ENV', 'NODE_ENV_ELECTRON_VITE', 'WS_NO_BUFFER_UTIL', 'WS_NO_UTF_8_VALIDATE'];
+    const names = ['NODE_ENV', 'NODE_ENV_ELECTRON_VITE', 'WS_NO_BUFFER_UTIL', 'WS_NO_UTF_8_VALIDATE',
+      'CODEX_MONITOR_DISABLE_GPU_SANDBOX'];
     const previous = new Map(names.map(name => [name, process.env[name]]));
     t.after(() => {
       for (const [name, value] of previous) {
@@ -94,6 +106,7 @@ for (const mode of ['development', 'production']) {
     process.env.NODE_ENV_ELECTRON_VITE = mode;
     delete process.env.WS_NO_BUFFER_UTIL;
     delete process.env.WS_NO_UTF_8_VALIDATE;
+    delete process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX;
 
     // Match electron-vite dev's serve/development resolution, not just a
     // production build with a different label. Do not launch Electron or Vite's server.
@@ -114,7 +127,12 @@ for (const mode of ['development', 'production']) {
         filter: source => !path.relative(installed, source).split(path.sep).includes('node_modules'),
       });
     }
-    const transport = await loadMain(path.join(temporary, manifest.main));
+    const entry = path.join(temporary, manifest.main), appData = path.join(temporary, 'appData');
+    const transport = await loadMain(entry, appData);
     await roundTrip(transport);
+    for (const gpuMode of ['compat', 'software', 'default']) {
+      saveGpuMode(appData, gpuMode);
+      await loadMain(entry, appData, gpuMode);
+    }
   });
 }

@@ -68,6 +68,10 @@ jobs:
           }
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run test:gpu
       - name: Load development and production main bundles without optional native addons
         run: node --test tests/main-bundle.node.mjs
+      - name: Render an isolated real Electron window with persisted GPU modes
+        if: runner.os == 'Windows'
+        run: npm run test:gpu:electron
       - run: python -m unittest discover -s tests -p 'test_*.py'
