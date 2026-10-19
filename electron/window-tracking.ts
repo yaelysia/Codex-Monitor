@@ -166,7 +166,7 @@ export class AutoWindowTracker {
             // Codex prompt. Multi-chat/tab ambiguity is still checked by the
             // per-session foreground and read policies below.
             for (const key of this.restoredKeys) {
-              if (this.resolver.isBoundWindowForeground(key, foreground.at))
+              if (this.resolver.isBoundWindowForeground(key, Date.now()))
                 this.restoredKeys.delete(key);
             }
             this.onForegroundObservation();
