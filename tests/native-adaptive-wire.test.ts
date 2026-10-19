@@ -65,9 +65,10 @@ describe('actual passive App Server WebSocket to native scheduling', () => {
     monitor.configure([{ sourceId: 'local', enabled: true, transport: 'ws',
       endpoint: 'ws://127.0.0.1:' + port + '/' }]);
     monitor.setTargets(scan); monitor.start();
-    await until(() => monitor?.project(scan)?.sources[0]?.sessions[0]?.status === 'working');
+    await until(() => monitor?.project(scan)?.sources[0]?.sessions[0]?.status === 'working' &&
+      (monitor?.health()[0]?.lastSuccessAt ?? 0) > 0);
     expect(reads).toBe(1);
-    const firstSuccess = monitor.health()[0]?.lastSuccessAt ?? 0;
+    const firstSuccess = monitor.health()[0]!.lastSuccessAt!;
 
     const publish = (params: Record<string, unknown>) => {
       for (const peer of clientSockets) peer.send(JSON.stringify({
