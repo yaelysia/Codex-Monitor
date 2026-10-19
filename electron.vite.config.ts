@@ -4,7 +4,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // The probe's existing dev dependency is now also used by the packaged app.
+    plugins: [externalizeDepsPlugin({ exclude: ['ws'] })],
     build: { rollupOptions: { input: { index: resolve(__dirname, 'electron/main.ts') } } },
   },
   preload: {
