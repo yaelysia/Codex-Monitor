@@ -10,11 +10,13 @@ import { applyDesktopLogEvidence, DesktopLogEventCache, isActiveDesktopStart,
   type DesktopLogEvent } from '../src/shared/desktop-log-status';
 import { DesktopEvidenceStore } from './desktop-evidence-store';
 import { validPinnedRolloutPath, MAX_PINNED_ROLLOUTS } from '../src/shared/pinned-rollouts';
+import { RemoteScanCache, type RemoteScanResult } from './remote-scan-cache';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
 const MAX_STDOUT = 5 * 1024 * 1024;
 let wslCache: { at: number; distros: string[] } | null = null;
 let scriptCache: Promise<string> | null = null;
+const remoteScanCache = new RemoteScanCache();
 
 /** Docker Desktop's WSL distributions are internal infrastructure, not user workspaces. */
 export function isInternalWslDistro(name: string): boolean {
@@ -180,20 +182,34 @@ export function normalizeRemote(rows: unknown, id: string, label: string): Sessi
   return sessions;
 }
 
-async function sourceResult(id: string, label: string, kind: SourceKind, scan: () => Promise<SessionRecord[]>): Promise<SourceResult> {
+async function sourceResult(id: string, label: string, kind: SourceKind,
+  scan: () => Promise<SessionRecord[] | RemoteScanResult>): Promise<SourceResult> {
   const captureStartedAt = Date.now();
   const started = performance.now();
   try {
-    const sessions = await scan();
+    const result = await scan();
+    const sessions = Array.isArray(result) ? result : result.sessions;
     return { id, label, kind, sessions, captureStartedAt, capturedAt: Date.now(),
-      error: null, scanMetrics: { durationMs: Math.max(0, Math.round(performance.now() - started)),
-        sessionCount: sessions.length } };
+      error: null, scanMetrics: { ...(Array.isArray(result) ? {} : result.metrics),
+        durationMs: Math.max(0, Math.round(performance.now() - started)), sessionCount: sessions.length } };
   } catch (error) {
     return { id, label, kind, sessions: [], captureStartedAt, capturedAt: Date.now(),
       error: error instanceof Error ? error.message : String(error),
       scanMetrics: {durationMs: Math.max(0, Math.round(performance.now() - started)),
         sessionCount: 0} };
   }
+}
+
+/** Both transports share the same conditional protocol. Full/manual scans omit
+ * reuse hints; the remote side still discovers files on every event scan.
+ */
+function readRemote(id: string, label: string, command: string, args: string[],
+  python: string, root: string, pins: readonly string[], reuse: boolean): Promise<RemoteScanResult> {
+  return remoteScanCache.read(id, JSON.stringify([command, args, root]), reuse, scanCache => {
+    if (!python) throw new Error('Collector script not found');
+    return runCollector(command, args, python, root, { scanCache,
+      pinnedPaths: [...new Set(pins)].filter(validPinnedRolloutPath).slice(0, MAX_PINNED_ROLLOUTS) });
+  }, rows => normalizeRemote(rows, id, label));
 }
 
 /** Sources complete independently. The callback is awaited per host so Monitor can
@@ -235,29 +251,19 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
     const id = `ssh:${host.id}`;
     if (!wanted(id)) continue;
     const label = `${host.alias} · SSH`;
-    add(sourceResult(id, label, 'ssh', async () => {
-      if (!remoteScript) throw new Error('Collector script not found');
-      const rows = await runCollector('ssh', [
-        '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ConnectionAttempts=1',
-        host.alias, 'python3', '-'
-      ], remoteScript, host.root, { pinnedPaths: [...new Set(pinnedPaths.get(id) ?? [])]
-        .filter(validPinnedRolloutPath).slice(0, MAX_PINNED_ROLLOUTS) });
-      return normalizeRemote(rows, id, label);
-    }));
+    add(sourceResult(id, label, 'ssh', () => readRemote(id, label, 'ssh', [
+      '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ConnectionAttempts=1',
+      host.alias, 'python3', '-'
+    ], remoteScript, host.root, pinnedPaths.get(id) ?? [], !!sourceIds)));
   }
   const distros = await distrosPromise;
   for (const distro of distros) {
     const id = `wsl:${distro}`;
     if (!wanted(id)) continue;
     const label = `${distro} · WSL`;
-    add(sourceResult(id, label, 'wsl', async () => {
-      if (!remoteScript) throw new Error('Collector script not found');
-      const pins = [...new Set(pinnedPaths.get(id) ?? [])].filter(validPinnedRolloutPath)
-        .slice(0, MAX_PINNED_ROLLOUTS);
-      const rows = await runCollector('wsl.exe', ['-d', distro, '--', 'python3', '-'],
-        remoteScript, settings.wslRoots[distro] || '', { pinnedPaths: pins });
-      return normalizeRemote(rows, id, label);
-    }));
+    add(sourceResult(id, label, 'wsl', () => readRemote(id, label,
+      'wsl.exe', ['-d', distro, '--', 'python3', '-'], remoteScript,
+      settings.wslRoots[distro] || '', pinnedPaths.get(id) ?? [], !!sourceIds)));
   }
   return { sources: await Promise.all(scans), scannedAt: Date.now() };
 }
