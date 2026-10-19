@@ -1,5 +1,5 @@
 import { AlertTracker } from '../src/shared/alert-tracker';
-import type { MonitorAlert, MonitorState, ScanResponse } from '../src/shared/types';
+import type { MonitorAlert, MonitorState, ScanResponse, SourceResult, AlertKind } from '../src/shared/types';
 import { readSettings } from './config';
 import { refresh as collect, projectDesktopRuntime, recentDesktopCompletions } from './collector';
 import { WatchCoordinator } from './watchers';
@@ -11,7 +11,6 @@ import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
 import { SourceRetention } from '../src/shared/source-retention';
 import { NotificationPerformance } from '../src/shared/notification-performance';
 import { RunningContinuity, TRANSIENT_RUNNING_GAP_MS } from '../src/shared/running-continuity';
-import type { SourceResult, AlertKind } from '../src/shared/types';
 
 const POLLING_FALLBACK_MS = 12_000;
 const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
@@ -63,7 +62,7 @@ export class MonitorService {
   private wakeTimer: ReturnType<typeof setTimeout> | null = null;
   private watchers = new WatchCoordinator(
     sourceId => this.queueSource(sourceId),
-    () => { if (this.running) this.onChange(this.state()); },
+    () => { if (this.running) this.publishState(); },
   );
   private pendingSources = new Set<string>();
   private lastEventScan = new Map<string, number>();
@@ -89,6 +88,13 @@ export class MonitorService {
 
   private persistAlerts(): void {
     this.alertStore?.update(this.tracker.snapshot());
+  }
+
+  /** Share one fresh snapshot with the broadcaster and IPC caller. */
+  private publishState(): MonitorState {
+    const state = this.state();
+    this.onChange(state);
+    return state;
   }
 
   start(): void {
@@ -145,17 +151,17 @@ export class MonitorService {
     };
   }
   setMuted(muted: boolean): MonitorState {
+    if (this.tracker.getMuted() === muted) return this.state();
     this.tracker.setMuted(muted);
     this.persistAlerts();
-    this.onChange(this.state());
-    return this.state();
+    return this.publishState();
   }
   /** Update one kind atomically: rapid UI toggles cannot overwrite each other. */
   setNotificationKindEnabled(kind: AlertKind, enabled: boolean): MonitorState {
+    if (this.tracker.getNotificationKinds()[kind] === enabled) return this.state();
     this.tracker.setNotificationKindEnabled(kind, enabled);
     this.persistAlerts();
-    this.onChange(this.state());
-    return this.state();
+    return this.publishState();
   }
   /** Used by the existing native foreground hook; no work is done when there
    * are no unread alerts associated with the verified original session.
@@ -168,13 +174,23 @@ export class MonitorService {
     return ids.length;
   }
 
+  /** The caller retains the strict HWND/tab/session read policy. Check each
+   * unread session once and publish at most once per native observation.
+   */
+  acknowledgeForegroundSessions(isForeground: (sessionKey: string) => boolean): number {
+    const keys = new Set(this.tracker.unreadSessionKeys().filter(isForeground));
+    if (!keys.size) return 0;
+    const ids = this.tracker.unreadSessionAlertIds(keys);
+    if (!ids.length) return 0;
+    this.acknowledgeMany(ids);
+    return ids.length;
+  }
+
   acknowledge(id: string): MonitorState { return this.acknowledgeMany([id]); }
   acknowledgeMany(ids: readonly string[]): MonitorState {
-    if (!ids.length) return this.state();
-    this.tracker.acknowledgeMany(ids);
+    if (!this.tracker.acknowledgeMany(ids)) return this.state();
     this.persistAlerts();
-    this.onChange(this.state());
-    return this.state();
+    return this.publishState();
   }
 
   private queueDesktopAudit(): void {
@@ -192,11 +208,6 @@ export class MonitorService {
     this.desktopWakeTimer.unref?.();
   }
 
-  /** Native status can update a known local/WSL/SSH session without waiting
-   * for a new JSONL write or rescanning a slow remote filesystem.
-   * The raw filesystem snapshot remains immutable; overlay can be removed or
-   * superseded by newer native completion evidence on the next tick.
-   */
   /** Recent native turn-complete must defeat even a temporary running hold. */
   private recentlyCompletedThreads(events: ReturnType<typeof recentDesktopCompletions>,
     now: number): Set<string> {
@@ -205,6 +216,11 @@ export class MonitorService {
       .map(event => event.threadId.toLowerCase()));
   }
 
+  /** Native status can update a known local/WSL/SSH session without waiting
+   * for a new JSONL write or rescanning a slow remote filesystem.
+   * The raw filesystem snapshot remains immutable; overlay can be removed or
+   * superseded by newer native completion evidence on the next tick.
+   */
   private async auditDesktopRuntime(): Promise<void> {
     const baseline = this.rawLastScan;
     if (!this.running || !baseline) return;
@@ -230,7 +246,7 @@ export class MonitorService {
       this.lastScan = displayed;
       if (changed) this.scanRevision++;
       if (alerts.length) this.persistAlerts();
-      this.onChange(this.state());
+      this.publishState();
       if (!this.tracker.getMuted()) for (const alert of alerts)
         if (!alert.read) this.onAlert(alert);
     } catch {
@@ -334,7 +350,7 @@ export class MonitorService {
       this.notificationPerformance.observe(alerts, projected, Date.now());
       this.persistAlerts();
     }
-    this.onChange(this.state());
+    this.publishState();
     if (!this.tracker.getMuted()) for (const alert of alerts)
       if (!alert.read) this.onAlert(alert);
   }
@@ -398,7 +414,7 @@ export class MonitorService {
         if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);
       }
       this.lastSourceScanDurationMs = Math.max(0, Math.round(performance.now() - scanStartedAt));
-      this.onChange(this.state());
+      this.publishState();
       return this.lastScan!;
     })();
     this.inFlight = task;

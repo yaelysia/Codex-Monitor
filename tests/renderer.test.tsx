@@ -259,8 +259,9 @@ describe('automatic original window read integration', () => {
   it('connects the native foreground event to authoritative per-session acknowledgement', () => {
     const main=readFileSync(new URL('../electron/main.ts',import.meta.url),'utf8');
     const tracker=readFileSync(new URL('../electron/window-tracking.ts',import.meta.url),'utf8');
-    expect(main).toContain('monitor?.unreadSessionKeys()');
-    expect(main).toContain('windowTracker?.isSessionForegroundForRead(key)');
+    // Batch scoping/idempotence is exercised in monitor-state-hot-paths.test.ts.
+    // This guard only verifies that native events still reach that boundary.
+    expect(main).toMatch(/monitor\?\.acknowledgeForegroundSessions\(\s*key => windowTracker\?\.isSessionForegroundForRead\(key\) \?\? false\)/);
     expect(main).toContain('monitor?.acknowledgeSessionAlerts(key)');
     expect(tracker).toContain('this.onForegroundObservation();');
     expect(tracker).toContain('this.resolver.isSessionForegroundForRead(sessionKey, now)');

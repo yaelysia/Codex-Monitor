@@ -9,6 +9,11 @@ const RECENT_EVENT_MS = 120_000;
 const CONTIGUOUS_SCAN_GAP_MS = 90_000;
 const MAX_ALERTS = 60;
 export const MAX_SEEN_ALERT_IDS = 500;
+const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const TERMINAL_EVENT_REASONS = {
+  interrupted: '检测到本轮中断事件（即使后续轮次已经开始或结束）',
+  failed: '检测到本轮失败结束事件（后续轮次可能已重新开始）',
+};
 export interface SavedAlert {
   id: string;
   sessionKey: string;
@@ -32,6 +37,10 @@ type KnownSession = Pick<SessionRecord,
   'status' | 'updatedAt' | 'byteSize' | 'finishedToken' | 'interruptedToken' |
   'interruptionTokens' | 'failedToken' | 'failureTokens' |
   'waitingToken' | 'pendingQuestionToken' | 'isSubagent'>;
+
+function finishedTurnKey(key: string, turnId: string | null | undefined): string | null {
+  return turnId && UUID.test(turnId) ? JSON.stringify([key, turnId]) : null;
+}
 
 /** Compare file mtime with the clock of the machine that owns it, not with Windows. */
 function recentAtSource(session: SessionRecord, now: number): boolean {
@@ -138,8 +147,9 @@ export class AlertTracker {
         alert.title === '已保存的数据源提醒' || alert.sourceLabel === '历史来源')) {
       return this.alerts.map(alert => ({ ...alert }));
     }
-    const byKey = new Map(scan.sources.flatMap(src => src.sessions)
-      .map(session => [session.key, session]));
+    const byKey = new Map<string, SessionRecord>();
+    for (const source of scan.sources)
+      for (const session of source.sessions) byKey.set(session.key, session);
     const bySourceKey = new Map(scan.sources.map(src => [sourceAlertKey(src.id), src]));
     return this.alerts.map(alert => {
       if (isSourceAlertKind(alert.kind)) {
@@ -161,22 +171,27 @@ export class AlertTracker {
     });
   }
 
-  /** Recognize the SAME completion reported by GUI and rollout even if the
-   * two sources write different timestamps. The UUID is the stable turn key.
+  /** Decode legacy IDs at most once per canonical observation batch, only if
+   * a new completion needs cross-channel deduplication. No persistent cache;
+   * preserve exact UUID casing and session identity.
    */
-  private alreadyNotifiedTurn(key: string, turnId: string): boolean {
-    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(turnId)) return false;
+  private notifiedTurnKeys(): Set<string> {
+    const turns = new Set<string>();
     for (const id of this.seenAlertIds) {
       try {
         const parts: unknown = JSON.parse(id);
         if (!Array.isArray(parts) || parts.length !== 3 ||
-            parts[0] !== key || parts[1] !== 'finished' ||
+            typeof parts[0] !== 'string' || parts[1] !== 'finished' ||
             typeof parts[2] !== 'string') continue;
-        if (parts[2] === 'desktop:' + turnId ||
-            parts[2].endsWith('|' + turnId)) return true;
+        const token = parts[2];
+        const separator = token.lastIndexOf('|');
+        const turnId = separator >= 0 ? token.slice(separator + 1) :
+          token.startsWith('desktop:') ? token.slice(8) : null;
+        const key = finishedTurnKey(parts[0], turnId);
+        if (key) turns.add(key);
       } catch { /* Ignore malformed legacy alert ID. */ }
     }
-    return false;
+    return turns;
   }
 
   /** Native GUI completion notifications are distinct from filesystem scans.
@@ -187,7 +202,11 @@ export class AlertTracker {
     snapshot: ScanResponse, evidence: readonly DesktopLogEvent[],
     startedAt: number, now = Date.now(),
   ): MonitorAlert[] {
-    if (startedAt <= 0 || !snapshot.sources.length) return [];
+    if (startedAt <= 0 || !snapshot.sources.length || !evidence.length) return [];
+    const candidates = evidence.filter(event => !(event.type !== 'turn-displayed-complete' ||
+      !event.turnId || event.at < startedAt || event.at > now + 5_000 ||
+      now - event.at > RECENT_EVENT_MS));
+    if (!candidates.length) return [];
     const matching = new Map<string, SessionRecord>();
     for (const source of snapshot.sources) {
       if (source.error) continue;
@@ -197,19 +216,19 @@ export class AlertTracker {
       }
     }
     const pending: MonitorAlert[] = [];
-    for (const event of evidence) {
-      if (event.type !== 'turn-displayed-complete' || !event.turnId ||
-          event.at < startedAt || event.at > now + 5_000 ||
-          now - event.at > 120_000) continue;
+    let notifiedTurns: Set<string> | undefined;
+    for (const event of candidates) {
       const row = matching.get(event.threadId.toLowerCase());
       // A displayed turn completion does not resolve an outstanding
       // asynchronous question, approval, failure or interruption.
       if (!row || row.pendingQuestionToken || row.status === 'waiting' ||
-          row.status === 'failed' || row.status === 'interrupted' ||
-          this.alreadyNotifiedTurn(row.key, event.turnId)) continue;
+          row.status === 'failed' || row.status === 'interrupted') continue;
       const id = JSON.stringify([row.key, 'finished', 'desktop:' + event.turnId]);
       if (this.seenAlertIds.has(id)) continue;
+      const turnKey = finishedTurnKey(row.key, event.turnId);
+      if (turnKey && (notifiedTurns ??= this.notifiedTurnKeys()).has(turnKey)) continue;
       this.seenAlertIds.add(id);
+      if (turnKey) notifiedTurns!.add(turnKey);
       pending.push({
         id, sessionKey: row.key, sessionId: row.id, kind: 'finished',
         title: row.title || '未命名会话', sourceLabel: row.sourceLabel,
@@ -227,29 +246,42 @@ export class AlertTracker {
     return pending;
   }
 
-  /** Select only alerts already unread for this exact Codex session.
+  /** Select only alerts already unread for these exact Codex sessions.
    * Source collection health alerts use synthetic source IDs, never HWNDs.
    * This scan is bounded by the 60-entry inbox (no polling or disk access).
    */
-  unreadSessionAlertIds(sessionKey: string): string[] {
-    return this.alerts.filter(alert => !alert.read &&
-      alert.sessionKey === sessionKey && !isSourceAlertKind(alert.kind))
-      .map(alert => alert.id);
+  unreadSessionAlertIds(sessionKeys: string | ReadonlySet<string>): string[] {
+    const ids: string[] = [];
+    for (const alert of this.alerts) {
+      if (!alert.read && !isSourceAlertKind(alert.kind) &&
+          (typeof sessionKeys === 'string' ? alert.sessionKey === sessionKeys :
+            sessionKeys.has(alert.sessionKey))) ids.push(alert.id);
+    }
+    return ids;
   }
 
   unreadSessionKeys(): string[] {
-    return [...new Set(this.alerts.filter(alert => !alert.read &&
-      !isSourceAlertKind(alert.kind)).map(alert => alert.sessionKey))];
+    const keys = new Set<string>();
+    for (const alert of this.alerts)
+      if (!alert.read && !isSourceAlertKind(alert.kind)) keys.add(alert.sessionKey);
+    return [...keys];
   }
 
   acknowledge(id: string): void { this.acknowledgeMany([id]); }
 
   /** Only alerts already present when navigation began may be acknowledged. */
-  acknowledgeMany(ids: readonly string[]): void {
-    if (!ids.length) return;
+  acknowledgeMany(ids: readonly string[]): number {
+    if (!ids.length) return 0;
     const selected = new Set(ids);
-    this.alerts = this.alerts.map(alert => !alert.read && selected.has(alert.id)
-      ? { ...alert, read: true } : alert);
+    let changed = 0;
+    for (let i = 0; i < this.alerts.length; i++) {
+      const alert = this.alerts[i]!;
+      if (!alert.read && selected.has(alert.id)) {
+        this.alerts[i] = { ...alert, read: true };
+        changed++;
+      }
+    }
+    return changed;
   }
 
   state(scan: ScanResponse | null): MonitorState {
@@ -266,6 +298,7 @@ export class AlertTracker {
 
   observe(scan: ScanResponse, now = Date.now()): MonitorAlert[] {
     const pending: MonitorAlert[] = [];
+    let notifiedTurns: Set<string> | undefined;
     for (const source of scan.sources) {
       for (const event of this.sourceHealth.observe(source, now)) {
         if (this.seenAlertIds.has(event.id)) continue;
@@ -283,10 +316,8 @@ export class AlertTracker {
       for (const session of source.sessions) {
         const prior = previous?.get(session.key);
         const questionToken = session.pendingQuestionToken;
-        const interrupted = [...new Set(session.interruptionTokens ?? [])];
-        const knownInterrupted = new Set(prior?.interruptionTokens ?? []);
-        const failed = [...new Set(session.failureTokens ?? [])];
-        const knownFailed = new Set(prior?.failureTokens ?? []);
+        const interrupted = session.interruptionTokens?.length ? [...new Set(session.interruptionTokens)] : [];
+        const failed = session.failureTokens?.length ? [...new Set(session.failureTokens)] : [];
         // An asynchronous question may be unanswered while Codex continues
         // working or after its current turn finished. Such a request deserves
         // a waiting notification, not a fabricated process-waiting state.
@@ -311,38 +342,28 @@ export class AlertTracker {
         // A child remains in read-only scan results for optional inspection,
         // but is not a separate user-facing notification target.
         const childNotification = session.isSubagent === true || prior?.isSubagent === true;
-        // The snapshot can already be "working" or "finished" by the time
-        // it is read. Emit every NEW persisted abort marker independently.
+        // A later turn can already be working when the scan observes these
+        // markers. Both terminal kinds share freshness and dedupe rules;
+        // preserve interruption-before-failure ordering and their own reasons.
         if (knownBefore && recentlyObserved && !childNotification) {
-          for (const marker of interrupted) {
-            if (knownInterrupted.has(marker) || !recentTerminalEvent(marker, session, now)) continue;
-            const id = JSON.stringify([session.key, 'interrupted', marker]);
-            if (this.seenAlertIds.has(id)) continue;
-            this.seenAlertIds.add(id);
-            pending.push({
-              id, sessionKey: session.key, sessionId: session.id, kind: 'interrupted',
-              title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
-              workspace: session.workspace, at: now, read: false,
-              statusReason: '检测到本轮中断事件（即使后续轮次已经开始或结束）',
-              questionText: null,
-            });
-          }
-        }
-        // An error-bearing completion can be followed by a new active turn
-        // before the next scan. Notify the new event, not just the snapshot.
-        if (knownBefore && recentlyObserved && !childNotification) {
-          for (const marker of failed) {
-            if (knownFailed.has(marker) || !recentTerminalEvent(marker, session, now)) continue;
-            const id = JSON.stringify([session.key, 'failed', marker]);
-            if (this.seenAlertIds.has(id)) continue;
-            this.seenAlertIds.add(id);
-            pending.push({
-              id, sessionKey: session.key, sessionId: session.id, kind: 'failed',
-              title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
-              workspace: session.workspace, at: now, read: false,
-              statusReason: '检测到本轮失败结束事件（后续轮次可能已重新开始）',
-              questionText: null,
-            });
+          for (const terminalKind of ['interrupted', 'failed'] as const) {
+            const markers = terminalKind === 'interrupted' ? interrupted : failed;
+            if (!markers.length) continue;
+            const known = new Set(terminalKind === 'interrupted'
+              ? prior?.interruptionTokens : prior?.failureTokens);
+            for (const marker of markers) {
+              if (known.has(marker) || !recentTerminalEvent(marker, session, now)) continue;
+              const id = JSON.stringify([session.key, terminalKind, marker]);
+              if (this.seenAlertIds.has(id)) continue;
+              this.seenAlertIds.add(id);
+              pending.push({
+                id, sessionKey: session.key, sessionId: session.id, kind: terminalKind,
+                title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
+                workspace: session.workspace, at: now, read: false,
+                statusReason: TERMINAL_EVENT_REASONS[terminalKind],
+                questionText: null,
+              });
+            }
           }
         }
         if (kind && knownBefore) {
@@ -367,11 +388,15 @@ export class AlertTracker {
                 failed.includes(session.failedToken))) {
             const identity = token || [session.updatedAt, session.byteSize ?? '?'].join(':');
             const id = JSON.stringify([session.key, kind, identity]);
-            const finishedTurn = kind === 'finished' && token
-              ? token.split('|').at(-1) : null;
+            const turnKey = kind === 'finished' && token
+              ? finishedTurnKey(session.key, token.split('|').at(-1)) : null;
             if (!this.seenAlertIds.has(id) &&
-                !(finishedTurn && this.alreadyNotifiedTurn(session.key, finishedTurn))) {
+                !(turnKey && (notifiedTurns ??= this.notifiedTurnKeys()).has(turnKey))) {
               this.seenAlertIds.add(id);
+              // Canonical rollout IDs end in |UUID. Unusual legacy tokens
+              // must be decoded again, not promoted into canonical evidence.
+              if (turnKey && token?.includes('|')) notifiedTurns!.add(turnKey);
+              else if (kind === 'finished') notifiedTurns = undefined;
               pending.push({
                 id, sessionKey: session.key, sessionId: session.id, kind,
                 title: session.title || '未命名会话', sourceLabel: session.sourceLabel,
@@ -396,8 +421,10 @@ export class AlertTracker {
       this.known.set(source.id, current);
       this.scanned.set(source.id, now);
     }
-    this.applyNotificationKinds(pending);
-    this.alerts = [...pending, ...this.alerts].slice(0, MAX_ALERTS);
+    if (pending.length) {
+      this.applyNotificationKinds(pending);
+      this.alerts = [...pending, ...this.alerts].slice(0, MAX_ALERTS);
+    }
     if (this.seenAlertIds.size > MAX_SEEN_ALERT_IDS) {
       this.seenAlertIds = new Set([...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS));
       for (const alert of this.alerts) this.seenAlertIds.add(alert.id);

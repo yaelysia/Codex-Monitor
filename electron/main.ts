@@ -53,14 +53,10 @@ if (firstInstance) {
     );
     configureDesktopEvidenceStorage(app.getPath('userData'));
     windowTracker = new AutoWindowTracker(process.platform, app.getPath('userData'), () => {
-      // A manual Alt+Tab, HWND activation or exact selected-tab change can
-      // reveal that the user opened a session without clicking Monitor.
-      // Mark only its existing unread alerts. No polling or broad "VS Code is
-      // foreground" inference; ambiguity leaves messages unread.
-      for (const key of monitor?.unreadSessionKeys() ?? []) {
-        if (windowTracker?.isSessionForegroundForRead(key))
-          monitor?.acknowledgeSessionAlerts(key);
-      }
+      // Keep the exact native read policy; acknowledge the existing inbox in
+      // one batch instead of broadcasting and persisting once per session.
+      monitor?.acknowledgeForegroundSessions(
+        key => windowTracker?.isSessionForegroundForRead(key) ?? false);
     });
     windowTracker.start();
     monitor = new MonitorService(
