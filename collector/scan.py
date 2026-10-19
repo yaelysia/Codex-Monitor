@@ -4,6 +4,8 @@ No install, no daemon, no dependency. Output: JSON array of session metadata.
 CONFIG_B64 may be prepended by the Electron host to override root/limit.
 """
 import base64
+import hashlib
+import heapq
 import json
 import os
 import re
@@ -11,6 +13,7 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+from stat import S_ISREG
 from datetime import datetime
 
 INDEX_TAIL_BYTES = 2 * 1024 * 1024
@@ -22,6 +25,9 @@ EXTENDED_TAIL_BYTES = 8 * 1024 * 1024
 VSCODE_QUESTION_TAIL_BYTES = 2 * 1024 * 1024
 MAX_VSCODE_QUESTION_LOOKBACKS = 8
 RECENT_MS = 5 * 60_000
+WORKING_MS = 90_000
+WAITING_MS = 600_000
+SCAN_CACHE_MS = 60_000
 MAX_DISCOVERED = 10000
 MAX_RETURNED = 200
 MAX_PINNED = 16
@@ -503,18 +509,18 @@ def details(head, tail, filename, clipped, modified, now):
     elif phase == 'failed' and not checkpoint_after_boundary:
         status, reason = 'failed', '检测到本轮结束事件携带错误信息，不能视为正常完成'
     elif phase == 'submitted':
-        status = 'working' if age <= 90000 else 'unknown'
+        status = 'working' if age <= WORKING_MS else 'unknown'
         reason = ('检测到新的用户输入，但该轮开始/结束事件尚不完整；可能执行中（推断）'
-                  if age <= 90000 else
+                  if age <= WORKING_MS else
                   '检测到新的用户输入，但随后没有可靠轮次事件；不能判定任务已完成')
-    elif phase == 'started' and awaiting and age <= 600000:
+    elif phase == 'started' and awaiting and age <= WAITING_MS:
         status, reason = 'waiting', '日志存在等待用户操作事件（推断）'
-    elif phase == 'started' and age <= 90000:
+    elif phase == 'started' and age <= WORKING_MS:
         status = 'working'
         reason = ('检测到上下文压缩结果，尚无本轮结束事件；可能仍在继续执行（推断）'
                   if checkpoint_after_boundary
                   else '本轮已开始、尚无结束事件，且最近 90 秒有日志更新（推断）')
-    elif checkpoint_after_boundary and age <= 90000:
+    elif checkpoint_after_boundary and age <= WORKING_MS:
         status, reason = 'working', '最近检测到上下文压缩完成记录，但未见之后的任务结束事件；可能正在继续执行（推断）'
     elif phase == 'started':
         status, reason = 'unknown', '执行开始后未见结束事件，但日志已停止更新；无法确认是否仍在运行'
@@ -547,90 +553,176 @@ def details(head, tail, filename, clipped, modified, now):
     }
 
 
-def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None):
+def rollout_candidates(base, metrics):
+    """Stream the same bounded discovery order; allocate Paths only for selected files."""
+    found = 0
+    for folder, dirs, names in os.walk(base):
+        metrics['directoriesEnumerated'] += 1
+        dirs.sort(reverse=True)
+        for name in names:
+            if not name.endswith('.jsonl'):
+                continue
+            file = os.path.join(folder, name)
+            try:
+                metrics['statCalls'] += 1
+                stat = os.stat(file)
+            except OSError:
+                continue
+            found += 1
+            metrics['indexedFiles'] = found
+            yield stat.st_mtime_ns // 1000000, file, stat
+            if found >= MAX_DISCOVERED:
+                return
+
+
+def file_signature(stat):
+    # Nanosecond values stay strings across JSON/JS; size+mtime alone misses replacements.
+    return ':'.join(str(value) for value in (stat.st_dev, stat.st_ino, stat.st_size,
+                                            stat.st_mtime_ns, stat.st_ctime_ns, stat.st_mode))
+
+
+def cache_deadline(modified, now):
+    # Re-evaluate on the source clock BEFORE any age-dependent branch can change.
+    boundaries = (modified - 10000, modified + WORKING_MS + 1,
+                  modified + RECENT_MS + 1, modified + WAITING_MS + 1,
+                  modified + QUESTION_AGE_LIMIT_MS + 1)
+    return min([now + SCAN_CACHE_MS] + [at for at in boundaries if at > now])
+
+
+def cache_hints(request, root_key, now):
+    if not isinstance(request, dict) or request.get('rootKey') != root_key:
+        return {}
+    entries = request.get('entries')
+    if not isinstance(entries, list):
+        return {}
+    valid = {}
+    for row in entries[:MAX_RETURNED + MAX_PINNED]:
+        if not isinstance(row, dict):
+            continue
+        relative, uid, signature = row.get('path'), row.get('id'), row.get('signature')
+        start, end = row.get('from'), row.get('until')
+        if (not isinstance(relative, str) or not PINNED_PATH.fullmatch(relative) or
+                '..' in relative or not isinstance(uid, str) or not 0 < len(uid) <= 128 or
+                not isinstance(signature, str) or not 0 < len(signature) <= 256 or
+                type(start) is not int or type(end) is not int or
+                not 0 < start <= now < end <= start + SCAN_CACHE_MS):
+            continue
+        valid[relative] = row
+    return valid
+
+
+def read_scan_bytes(handle, length, metrics):
+    data = handle.read(length)
+    metrics['logBytesRead'] += len(data)
+    return data
+
+
+def read_edges(handle, size, metrics):
+    # Overlapping head/tail ranges of a short file need only one bounded read.
+    if size <= HEAD_BYTES + TAIL_BYTES:
+        data = read_scan_bytes(handle, size, metrics)
+        head, tail = data[:HEAD_BYTES], data[max(0, size - TAIL_BYTES):]
+    else:
+        head = read_scan_bytes(handle, HEAD_BYTES, metrics)
+        handle.seek(size - TAIL_BYTES)
+        tail = read_scan_bytes(handle, TAIL_BYTES, metrics)
+    return head.decode('utf-8', errors='replace'), tail.decode('utf-8', errors='replace')
+
+
+def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None, cache_request=None):
     now = now or int(time.time() * 1000)
     base = Path(root).expanduser() / 'sessions'
     if not base.is_dir():
         raise FileNotFoundError(f'Codex sessions folder not found: {base}')
-    # Bounding both discovery and returned records avoids reading old transcripts unnecessarily.
-    files = []
-    for folder, dirs, names in os.walk(base):
-        dirs[:] = sorted(dirs, reverse=True)
-        for name in names:
-            if name.endswith('.jsonl'):
-                full = Path(folder) / name
-                try:
-                    stat = full.stat()
-                    files.append((stat.st_mtime_ns // 1000000, stat.st_size, full))
-                except OSError:
-                    pass
-                if len(files) >= MAX_DISCOVERED:
-                    break
-        if len(files) >= MAX_DISCOVERED:
-            break
-    files.sort(key=lambda item: item[0], reverse=True)
-    newest = files[:max(1, min(limit, MAX_RETURNED))]
-    included = {file for _, _, file in newest}
-    # Bounded direct access recovers observed active rollouts even when their
-    # original date folder is outside the newest 10k discovered filenames.
-    extra = []
+    conditional = isinstance(cache_request, dict) and cache_request.get('version') == 1
     resolved_base = base.resolve()
+    root_key = hashlib.sha256(os.fsencode(str(resolved_base))).hexdigest() if conditional else ''
+    hints = cache_hints(cache_request, root_key, now) if conditional else {}
+    metrics = dict(indexMode='full', indexedFiles=0, directoriesEnumerated=0,
+                   statCalls=0, parsedFiles=0, cacheHits=0, logBytesRead=0)
+    # nlargest preserves stable mtime tie ordering, without sorting/retaining 10k Paths.
+    newest = heapq.nlargest(max(1, min(limit, MAX_RETURNED)),
+                           rollout_candidates(base, metrics), key=lambda item: item[0])
+    included = {file for _, file, _ in newest}
+    # Preserve the existing bounded recovery of old active sessions beyond discovery limits.
+    extra = []
     safe_candidates = [item for item in (pinned_paths or []) if isinstance(item, str)]
     for relative in list(dict.fromkeys(safe_candidates))[:MAX_PINNED * 2]:
         if len(extra) >= MAX_PINNED:
             break
-        if not isinstance(relative, str) or not PINNED_PATH.fullmatch(relative) or '..' in relative:
+        if not PINNED_PATH.fullmatch(relative) or '..' in relative:
             continue
         file = base.joinpath(*relative.split('/'))
-        if file in included:
+        if str(file) in included:
             continue
         try:
             actual = file.resolve(strict=True)
             actual.relative_to(resolved_base)
+            metrics['statCalls'] += 1
             stat = actual.stat()
-            if not actual.is_file() or stat.st_size <= 0:
+            if not S_ISREG(stat.st_mode) or stat.st_size <= 0:
                 continue
-            included.add(file)
-            extra.append((stat.st_mtime_ns // 1000000, stat.st_size, file))
+            included.add(str(file))
+            extra.append((stat.st_mtime_ns // 1000000, str(file), stat))
         except (OSError, ValueError, RuntimeError):
             continue
     result, seen = [], set()
     vscode_lookbacks = 0
-    for modified, size, file in newest + extra:
+    for modified, filename, stat in newest + extra:
+        file, size = Path(filename), stat.st_size
+        relative = file.relative_to(base).as_posix()
+        signature = file_signature(stat)
+        hint = hints.get(relative)
         try:
-            with file.open('rb') as handle:
-                head = handle.read(min(HEAD_BYTES, size)).decode('utf-8', errors='replace')
-                clipped = size > TAIL_BYTES
-                handle.seek(max(0, size - TAIL_BYTES))
-                tail = handle.read().decode('utf-8', errors='replace')
-                item = details(head, tail, file.name, clipped, modified, now)
-                recent = -10000 <= now - modified <= RECENT_MS
-                full_recovery = item['status'] == 'unknown' and clipped and recent
-                # VS Code can persist an async question before >192 KiB of
-                # subsequent tool output while the latest markers still imply
-                # "working" or "finished". Keep I/O bounded to 8 files per scan.
-                vscode_recovery = (not full_recovery and
-                    item['clientKind'] == 'vscode' and clipped and recent and
-                    not item.get('pendingQuestionToken') and
-                    item['status'] in ('working', 'finished') and
-                    vscode_lookbacks < MAX_VSCODE_QUESTION_LOOKBACKS)
-                if vscode_recovery:
-                    vscode_lookbacks += 1
-                if full_recovery or vscode_recovery:
-                    length = min(EXTENDED_TAIL_BYTES if full_recovery
-                                 else VSCODE_QUESTION_TAIL_BYTES, size)
-                    handle.seek(max(0, size - length))
-                    expanded = handle.read(length).decode('utf-8', errors='replace')
-                    item = details(head, expanded, file.name, size > length, modified, now)
-            item['rolloutPath'] = file.relative_to(base).as_posix()
-            item['ageAtSourceMs'] = now - modified  # Both timestamps come from this Linux host.
+            if (hint and hint['signature'] == signature and
+                    now < cache_deadline(modified, hint['from'])):
+                # A reference is not a session. The caller must hold the exact prior parse.
+                item = dict(id=hint['id'], title=None, clientKind='unknown', _reuse=signature)
+                metrics['cacheHits'] += 1
+            else:
+                with file.open('rb') as handle:
+                    head, tail = read_edges(handle, size, metrics)
+                    clipped = size > TAIL_BYTES
+                    item = details(head, tail, file.name, clipped, modified, now)
+                    metrics['parsedFiles'] += 1
+                    recent = -10000 <= now - modified <= RECENT_MS
+                    full_recovery = item['status'] == 'unknown' and clipped and recent
+                    # Keep the original eight-file VS Code lookback budget and ordering.
+                    vscode_recovery = (not full_recovery and
+                        item['clientKind'] == 'vscode' and clipped and recent and
+                        not item.get('pendingQuestionToken') and
+                        item['status'] in ('working', 'finished') and
+                        vscode_lookbacks < MAX_VSCODE_QUESTION_LOOKBACKS)
+                    if vscode_recovery:
+                        vscode_lookbacks += 1
+                    if full_recovery or vscode_recovery:
+                        length = min(EXTENDED_TAIL_BYTES if full_recovery
+                                     else VSCODE_QUESTION_TAIL_BYTES, size)
+                        handle.seek(max(0, size - length))
+                        expanded = read_scan_bytes(handle, length, metrics).decode('utf-8', errors='replace')
+                        item = details(head, expanded, file.name, size > length, modified, now)
+                    # Recent clipped VS Code files depend on the batch lookback budget;
+                    # never freeze those results in a per-file cache.
+                    if (conditional and not (item['clientKind'] == 'vscode' and clipped and recent) and
+                            PINNED_PATH.fullmatch(relative) and '..' not in relative):
+                        metrics['statCalls'] += 1
+                        if file_signature(os.fstat(handle.fileno())) == signature:
+                            item['_cache'] = dict(signature=signature, **{'from': now},
+                                until=cache_deadline(modified, now), title=item['title'],
+                                clientKind=item['clientKind'])
+            item['rolloutPath'] = relative
+            item['ageAtSourceMs'] = now - modified
             item['byteSize'] = size
+            item['updatedAt'] = modified
             if item['id'] not in seen:
                 seen.add(item['id'])
                 result.append(item)
         except (OSError, ValueError, UnicodeError):
             continue
+    # Titles/originator can change independently of JSONL. Never cache the enrichment.
     enrich_titles(Path(root).expanduser().resolve(), result)
+    if conditional:
+        return dict(version=1, rootKey=root_key, sourceNow=now, sessions=result, metrics=metrics)
     return result
 
 
@@ -642,7 +734,7 @@ def main():
     if not isinstance(pinned, list):
         pinned = []
     print(json.dumps(scan(root, limit=options.get('limit', MAX_RETURNED),
-                          pinned_paths=pinned), ensure_ascii=False))
+                          pinned_paths=pinned, cache_request=options.get('scanCache')), ensure_ascii=False))
 
 
 if __name__ == '__main__':
