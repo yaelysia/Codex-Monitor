@@ -664,3 +664,26 @@ describe('VS Code multi-conversation foreground toast fallback', () => {
     expect(resolver.isSessionForeground('local:desktop-b',NOW+10_100)).toBe(false);
   });
 });
+
+describe('OS verification of a persisted HWND without replaying old input',()=>{
+  it('matches only fresh native samples with exact PID/start and application',()=>{
+    const now=NOW;
+    const key='local:restored';
+    const original=sample(now-300_000,'vscode','0x1357',123);
+    const saved={
+      sessionKey:key,savedAt:now-300_000,inputToken:now-300_000,
+      window:{...original,inputAt:now-300_000},
+    };
+    const resolver=new AutoWindowResolver();
+    resolver.restoreBindings([saved],now);
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(false);
+    resolver.observeFocus(sample(now-20_000,'vscode','0x1357',123));
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(false);
+    resolver.observeFocus(sample(now-100,'vscode','0x1357',124));
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(false);
+    resolver.observeFocus(sample(now,'vscode','0x1357',123));
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(true);
+    resolver.observeFocus(sample(now+100,'other','0x9999',888));
+    expect(resolver.isBoundWindowForeground(key,now+200)).toBe(false);
+  });
+});

@@ -473,3 +473,93 @@ describe('privacy-safe explanation of native toast suppression eligibility',()=>
     expect(tracker.status(sessionKey).message).toContain('Windows 原生前台监听未就绪');
   });
 });
+
+describe('restored session foreground identity revalidation without a new Codex prompt', () => {
+  function savedBinding(sessionKey: string, now: number, inputAt = now - 300_000) {
+    return {
+      sessionKey, savedAt: inputAt, inputToken: inputAt,
+      window: {
+        at: inputAt, inputAt, hwnd: '0x1357', pid: 1357,
+        startedAt: 1000, app: 'vscode',
+      },
+    };
+  }
+
+  it('activates popup suppression and exact-session auto-read after a fresh matching foreground HWND', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(),'monitor-restored-foreground-'));
+    const now = Date.now();
+    fs.writeFileSync(path.join(root,'window-bindings.json'),JSON.stringify({
+      version:1, bindings:[savedBinding(sessionKey, now)],
+    }));
+    const reads:string[] = [];
+    let tracker: AutoWindowTracker;
+    tracker = new AutoWindowTracker('win32', root, () => {
+      if (tracker.isSessionForegroundForRead(sessionKey)) reads.push(sessionKey);
+    });
+    try {
+      tracker.start();
+      expect(tracker.status(sessionKey).message).toContain('上次窗口绑定');
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(false);
+      expect(reads).toEqual([]);
+      const win = children.at(-1)!;
+      win.stdout.emit('data',Buffer.from(sample(now - 200)));
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(true);
+      expect(tracker.isSessionForegroundForRead(sessionKey,now)).toBe(true);
+      expect(reads).toEqual([sessionKey]);
+      expect(tracker.status(sessionKey).message).not.toContain('尚待实时窗口身份核验');
+      win.stdout.emit('data',Buffer.from(sample(now - 100)));
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(true);
+    } finally { tracker.stop(); fs.rmSync(root,{recursive:true,force:true}); }
+  });
+
+  it('rejects a restored association when a native sample is old or PID/process instance changed', () => {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'monitor-restored-stale-'));
+    const now=Date.now();
+    fs.writeFileSync(path.join(root,'window-bindings.json'),JSON.stringify({
+      version:1,bindings:[savedBinding(sessionKey,now)],
+    }));
+    const tracker=new AutoWindowTracker('win32',root);
+    try {
+      tracker.start();
+      const child=children.at(-1)!;
+      child.stdout.emit('data',Buffer.from(sample(now - 20_000)));
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(false);
+      expect(tracker.status(sessionKey).message).toContain('上次窗口绑定');
+      child.stdout.emit('data',Buffer.from(JSON.stringify({
+        type:'foreground',at:now-400,hwnd:'0x1357',pid:1357,
+        startedAt:2000,app:'vscode',
+      })+'\n'));
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(false);
+      expect(tracker.status(sessionKey).message).toContain('上次窗口绑定');
+      child.stdout.emit('data',Buffer.from(sample(now-200)));
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(true);
+      child.emit('exit',1);
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(false);
+      expect(tracker.isSessionForegroundForRead(sessionKey,now)).toBe(false);
+    } finally { tracker.stop(); fs.rmSync(root,{recursive:true,force:true}); }
+  });
+
+  it('restores multiple VS Code chats but auto-reads neither ambiguous conversation', () => {
+    const root=fs.mkdtempSync(path.join(os.tmpdir(),'monitor-restored-ambiguous-'));
+    const now=Date.now();
+    const another='local:019a1020-0000-7000-8000-777788889999';
+    fs.writeFileSync(path.join(root,'window-bindings.json'),JSON.stringify({
+      version:1,bindings:[savedBinding(sessionKey,now,now-20_000),
+        savedBinding(another,now,now-5000)],
+    }));
+    const reads:string[]=[];
+    let tracker:AutoWindowTracker;
+    tracker=new AutoWindowTracker('win32',root,()=>{
+      for(const key of [sessionKey,another])
+        if(tracker.isSessionForegroundForRead(key)) reads.push(key);
+    });
+    try {
+      tracker.start();
+      children.at(-1)!.stdout.emit('data',Buffer.from(sample(now-200)));
+      expect(reads).toEqual([]);
+      expect(tracker.isSessionForeground(sessionKey,now)).toBe(false);
+      expect(tracker.isSessionForeground(another,now)).toBe(true);
+      expect(tracker.isSessionForegroundForRead(another,now)).toBe(false);
+    } finally {tracker.stop(); fs.rmSync(root,{recursive:true,force:true});}
+  });
+});
