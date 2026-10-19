@@ -298,6 +298,21 @@ export class AutoWindowResolver {
     return this.bindings.get(sessionKey) ?? null;
   }
 
+  /** A persisted HWND is merely an address. Revalidate it against a CURRENT,
+   * trustworthy Windows foreground sample before using it for read or toast
+   * decisions. The process start timestamp prevents reused HWND/PID identity;
+   * still distinguish between a window match and an exact chat match.
+   */
+  isBoundWindowForeground(sessionKey: string, now = Date.now()): boolean {
+    const binding = this.bindings.get(sessionKey);
+    const foreground = this.history.at(-1);
+    return !!binding && !!foreground && foreground.app !== 'other' &&
+      now >= foreground.at - 1_000 &&
+      now - foreground.at <= FOREGROUND_NOTIFICATION_SAMPLE_MAX_AGE_MS &&
+      binding.hwnd === foreground.hwnd && binding.pid === foreground.pid &&
+      binding.startedAt === foreground.startedAt && binding.app === foreground.app;
+  }
+
   /** Return a tiny reason code so one failed-to-suppress popup can be
    * diagnosed from Monitor's existing session inspector, without collecting
    * window titles, chat content, paths, or process command lines.

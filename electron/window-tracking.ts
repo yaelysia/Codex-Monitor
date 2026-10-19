@@ -160,6 +160,15 @@ export class AutoWindowTracker {
             }
             const upgraded = this.resolver.observeFocus(foreground);
             if (upgraded.length) this.bindingStore?.update(this.resolver.savedBindings());
+            // A restored association was deliberately not trusted at startup.
+            // Once the live hook independently confirms the SAME HWND + PID +
+            // process start time, re-use that binding without requiring another
+            // Codex prompt. Multi-chat/tab ambiguity is still checked by the
+            // per-session foreground and read policies below.
+            for (const key of this.restoredKeys) {
+              if (this.resolver.isBoundWindowForeground(key, foreground.at))
+                this.restoredKeys.delete(key);
+            }
             this.onForegroundObservation();
           } else if ('ok' in raw && raw.ok === false &&
               'reason' in raw && raw.reason === 'native_bridge_unavailable') {
@@ -209,7 +218,8 @@ export class AutoWindowTracker {
 
   /** Read-only foreground test for native OS notification suppression.
    * It does not query HWNDs, focus windows or infer a conversation from app
-   * name. Restored bindings must be confirmed by a new live user submission.
+   * name. Saved bindings can be independently revalidated by a current native
+   * HWND/PID/start-time sample; no new user input is required.
    */
   isSessionForeground(sessionKey: string, now = Date.now()): boolean {
     let decision: ForegroundToastDecision | {
@@ -232,8 +242,9 @@ export class AutoWindowTracker {
     return '；最近一次系统通知判定：' + TOAST_REASON_LABELS[value.reason];
   }
 
-  /** Positive read-confirmation check. Historical restored HWNDs and watcher
-   * downtime are not enough; multi-tab terminal needs CURRENT selected tab.
+  /** Positive read-confirmation check. A saved HWND is usable only after
+   * a fresh independent native identity observation; multi-tab terminal
+   * still needs the CURRENT selected tab and multi-chat IDE is ambiguous.
    */
   isSessionForegroundForRead(sessionKey: string, now = Date.now()): boolean {
     return this.platform === 'win32' && this.watching &&
@@ -265,7 +276,7 @@ export class AutoWindowTracker {
     return found ? {
       ready: true, host: found.app === 'other' ? undefined : found.app,
       message: (this.restoredKeys.has(sessionKey)
-        ? '已加载上次窗口绑定；点击跳转时会校验原窗口与进程身份，已关闭窗口不会误跳'
+        ? '已加载上次窗口绑定，尚待实时窗口身份核验；可点击返回原窗口验证，关闭窗口不会误跳'
         : found.tabId ? '已自动关联原窗口及原标签（待实机验证）' :
         (found.tabCount != null && found.tabCount > 1) ||
           (found.tabHost === 'multi' && !found.tabId)
