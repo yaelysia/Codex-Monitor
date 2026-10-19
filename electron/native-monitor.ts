@@ -2,9 +2,10 @@ import { AppServerProbeClient, parseProbeEndpoint, type ProbeEndpoint } from '..
 import { freshNative, isNativeWaiting, nativeFileChangedAt, parseNativeThread, projectNativeScan,
   THREAD_UUID, type NativeConnection, type NativeHealth, type NativeSample, type NativeStatus } from '../src/shared/native-state';
 import type { ScanResponse } from '../src/shared/types';
+import { chooseNativeReads, nativeListInterval, nextNativeReadDueIn,
+  NATIVE_ACTIVE_READ_MS, NATIVE_PUSH_WAKE_MS, type NativeReadObservation } from '../src/shared/native-scheduling';
 
-const POLL_MS = 3000, LIST_MS = 10_000, CYCLE_MS = 8000;
-const MAX_READS = 64, MAX_TARGETS = 216;
+const CYCLE_MS = 8_000, MAX_TARGETS = 216;
 export interface NativeClient {
   closed: boolean;
   stats: { serverRequests: number };
@@ -12,13 +13,16 @@ export interface NativeClient {
   request(method: string, params?: Record<string, unknown>): Promise<unknown>;
   close(): Promise<void>;
 }
-type Factory = (endpoint: ProbeEndpoint) => NativeClient;
+type NativeHint = { method?: unknown; threadId?: unknown; serverRequestIgnored?: unknown };
+type Factory = (endpoint: ProbeEndpoint, onEvent: (event: NativeHint) => void) => NativeClient;
 type Target = { id: string; key: string; changedAt: number | null };
 interface Slot {
   config: NativeConnection; generation: number; client: NativeClient | null;
-  timer: ReturnType<typeof setTimeout> | null; deadline: ReturnType<typeof setTimeout> | null;
-  polling: boolean; failures: number; cursor: number; listAt: number;
+  timer: ReturnType<typeof setTimeout> | null; timerAt: number;
+  deadline: ReturnType<typeof setTimeout> | null;
+  polling: boolean; failures: number; listAt: number;
   loaded: Map<string, string>; samples: Map<string, NativeSample>;
+  attempts: Map<string, NativeReadObservation>; urgent: Set<string>;
   previous: Map<string, NativeStatus>; health: NativeHealth;
 }
 const signature = (sample: NativeStatus | undefined): string => sample
@@ -38,8 +42,8 @@ export class NativeMonitor {
 
   constructor(private home: string,
     private readonly changed: (waitingKeys: readonly string[]) => void,
-    private readonly factory: Factory = endpoint => new AppServerProbeClient(endpoint,
-      { timeoutMs: 2000, showIds: true })) {}
+    private readonly factory: Factory = (endpoint, onEvent) => new AppServerProbeClient(endpoint,
+      { timeoutMs: 2000, showIds: true, onEvent })) {}
 
   configure(configs: readonly NativeConnection[]): void {
     this.configs = configs.map(config => ({ ...config }));
@@ -60,13 +64,25 @@ export class NativeMonitor {
     this.reconcile(); this.revision++;
   }
   setTargets(scan: ScanResponse | null): void {
+    const previous = this.targets;
     this.targets = new Map((scan?.sources ?? []).filter(source => !source.error && !source.stale)
       .map(source => [source.id, source.sessions.filter(row => !row.isSubagent && THREAD_UUID.test(row.id))
         .slice(0, MAX_TARGETS).map(row => ({ id: row.id, key: row.key, changedAt: nativeFileChangedAt(source, row) }))]));
     for (const slot of this.slots.values()) {
-      const keys = new Set(this.targets.get(slot.config.sourceId)?.map(row => row.key));
+      const rows = this.targets.get(slot.config.sourceId) ?? [];
+      const known = new Set(previous.get(slot.config.sourceId)?.map(row => row.key));
+      const keys = new Set(rows.map(row => row.key));
       for (const key of slot.samples.keys()) if (!keys.has(key)) this.drop(slot, key);
+      for (const key of slot.attempts.keys()) if (!keys.has(key)) slot.attempts.delete(key);
+      for (const key of slot.urgent) if (!keys.has(key)) slot.urgent.delete(key);
       for (const key of slot.previous.keys()) if (!keys.has(key)) slot.previous.delete(key);
+      for (const row of rows) {
+        if (!known.has(row.key)) slot.listAt = 0;
+        const prior = slot.attempts.get(row.key);
+        if (!prior || (row.changedAt != null && row.changedAt > prior.at))
+          slot.urgent.add(row.key);
+      }
+      if (slot.urgent.size && !slot.polling) this.schedule(slot, NATIVE_PUSH_WAKE_MS);
     }
     this.reconcile();
   }
@@ -84,10 +100,12 @@ export class NativeMonitor {
     for (const config of this.configs) {
       if (!config.enabled || this.slots.has(config.sourceId) || !this.targets.has(config.sourceId)) continue;
       const slot: Slot = {
-        config, generation: ++this.serial, client: null, timer: null, deadline: null,
-        polling: false, failures: 0, cursor: 0, listAt: 0, loaded: new Map(), samples: new Map(), previous: new Map(),
+        config, generation: ++this.serial, client: null, timer: null, timerAt: 0, deadline: null,
+        polling: false, failures: 0, listAt: 0, loaded: new Map(), samples: new Map(),
+        attempts: new Map(), urgent: new Set(), previous: new Map(),
         health: { sourceId: config.sourceId, transport: config.transport, state: 'connecting', reason: 'connecting',
-          loaded: 0, matched: 0, covered: 0, listComplete: false, lastSuccessAt: null, retries: 0, ignoredRequests: 0 },
+          loaded: 0, matched: 0, covered: 0, listComplete: false, lastSuccessAt: null, retries: 0,
+          ignoredRequests: 0, readRequests: 0, passiveHints: 0 },
       };
       this.slots.set(config.sourceId, slot); this.schedule(slot, 0);
     }
@@ -103,15 +121,43 @@ export class NativeMonitor {
     slot.generation = ++this.serial;
     if (slot.timer) clearTimeout(slot.timer);
     if (slot.deadline) clearTimeout(slot.deadline);
-    slot.timer = slot.deadline = null;
+    slot.timer = slot.deadline = null; slot.timerAt = 0;
     const client = slot.client;
     slot.client = null; slot.samples.clear(); slot.previous.clear();
+    slot.attempts.clear(); slot.urgent.clear();
     void client?.close().catch(() => {});
   }
+  /** Earlier file/push wakeups can pull an existing quiet timer forward,
+   * never postpone it or create overlapping poll cycles.
+   */
   private schedule(slot: Slot, delay: number): void {
-    if (!this.running || slot.timer || this.slots.get(slot.config.sourceId) !== slot) return;
-    slot.timer = setTimeout(() => { slot.timer = null; void this.poll(slot); }, delay);
+    if (!this.running || this.slots.get(slot.config.sourceId) !== slot) return;
+    const due = Date.now() + Math.max(0, delay);
+    if (slot.timer && slot.timerAt <= due) return;
+    if (slot.timer) clearTimeout(slot.timer);
+    slot.timerAt = due;
+    slot.timer = setTimeout(() => {
+      slot.timer = null; slot.timerAt = 0; void this.poll(slot);
+    }, Math.max(0, delay));
     slot.timer.unref?.();
+  }
+
+  /** Passive notifications are wakeup HINTS, never authoritative status:
+   * a fresh, identity-checked thread/read is still required. Never respond
+   * to server-initiated approval or input requests.
+   */
+  private receiveHint(slot: Slot, client: NativeClient, generation: number, event: NativeHint): void {
+    if (!this.current(slot, generation) || slot.client !== client || client.closed ||
+        !event || event.serverRequestIgnored === true ||
+        !['thread/status/changed', 'turn/started', 'turn/completed'].includes(String(event.method)) ||
+        typeof event.threadId !== 'string' || !THREAD_UUID.test(event.threadId)) return;
+    const id = event.threadId.toLowerCase();
+    const target = this.targets.get(slot.config.sourceId)?.find(row => row.id.toLowerCase() === id);
+    if (!target) return;
+    slot.health.passiveHints = (slot.health.passiveHints ?? 0) + 1;
+    slot.urgent.add(target.key);
+    if (!slot.loaded.has(id)) slot.listAt = 0;
+    if (!slot.polling) this.schedule(slot, NATIVE_PUSH_WAKE_MS);
   }
   private collect(now = Date.now()): Map<string, NativeSample> {
     const samples = new Map<string, NativeSample>();
@@ -163,6 +209,12 @@ export class NativeMonitor {
     if (!this.current(slot, generation)) return;
     slot.loaded = ids; slot.listAt = Date.now();
     slot.health.loaded = ids.size; slot.health.listComplete = complete;
+    // An unmatched hint is not a subscription: retry discovery on a future
+    // file event or periodic list, not in a rapid spin.
+    for (const key of slot.urgent) {
+      const target = this.targets.get(slot.config.sourceId)?.find(row => row.key === key);
+      if (!target || !ids.has(target.id.toLowerCase())) slot.urgent.delete(key);
+    }
     // Absence in a partial list is unknown, not proof of idle/completed.
     if (complete) for (const [key] of slot.samples) {
       const target = this.targets.get(slot.config.sourceId)?.find(row => row.key === key);
@@ -188,30 +240,35 @@ export class NativeMonitor {
         const endpoint = parseProbeEndpoint({ home: this.home,
           ...(config.transport === 'socket' ? { socket: config.endpoint } : {}),
           ...(config.transport === 'ws' ? { ws: config.endpoint } : {}) });
-        slot.client = this.factory(endpoint);
-        await slot.client.start(); slot.listAt = 0;
+        // A superseded connection's late push cannot mutate this source.
+        const created = this.factory(endpoint, event =>
+          this.receiveHint(slot, created, generation, event));
+        slot.client = created;
+        await created.start(); slot.listAt = 0;
       }
       const client = slot.client;
       if (!this.current(slot, generation)) return;
       if (timedOut) throw new Error('cycle-timeout');
-      if (!slot.listAt || Date.now() - slot.listAt >= LIST_MS) await this.list(slot, client, generation);
+      if (!slot.listAt || Date.now() - slot.listAt >= nativeListInterval(slot.attempts, Date.now()))
+        await this.list(slot, client, generation);
       if (!this.current(slot, generation)) return;
       if (timedOut) throw new Error('cycle-timeout');
       const targets = (this.targets.get(slot.config.sourceId) ?? []).filter(row => slot.loaded.has(row.id.toLowerCase()));
       slot.health.matched = targets.length;
-      const selected: Target[] = [];
-      for (let i = 0; i < Math.min(MAX_READS, targets.length); i++) selected.push(targets[(slot.cursor + i) % targets.length]!);
-      slot.cursor = targets.length ? (slot.cursor + selected.length) % targets.length : 0;
+      const selected = chooseNativeReads(targets, slot.attempts, slot.urgent, Date.now());
       let next = 0, failed = 0, unsupported = 0, unavailable = 0;
       await Promise.all(Array.from({ length: Math.min(4, selected.length) }, async () => {
         while (next < selected.length && this.current(slot, generation) && !timedOut) {
           const target = selected[next++]!, id = slot.loaded.get(target.id.toLowerCase())!, at = Date.now();
+          slot.urgent.delete(target.key);
+          slot.health.readRequests = (slot.health.readRequests ?? 0) + 1;
           try {
             const raw = await client.request('thread/read', { threadId: id, includeTurns: false });
             if (!this.current(slot, generation) || timedOut) return;
             const latest = this.targets.get(slot.config.sourceId)?.find(row => row.key === target.key);
             if (!latest) { this.drop(slot, target.key); continue; }
             const row = parseNativeThread((raw as { thread?: unknown } | null)?.thread, id);
+            slot.attempts.set(target.key, { at, state: row?.state ?? 'unknown' });
             if (!row) { unsupported++; this.drop(slot, target.key); continue; }
             if (row.state === 'notLoaded' || row.isSubagent) { unavailable++; this.drop(slot, target.key); continue; }
             const old = slot.samples.get(target.key), prior = slot.previous.get(target.key);
@@ -226,6 +283,7 @@ export class NativeMonitor {
                 old.at < latest.changedAt && at >= latest.changedAt)) this.revision++;
             slot.samples.set(target.key, { ...row, key: target.key, sourceId: slot.config.sourceId, at });
           } catch {
+            slot.attempts.set(target.key, { at, state: 'unknown' });
             failed++; this.drop(slot, target.key);
           }
         }
@@ -233,10 +291,16 @@ export class NativeMonitor {
       if (!this.current(slot, generation)) return;
       if (timedOut || client.closed) throw new Error('connection');
       slot.failures = 0;
-      slot.health.state = failed || unsupported ? 'degraded' : 'connected';
-      slot.health.reason = failed ? 'request-failed' : unsupported ? 'protocol-unsupported' :
-        !targets.length ? 'no-matching-threads' : unavailable || !slot.health.listComplete || targets.length > MAX_READS
-          ? 'partial-coverage' : 'metadata-only';
+      // Skipping unchanged idle reads must not clear a previously reported
+      // per-thread protocol/read error without an actual successful retry.
+      if (selected.length || !targets.length) {
+        slot.health.state = failed || unsupported ? 'degraded' : 'connected';
+        slot.health.reason = failed ? 'request-failed' : unsupported ? 'protocol-unsupported' :
+          !targets.length ? 'no-matching-threads' : unavailable || !slot.health.listComplete || targets.length > 64
+            ? 'partial-coverage' : 'metadata-only';
+      } else if (!slot.health.listComplete || targets.length > 64) {
+        slot.health.reason = 'partial-coverage';
+      }
       slot.health.lastSuccessAt = Date.now();
     } catch {
       if (!this.current(slot, generation)) return;
@@ -245,14 +309,29 @@ export class NativeMonitor {
       slot.health.ignoredRequests = slot.client?.stats.serverRequests ?? slot.health.ignoredRequests;
       const client = slot.client; slot.client = null;
       await client?.close().catch(() => {});
-      slot.samples.clear(); slot.previous.clear(); waiting.length = 0; this.revision++;
+      slot.samples.clear(); slot.previous.clear(); slot.attempts.clear();
+      slot.urgent.clear(); waiting.length = 0; this.revision++;
     } finally {
       if (slot.deadline) clearTimeout(slot.deadline);
       slot.deadline = null; slot.polling = false;
       if (this.current(slot, generation)) {
         if (previousVersion !== this.revision || waiting.length ||
             previousHealth !== JSON.stringify([slot.health.state, slot.health.reason, slot.health.matched])) this.changed(waiting);
-        this.schedule(slot, slot.failures ? Math.min(60_000, 4000 * 2 ** Math.min(4, slot.failures - 1)) : POLL_MS);
+        if (slot.failures) {
+          this.schedule(slot, Math.min(60_000, 4000 * 2 ** Math.min(4, slot.failures - 1)));
+        } else {
+          const now = Date.now();
+          const loadedTargets = (this.targets.get(slot.config.sourceId) ?? [])
+            .filter(row => slot.loaded.has(row.id.toLowerCase()));
+          const pendingHint = loadedTargets.some(row => slot.urgent.has(row.key));
+          const listDelay = !slot.listAt ? 0 :
+            Math.max(0, nativeListInterval(slot.attempts, now) - (now - slot.listAt));
+          const readDelay = nextNativeReadDueIn(loadedTargets, slot.attempts, slot.urgent, now);
+          // Preserve the previous maximum continuous cycle frequency (3 s).
+          // An event received during a read can still wake the next cycle soon.
+          this.schedule(slot, pendingHint ? NATIVE_PUSH_WAKE_MS :
+            Math.max(NATIVE_ACTIVE_READ_MS, Math.min(listDelay, readDelay)));
+        }
       }
     }
   }
