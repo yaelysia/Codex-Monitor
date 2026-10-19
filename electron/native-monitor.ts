@@ -234,6 +234,8 @@ export class NativeMonitor {
       this.collect();
       if (!slot.client || slot.client.closed) {
         slot.previous.clear();
+        slot.attempts.clear();
+        slot.urgent.clear();
         const config = slot.config;
         if (config.transport === 'auto' && (/^[\\/]{2}/.test(this.home) || this.home.startsWith('\\')))
           throw new Error('network-home');
