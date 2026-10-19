@@ -47,7 +47,7 @@ describe('optional existing-server native monitor', () => {
     native.setTargets(snapshot()); native.start();
     await vi.advanceTimersByTimeAsync(9000); expect(factory).not.toHaveBeenCalled();
     native.configure([config]); await vi.advanceTimersByTimeAsync(0);
-    const client = factory.mock.results[0]!.value;
+    const client: Client = factory.mock.results[0]!.value;
     expect(client.request.mock.calls.every(([method]) => ['thread/loaded/list', 'thread/read'].includes(method))).toBe(true);
     expect(client.request).toHaveBeenCalledWith('thread/read', { threadId: uuid(0), includeTurns: false });
   });
@@ -125,5 +125,38 @@ describe('optional existing-server native monitor', () => {
     const run = setup(); await vi.advanceTimersByTimeAsync(0);
     expect(run.native.project(run.scan)?.sources[0]!.sessions[0]!.nativeStatus).toBeDefined();
     expect(run.native.project(run.scan, NOW + 15001)).toBe(run.scan);
+  });
+  it('limits simultaneous metadata reads to four', async () => {
+    const client = new Client(); client.ids = Array.from({ length: 20 }, (_, i) => uuid(i));
+    const original = client.request.getMockImplementation()!;
+    let active = 0, peak = 0;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === 'thread/read') {
+        peak = Math.max(peak, ++active);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        active--;
+      }
+      return original(method, params);
+    });
+    const run = setup(client, snapshot(20)); await vi.advanceTimersByTimeAsync(0);
+    expect(peak).toBe(4); await vi.advanceTimersByTimeAsync(150);
+    expect(active).toBe(0); expect(peak).toBe(4); expect(run.native.health()[0]?.covered).toBe(20);
+  });
+  it('terminates an overlong cycle and leaves no live state or leaked transport error', async () => {
+    const client = new Client(), pending = new Set<(error: Error) => void>();
+    client.request.mockImplementation(async method => method === 'thread/loaded/list'
+      ? { data: [uuid(0)], nextCursor: null }
+      : new Promise((_resolve, reject) => { pending.add(reject); }));
+    client.close.mockImplementation(async () => {
+      client.closed = true;
+      for (const reject of pending) reject(new Error('SECRET_CONNECTION_FAILURE'));
+      pending.clear();
+    });
+    const run = setup(client); await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(client.close).toHaveBeenCalled(); expect(pending.size).toBe(0);
+    expect(run.native.project(run.scan)).toBe(run.scan);
+    expect(run.native.health()[0]).toMatchObject({ state: 'degraded', reason: 'connection-unavailable', covered: 0 });
+    expect(JSON.stringify(run.native.health())).not.toContain('SECRET');
   });
 });
