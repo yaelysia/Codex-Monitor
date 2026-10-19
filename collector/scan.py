@@ -222,24 +222,29 @@ def client_kind_from_header(head):
     try:
         meta = json.loads(first).get('payload')
         originator = meta.get('originator') if isinstance(meta, dict) else None
+        source = meta.get('source') if isinstance(meta, dict) else None
     except (ValueError, TypeError, AttributeError):
         prefix = re.split(r'"base_instructions"\s*:', first, maxsplit=1)[0]
         found = re.search(r'"originator"\s*:\s*"([^"]{1,128})"', prefix)
         originator = found.group(1) if found else None
-    return classify_client_kind(originator)
+        found_source = re.search(r'"source"\s*:\s*"(vscode|cli)"', prefix)
+        source = found_source.group(1) if found_source else None
+    return classify_client_kind(originator, source)
 
 
-def classify_client_kind(originator):
-    if not isinstance(originator, str):
-        return 'unknown'
-    name = originator.strip().lower()
-    if name in ('codex desktop', 'codex_desktop', 'codex_work_desktop'):
-        return 'desktop'
-    if name in ('codex_vscode', 'codex-vscode'):
-        return 'vscode'
-    if name in ('codex-tui', 'codex_cli_rs', 'codex-cli', 'codex_cli'):
-        return 'terminal'
-    return 'unknown'
+def classify_client_kind(originator, source=None):
+    if isinstance(originator, str):
+        name = originator.strip().lower()
+        if name in ('codex desktop', 'codex_desktop', 'codex_work_desktop'):
+            return 'desktop'
+        if name in ('codex_vscode', 'codex-vscode'):
+            return 'vscode'
+        if name in ('codex-tui', 'codex_cli_rs', 'codex-cli', 'codex_cli'):
+            return 'terminal'
+    # Canonical upstream source enum, only when exact. A subsequent native
+    # window association still checks user-input timing and real HWND identity.
+    return 'vscode' if source == 'vscode' else (
+        'terminal' if source == 'cli' else 'unknown')
 
 
 def is_persisted_user_input(row, payload):

@@ -3,14 +3,14 @@ import { classifyClientKind, extractSessionClientKind } from '../src/shared/sess
 import { extractLastUserInputAt } from '../electron/rollout';
 
 describe('read-only client/window evidence from Codex rollouts', () => {
-  it('uses originator, never infers vscode from source alone', () => {
+  it('prefers originator but accepts canonical source when originator is missing', () => {
     expect(classifyClientKind('Codex Desktop')).toBe('desktop');
     expect(classifyClientKind('codex_desktop')).toBe('desktop');
     expect(classifyClientKind('codex_vscode')).toBe('vscode');
     expect(classifyClientKind('codex-tui')).toBe('terminal');
     expect(classifyClientKind('custom app')).toBe('unknown');
     expect(extractSessionClientKind(JSON.stringify({ type: 'session_meta',
-      payload: { source: 'vscode' } }))).toBe('unknown');
+      payload: { source: 'vscode' } }))).toBe('vscode');
   });
   it('works with clipped oversized session_meta and ignores transcript text', () => {
     const data = JSON.stringify({ type: 'session_meta',

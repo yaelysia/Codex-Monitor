@@ -664,3 +664,61 @@ describe('VS Code multi-conversation foreground toast fallback', () => {
     expect(resolver.isSessionForeground('local:desktop-b',NOW+10_100)).toBe(false);
   });
 });
+
+describe('OS verification of a persisted HWND without replaying old input',()=>{
+  it('matches only fresh native samples with exact PID/start and application',()=>{
+    const now=NOW;
+    const key='local:restored';
+    const original=sample(now-300_000,'vscode','0x1357',123);
+    const saved={
+      sessionKey:key,savedAt:now-300_000,inputToken:now-300_000,
+      window:{...original,inputAt:now-300_000},
+    };
+    const resolver=new AutoWindowResolver();
+    resolver.restoreBindings([saved],now);
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(false);
+    resolver.observeFocus(sample(now-20_000,'vscode','0x1357',123));
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(false);
+    resolver.observeFocus(sample(now-100,'vscode','0x1357',124));
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(false);
+    resolver.observeFocus(sample(now,'vscode','0x1357',123));
+    expect(resolver.isBoundWindowForeground(key,now)).toBe(true);
+    resolver.observeFocus(sample(now+100,'other','0x9999',888));
+    expect(resolver.isBoundWindowForeground(key,now+200)).toBe(false);
+  });
+});
+
+describe('explain session-to-foreground correlation without exposing message text', () => {
+  it('distinguishes unknown client, missing input timestamp, stale input and late native watcher', () => {
+    const resolver=new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW-1000,'vscode'));
+    const unknown=makeScan(NOW,100,'unknown','local:unknown-kind');
+    resolver.observeScan(unknown,NOW);
+    expect(resolver.associationReason('local:unknown-kind',NOW))
+      .toBe('client-unidentified');
+
+    const missing=makeScan(NOW,100,'vscode','local:no-input');
+    missing.sources[0]!.sessions[0]!.lastUserInputAgeAtSourceMs=null;
+    resolver.observeScan(missing,NOW);
+    expect(resolver.associationReason('local:no-input',NOW)).toBe('input-unavailable');
+
+    const old=makeScan(NOW,90_000,'vscode','local:stale');
+    resolver.observeScan(old,NOW);
+    expect(resolver.associationReason('local:stale',NOW)).toBe('input-outdated');
+
+    const late=makeScan(NOW,2000,'vscode','local:late');
+    resolver.observeScan(late,NOW);
+    expect(resolver.associationReason('local:late',NOW)).toBe('observer-started-late');
+  });
+
+  it('identifies a newly bound input but never leaks data after the diagnostic TTL',()=>{
+    const resolver=new AutoWindowResolver();
+    resolver.observeFocus(sample(NOW-1000,'vscode'));
+    const active=makeScan(NOW,100,'vscode','local:thread');
+    resolver.observeScan(active,NOW);
+    expect(resolver.associationReason('local:thread',NOW)).toBe('bound-from-new-input');
+    expect(resolver.associationReason('local:thread',NOW+11*60_000)).toBeNull();
+    resolver.clear();
+    expect(resolver.associationReason('local:thread',NOW)).toBeNull();
+  });
+});

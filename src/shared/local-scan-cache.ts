@@ -23,7 +23,17 @@ export class LocalScanCache {
       return null;
     }
     this.hits++;
-    const row: SessionRecord = { ...cached.snapshot, ageAtSourceMs: now - modified };
+    const inputAt = cached.snapshot.lastUserInputAtSourceMs;
+    const row: SessionRecord = {
+      ...cached.snapshot,
+      ageAtSourceMs: now - modified,
+      // The age stored at parse time becomes stale even when the JSONL does
+      // not change. Always derive input freshness from the stable event time;
+      // this also prevents stale input from being falsely associated with a
+      // different foreground application during later cached scans.
+      lastUserInputAgeAtSourceMs: typeof inputAt === 'number' &&
+        Number.isFinite(inputAt) ? now - inputAt : null,
+    };
     const age = now - modified;
     if (row.status === 'working' && age > ACTIVE_WINDOW_MS) {
       row.status = 'unknown';

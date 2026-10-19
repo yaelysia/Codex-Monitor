@@ -15,6 +15,7 @@
     "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "probe:desktop-logs": "node scripts/probe-desktop-logs.mjs",
     "diagnose:tracking": "node scripts/diagnose-tracking.mjs",
+    "diagnose:foreground": "node scripts/diagnose-foreground.mjs",
     "diagnose:questions": "node scripts/diagnose-questions.mjs",
     "diagnose:memory": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/diagnose-memory.ps1"
   },
