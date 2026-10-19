@@ -212,7 +212,7 @@ describe('adaptive read budget and optional passive wake hints', () => {
 
   it('treats exact-source passive status/turn hints only as an early read trigger', async () => {
     const client = new Client(), changed = vi.fn();
-    let emit = (_hint: { method?: unknown; threadId?: unknown; serverRequestIgnored?: boolean }) => {};
+    let emit = (_hint: { method?: unknown; threadId?: unknown; serverRequestIgnored?: unknown }) => {};
     const factory = vi.fn((_endpoint: unknown, onEvent: typeof emit) => {
       emit = onEvent; return client;
     });
@@ -237,7 +237,7 @@ describe('adaptive read budget and optional passive wake hints', () => {
 
   it('ignores unrelated, malformed, server-request and old-generation hints', async () => {
     const client = new Client(), changed = vi.fn();
-    let emit = (_hint: { method?: unknown; threadId?: unknown; serverRequestIgnored?: boolean }) => {};
+    let emit = (_hint: { method?: unknown; threadId?: unknown; serverRequestIgnored?: unknown }) => {};
     const factory = vi.fn((_endpoint: unknown, onEvent: typeof emit) => {
       emit = onEvent; return client;
     });
