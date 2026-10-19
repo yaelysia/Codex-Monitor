@@ -566,3 +566,30 @@ describe('restored session foreground identity revalidation without a new Codex 
     } finally {tracker.stop(); fs.rmSync(root,{recursive:true,force:true});}
   });
 });
+
+describe('actionable native foreground association diagnostics',()=>{
+  it('reports why a VS Code session is unbound after a successful scan',()=>{
+    const now=Date.now();
+    const tracker=new AutoWindowTracker('win32');
+    try {
+      tracker.start();
+      children.at(-1)!.stdout.emit('data',Buffer.from(sample(now-1000)));
+      const row:SessionRecord={
+        key:sessionKey,id:sessionKey.slice(6),sourceId:'local',
+        sourceLabel:'Windows',title:'PRIVATE_USER_TEXT',workspace:null,
+        clientKind:'vscode',status:'unknown',statusReason:'PRIVATE_ERROR',
+        updatedAt:now,startedAt:null,lastUserInputAgeAtSourceMs:null,
+      };
+      tracker.observeScan({scannedAt:now,sources:[{
+        id:'local',label:'Windows',kind:'local',
+        capturedAt:now,captureStartedAt:now,error:null,sessions:[row],
+      }]});
+      const detail=tracker.status(sessionKey).message;
+      expect(detail).toContain('最近会话关联检查');
+      expect(detail).toContain('尚未找到有时间标记的用户提交记录');
+      expect(detail).not.toContain(row.title);
+      expect(detail).not.toContain(row.statusReason);
+      expect(detail).not.toContain(sessionKey);
+    } finally { tracker.stop(); }
+  });
+});
