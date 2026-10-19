@@ -2,7 +2,8 @@ import { app, shell } from 'electron';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { AutoWindowResolver, normalizeForegroundWindow,
-  type ForegroundToastReason, type ForegroundToastDecision } from '../src/shared/auto-window-binding';
+  type ForegroundToastReason, type ForegroundToastDecision,
+  type WindowAssociationReason } from '../src/shared/auto-window-binding';
 import { WindowBindingStore } from './window-bindings-store';
 import type { OriginalWindowFocusResult, OriginalWindowStatus, ScanResponse, SessionRecord } from '../src/shared/types';
 import { desktopThreadUrl } from '../src/shared/desktop-navigation';
@@ -12,6 +13,17 @@ const MAX_LINE_BYTES = 4096;
 const SCRIPT_TIMEOUT_MS = 8_000;
 const MAX_TOAST_DIAGNOSTICS = 48;
 const TOAST_DIAGNOSTIC_AGE_MS = 15 * 60_000;
+const ASSOCIATION_REASON_LABELS: Record<WindowAssociationReason, string> = {
+  'client-unidentified': '来源元数据未识别出 VS Code、Desktop 或终端客户端',
+  'input-unavailable': '会话日志中尚未找到有时间标记的用户提交记录',
+  'input-outdated': '最近用户提交记录已超过 45 秒的自动绑定窗口',
+  'observer-started-late': '原生前台监听启动晚于本次用户提交，无法验证提交时的窗口',
+  'scan-clock-invalid': '数据源扫描时间与用户输入时间范围无法可靠对应',
+  'input-already-consumed': '没有新的提交记录需要重新关联（会沿用已有绑定）',
+  'foreground-app-mismatch': '提交时的前台窗口未识别为对应 Codex 客户端',
+  'foreground-changed-during-scan': '扫描时间范围内前台窗口发生过变化',
+  'bound-from-new-input': '已根据近期用户提交关联会话与原窗口',
+};
 const TOAST_REASON_LABELS: Record<ForegroundToastReason | 'watcher-unavailable' | 'restored-unverified', string> = {
   'unbound': '未找到该会话的原窗口绑定',
   'no-foreground': '尚未收到原生前台窗口采样',
@@ -236,6 +248,11 @@ export class AutoWindowTracker {
     return decision.suppress;
   }
 
+  private recentAssociationDiagnostic(sessionKey: string, now = Date.now()): string {
+    const reason = this.resolver.associationReason(sessionKey, now);
+    return reason ? '；最近会话关联检查：' + ASSOCIATION_REASON_LABELS[reason] : '';
+  }
+
   private recentToastDiagnostic(sessionKey: string, now = Date.now()): string {
     const value = this.toastDiagnostics.get(sessionKey);
     if (!value || now < value.at || now - value.at > TOAST_DIAGNOSTIC_AGE_MS) return '';
@@ -271,7 +288,8 @@ export class AutoWindowTracker {
       message: (this.restartCount >= 6
         ? 'Windows 原窗口监听连续失败，请检查 PowerShell/原生组件'
         : 'Windows 原窗口监听正在恢复，请在原会话重新发送一次消息') +
-        this.recentToastDiagnostic(sessionKey),
+        this.recentToastDiagnostic(sessionKey) +
+        this.recentAssociationDiagnostic(sessionKey),
     };
     return found ? {
       ready: true, host: found.app === 'other' ? undefined : found.app,
@@ -282,11 +300,13 @@ export class AutoWindowTracker {
           (found.tabHost === 'multi' && !found.tabId)
           ? '已关联原窗口，但多标签位置尚无可靠证据'
           : '已关联原窗口（无法确认内部标签或 VS Code 对话）') +
-        this.recentToastDiagnostic(sessionKey),
+        this.recentToastDiagnostic(sessionKey) +
+        (!this.watching ? '；原生前台监听当前未就绪，自动免弹窗与自动已读暂停' : ''),
     } : {
       ready: false,
       message: '尚无可靠的原窗口关联；从原 Codex 窗口再次发送消息后会尝试自动识别' +
-        this.recentToastDiagnostic(sessionKey),
+        this.recentToastDiagnostic(sessionKey) +
+        this.recentAssociationDiagnostic(sessionKey),
     };
   }
 

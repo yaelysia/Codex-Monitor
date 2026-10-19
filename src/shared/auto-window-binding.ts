@@ -74,6 +74,14 @@ export function normalizeSavedWindowBinding(raw: unknown, now = Date.now()): Per
 const WINDOW_HISTORY_MS = 5 * 60_000;
 const MAX_INPUT_AGE_MS = 45_000;
 const MAX_SAMPLES = 4096;
+/** Only metadata reason codes, never raw window values or conversation text. */
+export type WindowAssociationReason =
+  'client-unidentified' | 'input-unavailable' | 'input-outdated' |
+  'observer-started-late' | 'scan-clock-invalid' | 'input-already-consumed' |
+  'foreground-app-mismatch' | 'foreground-changed-during-scan' |
+  'bound-from-new-input';
+const MAX_ASSOCIATION_DIAGNOSTICS = 128;
+const ASSOCIATION_DIAGNOSTIC_TTL_MS = 10 * 60_000;
 const HEX_HANDLE = /^0x[0-9a-f]{1,16}$/i;
 const TAB_TOKEN = /^(?:rid:-?\d+(?:\.-?\d+){0,19}|msaa:[0-9a-f]{32})$/;
 
@@ -136,6 +144,21 @@ export class AutoWindowResolver {
   private history: ForegroundWindow[] = [];
   private bindings = new Map<string, OriginalWindow>();
   private lastInput = new Map<string, number>();
+  private associationDiagnostics = new Map<string, { at: number; reason: WindowAssociationReason }>();
+
+  private noteAssociation(key: string, reason: WindowAssociationReason, at: number): void {
+    this.associationDiagnostics.delete(key);
+    this.associationDiagnostics.set(key, { at, reason });
+    if (this.associationDiagnostics.size > MAX_ASSOCIATION_DIAGNOSTICS)
+      this.associationDiagnostics.delete(this.associationDiagnostics.keys().next().value!);
+  }
+
+  associationReason(key: string, now = Date.now()): WindowAssociationReason | null {
+    const value = this.associationDiagnostics.get(key);
+    return value && value.at <= now + 1000 &&
+      now - value.at <= ASSOCIATION_DIAGNOSTIC_TTL_MS ? value.reason : null;
+  }
+
   // A scan can finish before the asynchronous UIA/MSAA selection sample
   // arrives. Keep a bounded chance to upgrade the SAME HWND association.
   private pendingTabs = new Map<string, { matchStart: number; inputAt: number }>();
@@ -202,8 +225,18 @@ export class AutoWindowResolver {
         if (session.isSubagent) continue;
         const client = session.clientKind ?? 'unknown';
         const age = session.lastUserInputAgeAtSourceMs;
-        if (client === 'unknown' || typeof age !== 'number' || !Number.isFinite(age) ||
-          age < 0 || age > MAX_INPUT_AGE_MS) continue;
+        if (client === 'unknown') {
+          this.noteAssociation(session.key, 'client-unidentified', now);
+          continue;
+        }
+        if (typeof age !== 'number' || !Number.isFinite(age)) {
+          this.noteAssociation(session.key, 'input-unavailable', now);
+          continue;
+        }
+        if (age < 0 || age > MAX_INPUT_AGE_MS) {
+          this.noteAssociation(session.key, 'input-outdated', now);
+          continue;
+        }
         const captureEnd = source.capturedAt ?? scan.scannedAt;
         const captureStart = source.captureStartedAt ?? captureEnd;
         const earliestInputAt = captureStart - age;
@@ -219,12 +252,22 @@ export class AutoWindowResolver {
           exact <= now + 1000 && now - exact <= MAX_INPUT_AGE_MS;
         const matchStart = canUseExact ? exact : earliestInputAt;
         const inputAt = canUseExact ? exact : latestInputAt;
-        if (matchStart < this.history[0]!.at || inputAt > now + 1000 ||
-            captureStart > captureEnd || now - inputAt > MAX_INPUT_AGE_MS) continue;
+        if (matchStart < this.history[0]!.at) {
+          this.noteAssociation(session.key, 'observer-started-late', now);
+          continue;
+        }
+        if (inputAt > now + 1000 || captureStart > captureEnd ||
+            now - inputAt > MAX_INPUT_AGE_MS) {
+          this.noteAssociation(session.key, 'scan-clock-invalid', now);
+          continue;
+        }
         const token = session.lastUserInputAtSourceMs ?? inputAt;
         const previous = this.lastInput.get(session.key);
         if (previous != null && (previous === token ||
-            (session.lastUserInputAtSourceMs == null && Math.abs(inputAt - previous) < 1500))) continue;
+            (session.lastUserInputAtSourceMs == null && Math.abs(inputAt - previous) < 1500))) {
+          this.noteAssociation(session.key, 'input-already-consumed', now);
+          continue;
+        }
 
         const foregroundAt = (time: number): ForegroundWindow | undefined => {
           for (let j = this.history.length - 1; j >= 0; j--) {
@@ -236,7 +279,10 @@ export class AutoWindowResolver {
         const earliest = foregroundAt(matchStart);
         const selected = foregroundAt(inputAt);
         if (!earliest || !selected || selected.app === 'other' ||
-            !isClientMatch(client, selected.app)) continue;
+            !isClientMatch(client, selected.app)) {
+          this.noteAssociation(session.key, 'foreground-app-mismatch', now);
+          continue;
+        }
         const sameWindow = (item: ForegroundWindow): boolean =>
           item.hwnd === selected.hwnd && item.pid === selected.pid &&
           item.startedAt === selected.startedAt && item.app === selected.app;
@@ -244,7 +290,10 @@ export class AutoWindowResolver {
         // type in another tab, then return before the remote scan completes.
         const during = this.history.filter(item =>
           item.at >= matchStart && item.at <= inputAt);
-        if (!sameWindow(earliest) || during.some(item => !sameWindow(item))) continue;
+        if (!sameWindow(earliest) || during.some(item => !sameWindow(item))) {
+          this.noteAssociation(session.key, 'foreground-changed-during-scan', now);
+          continue;
+        }
         this.bindings.set(session.key, {
           ...selected, inputAt, tabId: null,
           tabCount: Math.max(earliest.tabCount ?? 0, selected.tabCount ?? 0),
@@ -255,6 +304,7 @@ export class AutoWindowResolver {
           this.pendingTabs.set(session.key, { matchStart, inputAt });
           this.confirmPendingTab(session.key);
         } else this.pendingTabs.delete(session.key);
+        this.noteAssociation(session.key, 'bound-from-new-input', now);
         changed.push(session.key);
       }
     }
@@ -411,5 +461,6 @@ export class AutoWindowResolver {
   clear(): void {
     this.history = []; this.bindings.clear(); this.lastInput.clear();
     this.pendingTabs.clear();
+    this.associationDiagnostics.clear();
   }
 }
