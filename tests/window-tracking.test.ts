@@ -289,7 +289,7 @@ describe('native foreground toast suppression through live tracker', () => {
     expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
   });
 
-  it('does not trust restored HWND bindings for popup suppression before a new input', () => {
+  it('trusts a restored binding after new native identity verification, without requiring another prompt', () => {
     const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codex-foreground-binding-'));
     const now=Date.now();
     const record={
@@ -303,9 +303,10 @@ describe('native foreground toast suppression through live tracker', () => {
     const tracker=new AutoWindowTracker('win32',folder);
     try {
       tracker.start();
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
       children.at(-1)!.stdout.emit('data',Buffer.from(sample(now-1000)));
       expect(tracker.status(sessionKey).ready).toBe(true);
-      expect(tracker.isSessionForeground(sessionKey, now)).toBe(false);
+      expect(tracker.isSessionForeground(sessionKey, now)).toBe(true);
       const scan:ScanResponse={scannedAt:now,sources:[{
         id:'local',label:'Windows',kind:'local',error:null,
         capturedAt:now,captureStartedAt:now,
@@ -373,7 +374,7 @@ describe('manual foreground switching triggers session read confirmation', () =>
     } finally {tracker.stop();}
   });
 
-  it('does not auto-confirm old restored bindings before fresh input or while hook is down', () => {
+  it('confirms a uniquely bound restored HWND only after live identity revalidation, not during downtime', () => {
     const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codex-foreground-read-'));
     const now=Date.now();
     fs.writeFileSync(path.join(folder,'window-bindings.json'),JSON.stringify({
@@ -391,9 +392,11 @@ describe('manual foreground switching triggers session read confirmation', () =>
     try {
       tracker.start();
       const native=children.at(-1)!;
+      expect(tracker.isSessionForegroundForRead(sessionKey,now)).toBe(false);
+      expect(confirmed).toEqual([]);
       native.stdout.emit('data',Buffer.from(sample(now-500)));
       expect(tracker.status(sessionKey).ready).toBe(true);
-      expect(confirmed).toEqual([]);
+      expect(confirmed).toEqual([sessionKey]);
       native.emit('exit',1);
       expect(tracker.isSessionForegroundForRead(sessionKey)).toBe(false);
     } finally {
