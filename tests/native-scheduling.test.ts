@@ -36,9 +36,12 @@ describe('bounded adaptive native read scheduling', () => {
     const seen = new Set<string>(), urgent = new Set<string>();
     for (let pass = 0; pass < 3; pass++) {
       const picked = chooseNativeReads(rows, attempts, urgent, now + pass * 3000);
-      expect(picked.length).toBe(pass === 2 ? 22 : 64);
+      expect(picked.length).toBe(64);
+      // Already-due active threads can fill unused capacity after all
+      // never-read targets have been selected. They must not starve newcomers.
+      const unseen = picked.filter(row => !seen.has(row.key));
+      expect(unseen.length).toBe(pass === 2 ? 22 : 64);
       for (const row of picked) {
-        expect(seen.has(row.key)).toBe(false);
         seen.add(row.key); attempts.set(row.key, { state: 'active', at: now + pass * 3000 });
       }
     }
