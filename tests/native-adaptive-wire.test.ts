@@ -67,6 +67,7 @@ describe('actual passive App Server WebSocket to native scheduling', () => {
     monitor.setTargets(scan); monitor.start();
     await until(() => monitor?.project(scan)?.sources[0]?.sessions[0]?.status === 'working');
     expect(reads).toBe(1);
+    const firstSuccess = monitor.health()[0]?.lastSuccessAt ?? 0;
 
     const publish = (params: Record<string, unknown>) => {
       for (const peer of clientSockets) peer.send(JSON.stringify({
@@ -75,13 +76,13 @@ describe('actual passive App Server WebSocket to native scheduling', () => {
     // A fabricated push cannot override a real read, even when its flags
     // claim waiting. The server still reads as active without flags.
     publish({ status: { type: 'active', activeFlags: ['waitingOnApproval'] } });
-    await until(() => reads >= 2);
+    await until(() => (monitor?.health()[0]?.lastSuccessAt ?? 0) > firstSuccess);
+    expect(reads).toBeGreaterThanOrEqual(2);
     expect(monitor.project(scan)?.sources[0]?.sessions[0]?.status).toBe('working');
     expect(emitted).toEqual([]);
 
     status = { type: 'active', activeFlags: ['waitingOnUserInput'] };
     publish({ status: { type: 'active', activeFlags: ['waitingOnUserInput'] } });
-    await until(() => reads >= 3);
     await until(() => emitted.length === 1);
     expect(emitted).toEqual([KEY]);
     expect(monitor.project(scan)?.sources[0]?.sessions[0]?.status).toBe('waiting');
