@@ -111,6 +111,16 @@ Codex Monitor 已支持 Windows 系统托盘和单实例后台运行：关闭主
 
 除已知的 `session_meta.originator`（如 `codex_vscode`）外，解析器现在还允许在 `originator` 缺失或无法识别时使用 **Codex 自己序列化的确切 `session_meta.source: "vscode"`** 作为 VS Code 来源线索；同理 `"cli"` 可回退为终端类型。Windows 与 WSL/SSH 的 Python 解析器保持一致。如果有明确的 Desktop/CLI originator，它始终优先于回退字段；其他、不明或对象形式的 source 不会臆测为 VS Code。来源识别只是窗口绑定的前置条件，后续仍必须核对源机器输入时间和 Windows 原生前台 HWND/PID/进程实例。
 
+## 只读原生前台观察器自检（2026-10）
+
+若本机 VS Code 的通知免弹窗和自动已读**同时**无法工作，先检查会话详情中的最近关联失败原因。若怀疑原生前台观察器根本没有获取到 VS Code 事件，可在 **Windows 的项目目录**运行：
+
+```powershell
+npm run diagnose:foreground -- --duration 20
+```
+
+运行期间将 VS Code 切至前台，再切走并切回一次。这个命令临时启动一次只读的原生前台观察器，返回 `status`、`samples`、`categories.vscode` 及分类切换次数。它**不进行窗口切换**、不运行 Codex 操作，也不输出 HWND、PID、标题、标签 ID、用户消息、终端内容和路径。如果 `categories.vscode=0`，应优先调查原生观察器或进程识别；如果 VS Code 样本正常但会话仍不能自动关联，应按详情中的「输入时间/来源类型/采集时钟」诊断继续定位。该命令只用于一次性本机诊断，不会增加 Monitor 常驻进程。
+
 ## Windows 前台关联诊断（2026-10）
 
 若某个会话仍无法自动抑制通知或标记已读，可以打开该会话的 Monitor 详情，查看「返回原窗口」旁的状态说明。除了最近一次系统通知判断，程序现在还显示**最近 10 分钟内会话到 Windows 窗口的关联检查原因**：例如来源类型未识别、日志里缺少带时间戳的用户提交、提交超过 45 秒、原生监听晚于本次提交、扫描时钟不一致、提交时前台不是预期的应用、或已成功绑定。所有诊断都只记录短枚举原因，不输出或持久化提示词、标题、窗口标题、命令行和 HWND/PID。
