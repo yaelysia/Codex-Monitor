@@ -11,6 +11,11 @@ import { pinnedRolloutsBySource } from '../src/shared/pinned-rollouts';
 import { SourceRetention } from '../src/shared/source-retention';
 import { NotificationPerformance } from '../src/shared/notification-performance';
 import { RunningContinuity, TRANSIENT_RUNNING_GAP_MS } from '../src/shared/running-continuity';
+import { DiagnosticRecorder, type DiagnosticView } from '../src/shared/diagnostics';
+import type { NativeConnection } from '../src/shared/native-state';
+import { NativeMonitor } from './native-monitor';
+import { NativeSettingsStore, validateNativeConnections } from './native-settings';
+import { resolveLocalRoot } from './local';
 
 const POLLING_FALLBACK_MS = 12_000;
 const HEALTHY_CHANNEL_AUDIT_MS = 60_000;
@@ -46,6 +51,10 @@ export class MonitorService {
   private readonly runningContinuity = new RunningContinuity();
   private readonly notificationPerformance = new NotificationPerformance();
   private readonly alertStore: AlertStateStore | null;
+  private readonly recorder = new DiagnosticRecorder();
+  private readonly native: NativeMonitor;
+  private readonly nativeSettings: NativeSettingsStore;
+  private connections: NativeConnection[];
   private lastSourceScanDurationMs: number | null = null;
   private lastScan: ScanResponse | null = null;
   private rawLastScan: ScanResponse | null = null;
@@ -84,6 +93,10 @@ export class MonitorService {
   ) {
     this.alertStore = storageDirectory ? new AlertStateStore(storageDirectory) : null;
     if (this.alertStore) this.tracker.restore(this.alertStore.load());
+    this.nativeSettings = new NativeSettingsStore(storageDirectory);
+    this.connections = this.nativeSettings.load();
+    this.native = new NativeMonitor(resolveLocalRoot(''), keys => this.acceptNativeChange(keys));
+    if (this.connections.length) this.native.configure(this.connections);
   }
 
   private persistAlerts(): void {
@@ -93,8 +106,48 @@ export class MonitorService {
   /** Share one fresh snapshot with the broadcaster and IPC caller. */
   private publishState(): MonitorState {
     const state = this.state();
+    this.recorder.observe(state);
     this.onChange(state);
     return state;
+  }
+
+  nativeConnections(): NativeConnection[] { return this.connections.map(row => ({ ...row })); }
+  setNativeConnections(raw: unknown): NativeConnection[] {
+    const connections = validateNativeConnections(raw);
+    const known = new Set(this.lastScan?.sources.map(source => source.id) ?? ['local']);
+    if (connections.some(row => row.enabled && !known.has(row.sourceId)))
+      throw new Error('请先在数据源设置中配置并扫描对应来源');
+    if (JSON.stringify(connections) === JSON.stringify(this.connections)) return this.nativeConnections();
+    this.nativeSettings.save(connections);
+    this.connections = connections;
+    this.native.configure(connections);
+    this.tracker.retainNativeWaiting(new Set());
+    this.publishState();
+    return this.nativeConnections();
+  }
+  diagnostics(): DiagnosticView {
+    const health = this.native.health();
+    return this.recorder.snapshot(this.state(), health);
+  }
+  clearDiagnostics(): DiagnosticView { this.recorder.clear(); return this.diagnostics(); }
+  recordPopup(sessionKey: string, suppressed: boolean): void {
+    this.recorder.recordPopup(sessionKey, suppressed, this.state());
+  }
+  private syncNativeWaiting(scan = this.native.project(this.lastScan)): void {
+    const keys = new Set<string>();
+    for (const source of scan?.sources ?? []) for (const row of source.sessions)
+      if (row.nativeStatus?.state === 'active' && row.nativeStatus.flags.length && row.status === 'waiting') keys.add(row.key);
+    this.tracker.retainNativeWaiting(keys);
+  }
+  private acceptNativeChange(keys: readonly string[]): void {
+    if (!this.running) return;
+    const scan = this.native.project(this.lastScan);
+    this.syncNativeWaiting(scan);
+    const alerts = this.tracker.observeNativeWaiting(scan, keys);
+    if (alerts.length) this.persistAlerts();
+    this.publishState();
+    if (!this.tracker.getMuted()) for (const alert of alerts)
+      if (!alert.read) this.onAlert(alert);
   }
 
   start(): void {
@@ -102,6 +155,7 @@ export class MonitorService {
     this.running = true;
     this.startedAt = Date.now();
     this.lastNativeAuditAt = this.startedAt;
+    this.native.start();
     if (this.eventsEnabled) this.watchers.start();
     this.timer = setInterval(() => this.pollFallback(), POLLING_FALLBACK_MS);
     if (this.platform === 'win32' &&
@@ -121,6 +175,8 @@ export class MonitorService {
 
   stop(): void {
     this.running = false;
+    this.native.stop();
+    this.tracker.retainNativeWaiting(new Set());
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     if (this.nativeAuditTimer) clearInterval(this.nativeAuditTimer);
@@ -140,8 +196,9 @@ export class MonitorService {
   }
 
   state(): MonitorState {
+    const scan = this.native.project(this.lastScan);
     return {
-      ...this.tracker.state(this.lastScan), scanRevision: this.scanRevision,
+      ...this.tracker.state(scan), scanRevision: this.scanRevision + this.native.revision,
       eventChannels: this.watchers.status(),
       performance: {
         sourceScanDurationMs: this.lastSourceScanDurationMs,
@@ -338,6 +395,8 @@ export class MonitorService {
     const justScanned = displayed.sources.filter(source => affected.has(source.id));
     this.rawLastScan = raw;
     this.lastScan = displayed;
+    this.native.setTargets(displayed);
+    this.syncNativeWaiting();
     this.scanRevision++;
     for (const source of justScanned) {
       if (!source.error) this.sourceRetention.remember(source, Date.now());
@@ -373,6 +432,7 @@ export class MonitorService {
     const scanStartedAt = performance.now();
     const task = (async () => {
       const settings = await readSettings();
+      this.native.setHome(resolveLocalRoot(settings.localRoot));
       const pinSources = this.sourceRetention.pinSnapshot(Date.now());
       const pins = pinnedRolloutsBySource(pinSources.sources.length
         ? pinSources : this.lastScan);
@@ -409,6 +469,8 @@ export class MonitorService {
           sources: order.map(id => byId.get(id)!).filter(Boolean) };
         this.rawLastScan = { scannedAt: delta.scannedAt,
           sources: order.map(id => rawById.get(id)!).filter(Boolean) };
+        this.native.setTargets(this.lastScan);
+        this.syncNativeWaiting();
         this.scanRevision++;
         this.lastFullScanAt = delta.scannedAt;
         if (this.eventsEnabled) this.watchers.reconcile(settings, delta.sources);

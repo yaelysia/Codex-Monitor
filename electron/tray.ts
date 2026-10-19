@@ -18,7 +18,8 @@ export class TrayController {
     private readonly floating: FloatingWindowController,
     private readonly monitor: MonitorService,
     private readonly store: ResidentStore,
-    private readonly quit: () => void) {}
+    private readonly quit: () => void,
+    private readonly showDiagnostics: () => void = () => {}) {}
 
   start(): void {
     if (this.tray) return;
@@ -41,6 +42,7 @@ export class TrayController {
     if (menuKey !== this.lastMenuKey) {
       this.tray.setContextMenu(Menu.buildFromTemplate([
       { label: '打开 Codex Monitor', click: () => this.main.show() },
+      { label: '诊断中心 / 原生状态', click: () => this.showDiagnostics() },
       { label: '显示悬浮窗', type: 'checkbox', checked: floatingVisible,
         click: () => { this.floating.setVisible(!floatingVisible); this.refresh(); } },
       { label: '系统通知静音', type: 'checkbox', checked: muted,

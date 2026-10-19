@@ -12,6 +12,8 @@ import { configureDesktopEvidenceStorage, flushDesktopEvidenceStorage } from './
 import { windowWasActivated } from '../src/shared/window-navigation';
 import { sourceIdFromAlertKey } from '../src/shared/source-alert';
 import { shouldDisplayNativeAlert } from '../src/shared/foreground-notification';
+import { DiagnosticsWindowController } from './diagnostics-window';
+import { registerDiagnosticsIpc } from './diagnostics-ipc';
 
 if (process.platform === 'win32' && process.env.CODEX_MONITOR_DISABLE_GPU_SANDBOX === '1') {
   app.commandLine.appendSwitch('disable-gpu-sandbox');
@@ -29,6 +31,7 @@ let monitor: MonitorService | null = null;
 let tray: TrayController | null = null;
 let resident: ResidentStore | null = null;
 let windowTracker: AutoWindowTracker | null = null;
+let diagnostics: DiagnosticsWindowController | null = null;
 
 function broadcast(channel: string, state: MonitorState | FloatingWindowState): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -65,7 +68,11 @@ if (firstInstance) {
         // Only the EXACT foreground Codex session skips its OS popup. Inbox
         // events remain unread and unrelated sessions/sources still notify.
         if (!shouldDisplayNativeAlert(alert,
-          key => windowTracker?.isSessionForeground(key) ?? false)) return;
+          key => windowTracker?.isSessionForeground(key) ?? false)) {
+          monitor?.recordPopup(alert.sessionKey, true);
+          return;
+        }
+        monitor?.recordPopup(alert.sessionKey, false);
         showDesktopAlert(alert, key => {
           // Source notifications have no Codex thread to focus.
           const sourceId = sourceIdFromAlertKey(key);
@@ -93,7 +100,9 @@ if (firstInstance) {
       snapshot => windowTracker?.observeScan(snapshot),
       process.platform, app.getPath('userData'),
     );
-    tray = new TrayController(mainWindow, floating, monitor, resident, () => app.quit());
+    diagnostics = new DiagnosticsWindowController();
+    registerDiagnosticsIpc(monitor, diagnostics);
+    tray = new TrayController(mainWindow, floating, monitor, resident, () => app.quit(), () => diagnostics?.show());
     tray.start();
     registerIpcHandlers(monitor, floating, mainWindow, resident, () => tray?.refresh(), windowTracker);
     if (!process.argv.includes('--background')) mainWindow.show();
@@ -113,6 +122,7 @@ app.on('window-all-closed', () => { /* intentional: fully quit from tray */ });
 app.on('before-quit', () => {
   monitor?.stop();
   windowTracker?.stop();
+  diagnostics?.destroy();
   flushDesktopEvidenceStorage();
   floating?.allowQuit();
   resident?.flush();

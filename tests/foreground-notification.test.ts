@@ -28,9 +28,9 @@ describe('session-scoped native toast suppression policy',()=>{
     expect(shouldDisplayNativeAlert(event('finished'),()=>{throw Error('down');})).toBe(true);
   });
 
-  it('applies foreground policy before constructing a native toast, not during alert tracking',()=>{
+  it('records the foreground decision before constructing a native toast, not during alert tracking',()=>{
     const main=readFileSync(new URL('../electron/main.ts', import.meta.url),'utf8');
-    expect(main).toMatch(/if \(!shouldDisplayNativeAlert\(alert,[\s\S]*?\)\) return;[\s\S]*?showDesktopAlert\(alert/);
+    expect(main).toMatch(/if \(!shouldDisplayNativeAlert\(alert,[\s\S]*?\)\)\s*\{\s*monitor\?\.recordPopup\(alert.sessionKey, true\);\s*return;\s*\}\s*monitor\?\.recordPopup\(alert.sessionKey, false\);\s*showDesktopAlert\(alert/);
     const source=readFileSync(new URL('../collector/window-tracker.ps1',import.meta.url),'utf8');
     expect(source).toContain('Interlocked.Read(ref lastEmittedAt) < 5000');
     expect(source).toContain('if (periodic && app != "terminal"');

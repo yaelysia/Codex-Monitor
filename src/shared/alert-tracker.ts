@@ -84,6 +84,7 @@ export class AlertTracker {
   private alerts: MonitorAlert[] = [];
   private muted = false;
   private notificationKinds: NotificationKinds = { ...DEFAULT_NOTIFICATION_KINDS };
+  private nativeNotified = new Set<string>();
 
   setMuted(muted: boolean): void { this.muted = muted; }
   getMuted(): boolean { return this.muted; }
@@ -246,6 +247,41 @@ export class AlertTracker {
     return pending;
   }
 
+  /** Keep only still-confirmed episodes for cross-channel waiting dedupe. */
+  retainNativeWaiting(keys: ReadonlySet<string>): void {
+    for (const key of this.nativeNotified) if (!keys.has(key)) this.nativeNotified.delete(key);
+  }
+  /** The native observer supplies only transitions after its initial snapshot.
+   * This does not advance filesystem scan history or invent terminal events.
+   */
+  observeNativeWaiting(scan: ScanResponse | null, keys: readonly string[], now = Date.now()): MonitorAlert[] {
+    if (!scan || !keys.length) return [];
+    const selected = new Set(keys), pending: MonitorAlert[] = [];
+    for (const source of scan.sources) {
+      if (source.error || source.stale) continue;
+      for (const row of source.sessions) {
+        if (!selected.has(row.key) || row.isSubagent || row.status !== 'waiting' ||
+            row.nativeStatus?.state !== 'active' || !row.nativeStatus.flags.length ||
+            row.pendingQuestionToken || this.alerts.some(alert =>
+              !alert.read && alert.sessionKey === row.key && alert.kind === 'waiting')) continue;
+        const id = JSON.stringify([row.key, 'waiting', 'native:' + now]);
+        if (this.seenAlertIds.has(id)) continue;
+        this.seenAlertIds.add(id); this.nativeNotified.add(row.key);
+        pending.push({ id, sessionKey: row.key, sessionId: row.id, kind: 'waiting',
+          title: row.title || '未命名会话', sourceLabel: row.sourceLabel,
+          workspace: row.workspace, at: now, read: false,
+          statusReason: 'App Server 原生状态从非等待切换为需要用户输入或审批；请在原客户端处理', questionText: null });
+      }
+    }
+    if (pending.length) {
+      this.applyNotificationKinds(pending);
+      this.alerts = [...pending, ...this.alerts].slice(0, MAX_ALERTS);
+      if (this.seenAlertIds.size > MAX_SEEN_ALERT_IDS)
+        this.seenAlertIds = new Set([...this.seenAlertIds].slice(-MAX_SEEN_ALERT_IDS));
+    }
+    return pending;
+  }
+
   /** Select only alerts already unread for these exact Codex sessions.
    * Source collection health alerts use synthetic source IDs, never HWNDs.
    * This scan is bounded by the 60-entry inbox (no polling or disk access).
@@ -382,6 +418,7 @@ export class AlertTracker {
           // Legacy/partial scanners may only expose the current terminal state.
           // With an event history, the abort has already been handled above.
           if (changed && newTerminal && recentlyObserved && !childNotification &&
+              !(kind === 'waiting' && this.nativeNotified.has(session.key)) &&
               !(kind === 'interrupted' && session.interruptedToken &&
                 interrupted.includes(session.interruptedToken)) &&
               !(kind === 'failed' && session.failedToken &&
