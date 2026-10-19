@@ -192,6 +192,29 @@ class TestRemoteScanCache(unittest.TestCase):
         self.assertTrue(all('_cache' not in row for row in first['sessions']))
         self.assertEqual(first['metrics']['logBytesRead'], second['metrics']['logBytesRead'])
 
+    def test_path_and_open_handle_share_an_identity_signature(self):
+        file = create(self.root)
+        # Force a later file change, rather than assuming creation == change.
+        with file.open('ab') as handle:
+            handle.write(b'{}\n')
+        with file.open('rb') as handle:
+            before, opened = file.stat(), os.fstat(handle.fileno())
+            self.assertEqual(scanner.file_signature(before), scanner.file_signature(opened),
+                'Path/handle identity must not compare Windows birth time with change time')
+
+    def test_windows_birthtime_normalization_does_not_drop_linux_change_detection(self):
+        from types import SimpleNamespace
+        values = dict(st_dev=1, st_ino=2, st_size=3, st_mtime_ns=4,
+                      st_ctime_ns=5, st_birthtime_ns=5, st_mode=33188)
+        before = SimpleNamespace(**values)
+        after = SimpleNamespace(**{**values, 'st_ctime_ns': 6})
+        with patch.object(scanner.sys, 'platform', 'win32'):
+            self.assertEqual(scanner.file_signature(before), scanner.file_signature(after))
+            replaced = SimpleNamespace(**{**values, 'st_ino': 7})
+            self.assertNotEqual(scanner.file_signature(before), scanner.file_signature(replaced))
+        with patch.object(scanner.sys, 'platform', 'linux'):
+            self.assertNotEqual(scanner.file_signature(before), scanner.file_signature(after))
+
     def test_write_during_parse_never_creates_a_reusable_snapshot(self):
         file = create(self.root)
         original = scanner.details

@@ -577,8 +577,12 @@ def rollout_candidates(base, metrics):
 
 def file_signature(stat):
     # Nanosecond values stay strings across JSON/JS; size+mtime alone misses replacements.
+    # CPython Windows stat/fstat disagree on ctime (creation vs change time).
+    # Use explicit birthtime there; Linux keeps its metadata-change timestamp.
+    identity_time = (getattr(stat, 'st_birthtime_ns', stat.st_ctime_ns)
+                     if sys.platform == 'win32' else stat.st_ctime_ns)
     return ':'.join(str(value) for value in (stat.st_dev, stat.st_ino, stat.st_size,
-                                            stat.st_mtime_ns, stat.st_ctime_ns, stat.st_mode))
+                                            stat.st_mtime_ns, identity_time, stat.st_mode))
 
 
 def cache_deadline(modified, now):
@@ -681,6 +685,12 @@ def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None, cache_request=No
                 metrics['cacheHits'] += 1
             else:
                 with file.open('rb') as handle:
+                    # On Windows retain a same-API change-time guard in addition
+                    # to the normalized path/handle identity signature.
+                    opened = None
+                    if conditional and sys.platform == 'win32':
+                        metrics['statCalls'] += 1
+                        opened = os.fstat(handle.fileno())
                     head, tail = read_edges(handle, size, metrics)
                     clipped = size > TAIL_BYTES
                     item = details(head, tail, file.name, clipped, modified, now)
@@ -706,7 +716,9 @@ def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None, cache_request=No
                     if (conditional and not (item['clientKind'] == 'vscode' and clipped and recent) and
                             PINNED_PATH.fullmatch(relative) and '..' not in relative):
                         metrics['statCalls'] += 1
-                        if file_signature(os.fstat(handle.fileno())) == signature:
+                        after = os.fstat(handle.fileno())
+                        if (file_signature(after) == signature and
+                                (opened is None or opened.st_ctime_ns == after.st_ctime_ns)):
                             item['_cache'] = dict(signature=signature, **{'from': now},
                                 until=cache_deadline(modified, now), title=item['title'],
                                 clientKind=item['clientKind'])
