@@ -9,6 +9,7 @@
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:startup": "node --test tests/main-bundle.node.mjs",
     "test:python": "python3 -m unittest discover -s tests -p 'test_*.py'",
     "test:probe": "node --test tests/app-server-probe.node.mjs",
     "probe:app-server": "node scripts/probe-app-server.mjs",
@@ -22,7 +23,8 @@
   "dependencies": {
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "@radix-ui/react-select": "^2.2.6"
+    "@radix-ui/react-select": "^2.2.6",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
@@ -34,8 +36,7 @@
     "electron-vite": "^4.0.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.0",
-    "vitest": "^3.2.4",
-    "ws": "^8.18.3"
+    "vitest": "^3.2.4"
   },
   "build": {
     "appId": "dev.yaelysia.codex-monitor",
