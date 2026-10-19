@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { FloatingWindowState, MonitorApi, MonitorState } from '../src/shared/types';
+import type { DiagnosticsApi } from '../src/shared/diagnostics';
 
 const api: MonitorApi = {
   windowChrome: process.platform === 'win32' ? 'overlay' : 'native',
@@ -42,4 +43,12 @@ const api: MonitorApi = {
     return () => ipcRenderer.removeListener('monitor:focus-session', handler);
   },
 };
+const diagnostics: DiagnosticsApi = {
+  get: () => ipcRenderer.invoke('diagnostics:get'),
+  clear: () => ipcRenderer.invoke('diagnostics:clear'),
+  exportReport: () => ipcRenderer.invoke('diagnostics:export'),
+  getConnections: () => ipcRenderer.invoke('diagnostics:native-get'),
+  setConnections: value => ipcRenderer.invoke('diagnostics:native-set', value),
+};
 contextBridge.exposeInMainWorld('monitorApi', api);
+contextBridge.exposeInMainWorld('diagnosticsApi', diagnostics);

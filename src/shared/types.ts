@@ -18,6 +18,8 @@ export interface SessionRecord {
    * Unlike clientKind, this identifies the observed running client, not creator.
    */
   desktopRuntimeObserved?: boolean;
+  /** Fresh, source-scoped App Server metadata; removed on disconnect/expiry. */
+  nativeStatus?: import('./native-state').NativeStatus;
   /** User input age according to source machine clock; may be absent. */
   lastUserInputAgeAtSourceMs?: number | null;
   /** Stable event timestamp in source clock, used only to deduplicate binding attempts. */
@@ -160,7 +162,7 @@ export interface MonitorPerformance {
 
 export interface MonitorState {
   scan: ScanResponse | null;
-  /** Increments only when a source snapshot or Desktop runtime projection is
+  /** Increments only when a source snapshot or runtime projection is
    * replaced, not for notification acknowledgement or watcher-status updates.
    */
   scanRevision?: number;
