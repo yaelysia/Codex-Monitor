@@ -43,7 +43,9 @@ export class NativeMonitor {
   constructor(private home: string,
     private readonly changed: (waitingKeys: readonly string[]) => void,
     private readonly factory: Factory = (endpoint, onEvent) => new AppServerProbeClient(endpoint,
-      { timeoutMs: 2000, showIds: true, onEvent })) {}
+      { timeoutMs: 2000, showIds: true,
+        onEvent: event => onEvent(event && typeof event === 'object' && !Array.isArray(event)
+          ? event as NativeHint : {}) })) {}
 
   configure(configs: readonly NativeConnection[]): void {
     this.configs = configs.map(config => ({ ...config }));
