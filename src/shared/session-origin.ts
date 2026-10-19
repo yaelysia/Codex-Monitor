@@ -58,13 +58,23 @@ export function extractSessionOrigin(head: string): SessionOrigin {
   };
 }
 
-/** source='vscode' alone cannot establish which UI actually created a session. */
-export function classifyClientKind(originator: unknown): import('./types').SessionClientKind {
-  if (typeof originator !== 'string') return 'unknown';
-  const name = originator.trim().toLowerCase();
-  if (['codex desktop', 'codex_desktop', 'codex_work_desktop'].includes(name)) return 'desktop';
-  if (name === 'codex_vscode' || name === 'codex-vscode') return 'vscode';
-  if (['codex-tui', 'codex_cli_rs', 'codex-cli', 'codex_cli'].includes(name)) return 'terminal';
+/** Prefer the exact originator (creator). Modern Codex can omit it while
+ * persisting a canonical SessionSource enum such as "vscode" or "cli".
+ * A source-only fallback is weak provenance; the native HWND association
+ * still requires an observed user input and matching foreground app.
+ */
+export function classifyClientKind(originator: unknown,
+  source?: unknown): import('./types').SessionClientKind {
+  if (typeof originator === 'string') {
+    const name = originator.trim().toLowerCase();
+    if (['codex desktop', 'codex_desktop', 'codex_work_desktop'].includes(name)) return 'desktop';
+    if (name === 'codex_vscode' || name === 'codex-vscode') return 'vscode';
+    if (['codex-tui', 'codex_cli_rs', 'codex-cli', 'codex_cli'].includes(name)) return 'terminal';
+  }
+  // Only recognize stable, exact source enums. Never guess a client from cwd,
+  // window title, repository paths, prompt text or arbitrary source objects.
+  if (source === 'vscode') return 'vscode';
+  if (source === 'cli') return 'terminal';
   return 'unknown';
 }
 
@@ -73,8 +83,11 @@ export function extractSessionClientKind(head: string): import('./types').Sessio
   if (!/"type"\s*:\s*"session_meta"/.test(line)) return 'unknown';
   try {
     const parsed = obj(JSON.parse(line));
-    return classifyClientKind(obj(parsed?.payload)?.originator);
+    const meta = obj(parsed?.payload);
+    return classifyClientKind(meta?.originator, meta?.source);
   } catch { /* Some metadata lines are clipped before base_instructions. */ }
   const prefix = line.split(/"base_instructions"\s*:/, 1)[0]!;
-  return classifyClientKind(/"originator"\s*:\s*"([^"]{1,128})"/.exec(prefix)?.[1]);
+  return classifyClientKind(
+    /"originator"\s*:\s*"([^"]{1,128})"/.exec(prefix)?.[1],
+    /"source"\s*:\s*"(vscode|cli)"/.exec(prefix)?.[1]);
 }
