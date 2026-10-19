@@ -97,6 +97,43 @@ describe('bounded and safe local file cache', () => {
 });
 
 
+describe('local cache preserves original user input timing across unchanged rollout reads',()=>{
+  it('recalculates the source input age on each cache hit without fabricating new activity',()=>{
+    const cache=new LocalScanCache();
+    const modified=1_800_000_010_000;
+    const inputAt=modified-1500;
+    const saved:SessionRecord={
+      key:'local:vscode-thread',id:'vscode-thread',sourceId:'local',
+      sourceLabel:'Windows',workspace:null,title:null,clientKind:'vscode',
+      status:'working',statusReason:'working',startedAt:null,
+      updatedAt:modified,ageAtSourceMs:0,byteSize:250,
+      lastUserInputAtSourceMs:inputAt,
+      lastUserInputAgeAtSourceMs:1500,
+    };
+    cache.put('rollout-vscode',modified,250,saved);
+    expect(cache.get('rollout-vscode',modified,250,modified+1000)).toMatchObject({
+      lastUserInputAtSourceMs:inputAt,lastUserInputAgeAtSourceMs:2500,
+    });
+    expect(cache.get('rollout-vscode',modified,250,modified+60_000)).toMatchObject({
+      lastUserInputAtSourceMs:inputAt,lastUserInputAgeAtSourceMs:61_500,
+    });
+    expect(saved.lastUserInputAgeAtSourceMs).toBe(1500);
+  });
+
+  it('never infers a user submission when the cached scan found no timestamp',()=>{
+    const cache=new LocalScanCache();
+    const source:SessionRecord={
+      key:'local:missing',id:'missing',sourceId:'local',sourceLabel:'Windows',
+      title:null,workspace:null,clientKind:'vscode',
+      status:'unknown',statusReason:'no input',
+      updatedAt:1000,ageAtSourceMs:0,startedAt:null,
+      lastUserInputAtSourceMs:null,lastUserInputAgeAtSourceMs:null,
+    };
+    cache.put('missing',1000,400,source);
+    expect(cache.get('missing',1000,400,3000)?.lastUserInputAgeAtSourceMs).toBeNull();
+  });
+});
+
 describe('local cache keeps answered-question state fresh', () => {
   it('holds explicit unmatched question evidence within the configured freshness window', () => {
     const c = new LocalScanCache();

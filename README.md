@@ -103,6 +103,10 @@ Codex Monitor 已支持 Windows 系统托盘和单实例后台运行：关闭主
 - **后台资源**：关闭主窗口时释放该 BrowserWindow；后台只保留托盘、必要的悬浮窗与监控服务。多次启动会唤醒原实例，不再重复创建监听通道、SSH 连接与系统通知。
 
 这套优化不承诺固定 CPU / 内存占用；实际收益取决于会话数量、事件通道健康度和 SSH 网络状况。首次运行与配置改变时仍需完整扫描。
+## 未修改的 JSONL 缓存也必须更新输入年龄（2026-10）
+
+本地 Windows JSONL 缓存此前只更新文件最后修改时间的年龄，却复用首次解析时的 `lastUserInputAgeAtSourceMs`。这会把旧用户输入误当成刚刚发生的提交，并破坏前台关联时的真实时间窗口；严重时既关联不了正确窗口，也可能不必要地尝试关联错误的窗口。现在所有本地缓存命中都以稳定的 `lastUserInputAtSourceMs` 重新计算输入年龄，**没有时间戳时返回未知而不是猜测**。无需重新读取 JSONL，不增加本地磁盘开销。
+
 ## VS Code 会话来源字段兼容（2026-10）
 
 除已知的 `session_meta.originator`（如 `codex_vscode`）外，解析器现在还允许在 `originator` 缺失或无法识别时使用 **Codex 自己序列化的确切 `session_meta.source: "vscode"`** 作为 VS Code 来源线索；同理 `"cli"` 可回退为终端类型。Windows 与 WSL/SSH 的 Python 解析器保持一致。如果有明确的 Desktop/CLI originator，它始终优先于回退字段；其他、不明或对象形式的 source 不会臆测为 VS Code。来源识别只是窗口绑定的前置条件，后续仍必须核对源机器输入时间和 Windows 原生前台 HWND/PID/进程实例。
