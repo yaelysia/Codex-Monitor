@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { WebSocket, WebSocketServer } from 'ws';
+import { createRequire } from 'node:module';
+// The app already depends on ws at runtime; don't introduce a new @types/ws dependency.
+const { WebSocketServer } = createRequire(import.meta.url)('ws') as { WebSocketServer: new (options: object) => any };
 import { NativeMonitor } from '../electron/native-monitor';
 import type { ScanResponse } from '../src/shared/types';
 
@@ -22,7 +24,7 @@ async function until(check: () => boolean, timeoutMs = 3000): Promise<void> {
 }
 
 let monitor: NativeMonitor | null = null;
-let server: WebSocketServer | null = null;
+let server: any = null;
 afterEach(async () => {
   monitor?.stop(); monitor = null;
   if (server) {
@@ -38,13 +40,13 @@ describe('actual passive App Server WebSocket to native scheduling', () => {
     await new Promise<void>(resolve => server!.once('listening', resolve));
     const port = (server.address() as { port: number }).port;
     const outgoing: string[] = [];
-    const clientSockets = new Set<WebSocket>();
+    const clientSockets = new Set<any>();
     let reads = 0;
     let status: { type: 'active'; activeFlags: string[] } = { type: 'active', activeFlags: [] };
-    server.on('connection', peer => {
+    server.on('connection', (peer: any) => {
       clientSockets.add(peer);
       peer.on('close', () => clientSockets.delete(peer));
-      peer.on('message', buffer => {
+      peer.on('message', (buffer: Buffer) => {
         const packet = JSON.parse(buffer.toString('utf8')) as { id?: number; method: string };
         outgoing.push(packet.method);
         if (packet.id === undefined) return;
