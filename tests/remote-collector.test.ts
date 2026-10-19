@@ -7,6 +7,7 @@ vi.mock('../electron/local', () => ({ resolveLocalRoot: () => '/mock',
 import { spawn, execFile } from 'node:child_process';
 import { refresh } from '../electron/collector';
 
+type WireConfig = { scanCache: { entries: unknown[] } };
 const platform = process.platform;
 afterEach(() => { Object.defineProperty(process, 'platform', { value: platform }); vi.restoreAllMocks(); });
 
@@ -17,14 +18,14 @@ describe('WSL and SSH use one conditional parse protocol', () => {
       (args.at(-1) as (error: null, stdout: Buffer) => void)(null, Buffer.from('Ubuntu'));
       return {};
     }) as typeof execFile);
-    const calls: { command: string; args: readonly string[]; config: Record<string, any> }[] = [];
+    const calls: { command: string; args: readonly string[]; config: WireConfig }[] = [];
     let fail = false;
     vi.mocked(spawn).mockImplementation(((command: string, args: readonly string[]) => {
       const stdout = Object.assign(new EventEmitter(), { setEncoding() {} });
       const stderr = Object.assign(new EventEmitter(), { setEncoding() {} });
       const stdin = Object.assign(new EventEmitter(), { end(input: string) {
         const encoded = input.match(/CONFIG_B64 = '([^']+)'/)![1]!;
-        const config = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+        const config = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) as WireConfig;
         calls.push({ command, args, config });
         queueMicrotask(() => {
           if (fail) { stderr.emit('data', 'offline'); child.emit('close', 1); return; }
@@ -42,7 +43,7 @@ describe('WSL and SSH use one conditional parse protocol', () => {
       } });
       const child = Object.assign(new EventEmitter(), { stdout, stderr, stdin, kill: () => true });
       return child;
-    }) as typeof spawn);
+    }) as unknown as typeof spawn);
     const settings = { localRoot: '', wslRoots: {}, remotes: [{ id: 'host', alias: 'host', root: '' }] };
     const selected = new Set(['ssh:host', 'wsl:Ubuntu']);
     const onSource = vi.fn();

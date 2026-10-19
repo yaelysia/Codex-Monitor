@@ -30,6 +30,8 @@ function invoke(directory: string, now: number, scanCache?: Record<string, unkno
   const input = `CONFIG_B64 = '${config}'\nimport time\ntime.time = lambda: ${now / 1000}\n` + script;
   return JSON.parse(execFileSync(process.platform === 'win32' ? 'python' : 'python3', ['-'], {
     input, encoding: 'utf8', timeout: 10000, cwd: directory, windowsHide: true,
+    // Match the remote UTF-8 wire encoding when the CI interpreter runs on Windows.
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
   }));
 }
 

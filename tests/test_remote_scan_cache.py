@@ -212,7 +212,8 @@ class TestRemoteScanCache(unittest.TestCase):
         config = base64.b64encode(json.dumps({'root': str(self.root), 'scanCache': {'version': 1}}).encode()).decode()
         source = "CONFIG_B64 = '" + config + "'\n" + Path(SPEC.origin).read_text(encoding='utf8')
         completed = subprocess.run([sys.executable, '-'], input=source, text=True,
-            encoding='utf8', capture_output=True, check=True, cwd=self.temp.name)
+            encoding='utf8', capture_output=True, check=True, cwd=self.temp.name,
+            env=dict(os.environ, PYTHONIOENCODING='utf-8'))
         response = json.loads(completed.stdout)
         self.assertEqual(response['version'], 1)
         self.assertEqual(response['sessions'][0]['id'], 'one')
