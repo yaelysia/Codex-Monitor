@@ -33,6 +33,7 @@ export class FloatingWindowController {
   private rendererReady = false;
   private rendererBroken = false;
   private autoRepairs: number[] = [];
+  private repairLimitWarned = false;
 
   private stopMotion(): void {
     if (this.motionTick) clearInterval(this.motionTick);
@@ -111,6 +112,10 @@ export class FloatingWindowController {
     // DWM / display transitions can clear the native topmost flag without
     // destroying the renderer. Restore it, without taking keyboard focus.
     if (!win.isAlwaysOnTop()) win.setAlwaysOnTop(true, 'floating');
+    // A layered window may lose native opacity after a graphics/display
+    // transition even while isVisible() and WebContents are still healthy.
+    if (Math.abs(win.getOpacity() - this.dock.opacity) > 0.015)
+      win.setOpacity(this.dock.opacity);
     const bounds = win.getBounds();
     const onScreen = screen.getAllDisplays().some(display => {
       const area = display.workArea;
@@ -135,9 +140,13 @@ export class FloatingWindowController {
       const now = Date.now();
       this.autoRepairs = this.autoRepairs.filter(at => now - at < FLOAT_REPAIR_WINDOW_MS);
       if (this.autoRepairs.length >= MAX_AUTO_FLOAT_REPAIRS) {
-        console.warn('[Codex Monitor] Floating window repair limit reached; use the tray repair action');
+        if (!this.repairLimitWarned) {
+          this.repairLimitWarned = true;
+          console.warn('[Codex Monitor] Floating window repair limit reached; use the tray repair action');
+        }
         return;
       }
+      this.repairLimitWarned = false;
       this.autoRepairs.push(now);
       console.warn('[Codex Monitor] Rebuilding unavailable floating renderer:', reason);
       this.rebuildAndShow();
@@ -190,6 +199,7 @@ export class FloatingWindowController {
     if (this.quitting) return this.state();
     this.cancelRepair();
     this.autoRepairs = [];
+    this.repairLimitWarned = false;
     this.dock.visible = true;
     this.rebuildAndShow();
     return this.state();

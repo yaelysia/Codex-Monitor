@@ -55,6 +55,7 @@ vi.mock('electron', () => {
     getBounds() { return { ...this.bounds }; }
     setBounds(bounds: typeof this.bounds) { this.bounds = { ...bounds }; }
     setOpacity(value: number) { this.opacity = value; }
+    getOpacity() { return this.opacity; }
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }
     showInactive() { this.visible = true; }
@@ -513,6 +514,22 @@ describe('resident floating window self-recovery without restarting Monitor', ()
     first.emit('unresponsive');
     await vi.advanceTimersByTimeAsync(FLOAT_UNRESPONSIVE_GRACE_MS + FLOAT_REPAIR_DELAY_MS);
     expect(fake.windows).toHaveLength(2);
+  });
+
+  it('restores a native opacity/position lost across display transitions without stealing focus', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    const win = fake.windows[0]!;
+    win.opacity = 0; win.topmost = false;
+    win.setBounds({ x: -5000, y: -5000, width: 38, height: 78 });
+    await vi.advanceTimersByTimeAsync(FLOAT_HEALTH_CHECK_MS);
+    expect(win.opacity).toBe(0.7);
+    expect(win.topmost).toBe(true);
+    expect(win.bounds).toMatchObject({ x: 1920, y: 430, width: 38, height: 78 });
+    expect(win.focusCalls).toBe(0);
+    expect(fake.windows).toHaveLength(1); // No renderer restart on native-only repair.
+    controller.allowQuit();
   });
 
   it('recovers a rejected page load and reasserts topmost placement after resume', async () => {
