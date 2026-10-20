@@ -28,6 +28,10 @@ def hints(response):
         for row in response['sessions'] if '_cache' in row]}
 
 
+def indexed_hints(response):
+    return dict(hints(response), directory=response['directory'])
+
+
 def hydrate(response, baseline):
     by_path = {row['rolloutPath']: row for row in baseline['sessions']}
     result = []
@@ -106,18 +110,23 @@ def main():
             results.append({'case': name, 'medianMs': round(statistics.median(samples), 2),
                 **io_counts, **({'parsedFiles': result['metrics']['parsedFiles'],
                     'cacheHits': result['metrics']['cacheHits'],
-                    'indexedFiles': result['metrics']['indexedFiles']} if isinstance(result, dict) else {})})
+                    'indexedFiles': result['metrics']['indexedFiles'],
+                    'indexMode': result['metrics']['indexMode'],
+                    'directoriesEnumerated': result['metrics']['directoriesEnumerated'],
+                    'statCalls': result['metrics']['statCalls']} if isinstance(result, dict) else {})})
         expected = baseline.scan(root, now=now)
         bench('baseline-full', lambda: baseline.scan(root, now=now), expected)
         bench('optimized-cold', lambda: current.scan(root, now=now, cache_request={'version': 1}), expected)
         expected = baseline.scan(root, now=now + 3000)
         bench('warm-unchanged', lambda: current.scan(root, now=now + 3000, cache_request=hints(initial)), expected)
+        bench('indexed-unchanged', lambda: current.scan(root, now=now + 3000, cache_request=indexed_hints(initial)), expected)
         changed = day / ('rollout-' + str(opts.files - 1) + '.jsonl')
         with changed.open('a', encoding='utf8') as stream:
             stream.write(json.dumps({'type': 'event_msg', 'payload': {'type': 'turn_started', 'turn_id': 'new-turn'}}) + '\n')
         os.utime(changed, ns=((now + 2000) * 1_000_000,) * 2)
         expected = baseline.scan(root, now=now + 3000)
         bench('warm-one-change', lambda: current.scan(root, now=now + 3000, cache_request=hints(initial)), expected)
+        bench('indexed-one-change', lambda: current.scan(root, now=now + 3000, cache_request=indexed_hints(initial)), expected)
         print(json.dumps({'files': opts.files, 'selected': 200, 'repeats': opts.repeats,
             'timingScope': 'synthetic-local-python-filesystem', 'baseline': 'provided-file' if opts.baseline else 'uncached-current',
             'results': results}, indent=2))
