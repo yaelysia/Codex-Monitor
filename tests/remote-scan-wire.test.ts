@@ -85,7 +85,7 @@ describe('actual Python stdin incremental directory index', () => {
     writeFileSync(other, [
       { type: 'session_meta', payload: { id: 'new', source: 'cli' } },
       { type: 'event_msg', payload: { type: 'turn_complete', turn_id: 'b' } },
-    ].map(JSON.stringify).join('\n') + '\n');
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
     utimesSync(other, new Date(NOW + 2100), new Date(NOW + 2100));
     cache.noteWatch(source, { kind: 'change', reset: true, paths: [] });
     const recovered = await read(NOW + 3000);
