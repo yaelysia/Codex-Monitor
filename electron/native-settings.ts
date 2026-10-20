@@ -13,7 +13,7 @@ export function validateNativeConnections(raw: unknown): NativeConnection[] {
         !/^(local|(?:wsl|ssh):[^\s\u0000-\u001f]+)$/.test(row.sourceId) ||
         typeof row.enabled !== 'boolean' || !['auto','socket','ws'].includes(String(row.transport)) ||
         typeof row.endpoint !== 'string' || row.endpoint.length > 2048 || /[\u0000-\u001f]/.test(row.endpoint))
-      throw new Error('连接的数据源、类型或地址无效；每个来源只能配置一个端点');
+      throw new Error('原生连接的数据源、类型或地址无效');
     const transport = row.transport as NativeConnection['transport'];
     const endpoint = row.endpoint.trim();
     if (transport === 'auto') {

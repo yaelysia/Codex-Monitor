@@ -202,7 +202,15 @@ export default function DiagnosticsApp() {
             placeholder={row.transport === 'ws' ? 'ws://127.0.0.1:端口/' : '本机绝对套接字路径'}
             onChange={event => updateConnection(index, { endpoint: event.target.value })} /></label>}
         <label><input type="checkbox" checked={row.enabled} onChange={event => updateConnection(index, { enabled: event.target.checked })} /> 启用只读状态采集</label>
-        <button onClick={() => setConnections(rows => rows.filter((_, i) => i !== index))}>移除</button>
+        <div className="actions">
+          <button disabled={index === 0} onClick={() => setConnections(rows => {
+            const next = [...rows]; [next[index - 1], next[index]] = [next[index]!, next[index - 1]!]; return next;
+          })}>上移优先级</button>
+          <button disabled={index === connections.length - 1} onClick={() => setConnections(rows => {
+            const next = [...rows]; [next[index], next[index + 1]] = [next[index + 1]!, next[index]!]; return next;
+          })}>下移优先级</button>
+          <button onClick={() => setConnections(rows => rows.filter((_, i) => i !== index))}>移除</button>
+        </div>
       </fieldset>)}
       <div className="actions"><button disabled={busy || connections.length >= 8 || !sources.length}
         onClick={() => { const source = sources.find(source => !connections.some(row => row.sourceId === source.id)) ?? sources[0];
