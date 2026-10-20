@@ -10,6 +10,13 @@ export const HIDDEN_RENDERER_IDLE_MS = 60_000;
 export const DOCK_EXPAND_MS = 260;
 export const DOCK_COLLAPSE_MS = 220;
 const DOCK_FRAME_MS = 16;
+/** Check native/renderer lifecycle cheaply, only while the user wants the dock visible. */
+export const FLOAT_HEALTH_CHECK_MS = 30_000;
+export const FLOAT_LOAD_TIMEOUT_MS = 25_000;
+export const FLOAT_REPAIR_DELAY_MS = 1_500;
+export const FLOAT_UNRESPONSIVE_GRACE_MS = 15_000;
+export const MAX_AUTO_FLOAT_REPAIRS = 3;
+const FLOAT_REPAIR_WINDOW_MS = 10 * 60_000;
 export class FloatingWindowController {
   private win: BrowserWindow | null = null;
   private dock: SavedDock;
@@ -19,6 +26,14 @@ export class FloatingWindowController {
   private motion: FloatingWindowState['motion'] = null;
   private motionTick: ReturnType<typeof setInterval> | null = null;
   private snapRelease: ReturnType<typeof setTimeout> | null = null;
+  private healthTick: ReturnType<typeof setInterval> | null = null;
+  private repairTick: ReturnType<typeof setTimeout> | null = null;
+  private loadDeadline: ReturnType<typeof setTimeout> | null = null;
+  private unresponsiveDeadline: ReturnType<typeof setTimeout> | null = null;
+  private rendererReady = false;
+  private rendererBroken = false;
+  private autoRepairs: number[] = [];
+  private repairLimitWarned = false;
 
   private stopMotion(): void {
     if (this.motionTick) clearInterval(this.motionTick);
@@ -57,6 +72,163 @@ export class FloatingWindowController {
     this.motionTick.unref?.();
   }
 
+  private cancelRepair(): void {
+    if (this.repairTick) clearTimeout(this.repairTick);
+    this.repairTick = null;
+  }
+
+  private cancelLoadDeadline(): void {
+    if (this.loadDeadline) clearTimeout(this.loadDeadline);
+    this.loadDeadline = null;
+  }
+
+  private cancelUnresponsiveDeadline(): void {
+    if (this.unresponsiveDeadline) clearTimeout(this.unresponsiveDeadline);
+    this.unresponsiveDeadline = null;
+  }
+
+  private stopHealth(): void {
+    if (this.healthTick) clearInterval(this.healthTick);
+    this.healthTick = null;
+  }
+
+  private ensureHealth(): void {
+    if (!this.dock.visible || this.quitting || this.healthTick) return;
+    this.healthTick = setInterval(() => this.checkHealth(), FLOAT_HEALTH_CHECK_MS);
+    this.healthTick.unref?.();
+  }
+
+  /** A BrowserWindow may still exist after its renderer has crashed.
+   * Never regard isVisible() alone as proof it can draw the rail.
+   */
+  private checkHealth(): void {
+    if (this.quitting || !this.dock.visible) return;
+    const win = this.win;
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed() ||
+        !win.isVisible() || this.rendererBroken) {
+      this.scheduleRepair('window-or-renderer-unavailable');
+      return;
+    }
+    // DWM / display transitions can clear the native topmost flag without
+    // destroying the renderer. Restore it, without taking keyboard focus.
+    if (!win.isAlwaysOnTop()) win.setAlwaysOnTop(true, 'floating');
+    // A layered window may lose native opacity after a graphics/display
+    // transition even while isVisible() and WebContents are still healthy.
+    if (Math.abs(win.getOpacity() - this.dock.opacity) > 0.015)
+      win.setOpacity(this.dock.opacity);
+    const bounds = win.getBounds();
+    const onScreen = screen.getAllDisplays().some(display => {
+      const area = display.workArea;
+      return bounds.x < area.x + area.width && bounds.x + bounds.width > area.x &&
+        bounds.y < area.y + area.height && bounds.y + bounds.height > area.y;
+    });
+    if (!onScreen && !this.snapping && !this.motion) this.reposition();
+  }
+
+  /** Restrict automatic rebuilds to three within ten minutes; a broken
+   * Chromium/WebContents or a temporarily unavailable GPU must not cause a
+   * restart storm. A deliberate tray repair remains available at any time.
+   */
+  private scheduleRepair(reason: string): void {
+    if (this.quitting || !this.dock.visible || this.repairTick) return;
+    this.repairTick = setTimeout(() => {
+      this.repairTick = null;
+      if (this.quitting || !this.dock.visible) return;
+      const win = this.win;
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed() &&
+          win.isVisible() && !this.rendererBroken) return;
+      const now = Date.now();
+      this.autoRepairs = this.autoRepairs.filter(at => now - at < FLOAT_REPAIR_WINDOW_MS);
+      if (this.autoRepairs.length >= MAX_AUTO_FLOAT_REPAIRS) {
+        if (!this.repairLimitWarned) {
+          this.repairLimitWarned = true;
+          console.warn('[Codex Monitor] Floating window repair limit reached; use the tray repair action');
+        }
+        return;
+      }
+      this.repairLimitWarned = false;
+      this.autoRepairs.push(now);
+      console.warn('[Codex Monitor] Rebuilding unavailable floating renderer:', reason);
+      try {
+        this.rebuildAndShow();
+      } catch {
+        // A transient native/GPU window-construction failure must not take
+        // down the resident monitor. Retry through the same bounded budget.
+        console.warn('[Codex Monitor] Floating renderer rebuild failed; retrying within limit');
+        this.scheduleRepair('native-create-failed');
+      }
+    }, FLOAT_REPAIR_DELAY_MS);
+    this.repairTick.unref?.();
+  }
+
+  private markRendererBroken(win: BrowserWindow, reason: string): void {
+    if (this.quitting || this.win !== win) return;
+    this.rendererBroken = true;
+    this.rendererReady = false;
+    this.cancelLoadDeadline();
+    this.scheduleRepair(reason);
+  }
+
+  private loaded(win: BrowserWindow): void {
+    if (this.win !== win || win.isDestroyed()) return;
+    this.rendererReady = true;
+    this.rendererBroken = false;
+    this.cancelLoadDeadline();
+    this.cancelRepair();
+  }
+
+  /** Destroy and replace the native HWND, not merely show a still-crashed
+   * WebContents. Retain the saved side/Y/size/opacity and remain unfocused.
+   */
+  private rebuildAndShow(): void {
+    if (this.quitting || !this.dock.visible) return;
+    const old = this.win;
+    this.win = null; // Old 'closed' events cannot mutate the replacement.
+    this.stopMotion();
+    this.cancelIdleDestroy();
+    this.cancelLoadDeadline();
+    this.cancelUnresponsiveDeadline();
+    this.rendererBroken = false;
+    this.rendererReady = false;
+    this.dock.expanded = false;
+    if (old && !old.isDestroyed()) old.destroy();
+    this.create();
+    this.win!.showInactive();
+    this.win!.setAlwaysOnTop(true, 'floating');
+    this.ensureHealth();
+    this.persist();
+  }
+
+  /** Explicit recovery even if Windows still reports a visible but blank
+   * layered window. Also works if the user previously hid the rail.
+   */
+  repair(): FloatingWindowState {
+    if (this.quitting) return this.state();
+    this.cancelRepair();
+    this.autoRepairs = [];
+    this.repairLimitWarned = false;
+    this.dock.visible = true;
+    try { this.rebuildAndShow(); }
+    catch {
+      console.warn('[Codex Monitor] Manual floating repair failed; bounded retry scheduled');
+      this.ensureHealth();
+      this.scheduleRepair('manual-repair-failed');
+    }
+    return this.state();
+  }
+
+  /** Resume/display-change reconciliation without waking a deliberately
+   * hidden dock or bringing the floating rail into the foreground.
+   */
+  resume(): void {
+    if (this.quitting || !this.dock.visible) return;
+    this.reposition();
+    const win = this.win;
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed() && win.isVisible())
+      win.setAlwaysOnTop(true, 'floating');
+    this.checkHealth();
+  }
+
   private cancelIdleDestroy(): void {
     if (this.idleDestroy) clearTimeout(this.idleDestroy);
     this.idleDestroy = null;
@@ -70,7 +242,8 @@ export class FloatingWindowController {
   }
 
   state(): FloatingWindowState {
-    return { visible: this.win?.isVisible() ?? false, expanded: this.dock.expanded,
+    return { visible: this.win && !this.win.isDestroyed() ? this.win.isVisible() : false,
+      expanded: this.dock.expanded,
       side: this.dock.side, opacity: this.dock.opacity,
       appearance: this.dock.appearance ?? 'moonsea', compactSize: this.dock.compactSize ?? 'micro',
       motion: this.motion };
@@ -79,19 +252,31 @@ export class FloatingWindowController {
   get browserWindow(): BrowserWindow | null { return this.win; }
 
   show(): FloatingWindowState {
+    if (this.quitting) return this.state();
     this.cancelIdleDestroy();
+    this.cancelRepair();
     this.stopMotion();
-    // Re-show as a collapsed rail without constructing a second renderer.
-    this.dock.expanded = false;
-    if (!this.win || this.win.isDestroyed()) this.create();
-    else this.place(this.bounds(this.display()));
     this.dock.visible = true;
-    this.win!.showInactive();
-    this.persist();
+    // A dead renderer can leave a native HWND that still claims to be
+    // visible; do not reuse it when the user requests the rail again.
+    this.dock.expanded = false;
+    if (!this.win || this.win.isDestroyed() || this.win.webContents.isDestroyed() ||
+        this.rendererBroken) {
+      this.rebuildAndShow();
+    } else {
+      this.place(this.bounds(this.display()));
+      this.win.showInactive();
+      this.win.setAlwaysOnTop(true, 'floating');
+      this.ensureHealth();
+      this.persist();
+    }
     return this.state();
   }
 
   hide(): FloatingWindowState {
+    this.cancelRepair();
+    this.stopHealth();
+    this.cancelUnresponsiveDeadline();
     this.stopMotion();
     this.win?.hide();
     this.dock.visible = false;
@@ -191,6 +376,10 @@ export class FloatingWindowController {
 
   allowQuit(): void {
     this.quitting = true;
+    this.cancelRepair();
+    this.stopHealth();
+    this.cancelUnresponsiveDeadline();
+    this.cancelLoadDeadline();
     this.stopMotion();
     this.cancelIdleDestroy();
     if (this.snapRelease) clearTimeout(this.snapRelease);
@@ -236,10 +425,35 @@ export class FloatingWindowController {
       },
     });
     this.win = win;
+    this.rendererReady = false;
+    this.rendererBroken = false;
+    this.cancelLoadDeadline();
+    this.loadDeadline = setTimeout(() => {
+      this.loadDeadline = null;
+      if (this.win === win && !this.rendererReady)
+        this.markRendererBroken(win, 'load-timeout');
+    }, FLOAT_LOAD_TIMEOUT_MS);
+    this.loadDeadline.unref?.();
     win.setOpacity(this.dock.opacity);
     win.setAlwaysOnTop(true, 'floating');
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', event => event.preventDefault());
+    win.webContents.on('render-process-gone', (_event, details) => {
+      if (details.reason !== 'clean-exit') this.markRendererBroken(win, 'renderer-gone');
+    });
+    win.webContents.on('did-finish-load', () => this.loaded(win));
+    win.webContents.on('did-fail-load', (_event, code, _description, _url, mainFrame) => {
+      if (mainFrame && code !== -3) this.markRendererBroken(win, 'load-failed');
+    });
+    win.on('unresponsive', () => {
+      this.cancelUnresponsiveDeadline();
+      this.unresponsiveDeadline = setTimeout(() => {
+        this.unresponsiveDeadline = null;
+        if (this.win === win && !win.isDestroyed()) this.markRendererBroken(win, 'unresponsive');
+      }, FLOAT_UNRESPONSIVE_GRACE_MS);
+      this.unresponsiveDeadline.unref?.();
+    });
+    win.on('responsive', () => this.cancelUnresponsiveDeadline());
     win.on('moved', () => { if (!this.snapping) this.snapToDisplayEdge(); });
     win.on('blur', () => {
       // A click outside this BrowserWindow removes focus. The rail remains
@@ -253,16 +467,24 @@ export class FloatingWindowController {
       this.hide();
     });
     win.on('closed', () => {
-      if (this.win === win) this.win = null;
+      if (this.win !== win) return;
+      this.win = null;
+      this.rendererReady = false;
+      this.cancelLoadDeadline();
+      this.cancelUnresponsiveDeadline();
       this.stopMotion();
       if (this.snapRelease) clearTimeout(this.snapRelease);
       this.snapRelease = null;
       this.cancelIdleDestroy();
       this.onState(this.state());
+      if (!this.quitting && this.dock.visible) this.scheduleRepair('window-closed');
     });
     const rendererURL = process.env.ELECTRON_RENDERER_URL;
-    if (rendererURL) void win.loadURL(rendererURL.replace(/\/$/, '') + '/floating.html');
-    else void win.loadFile(path.join(__dirname, '../renderer/floating.html'));
+    const load = rendererURL
+      ? win.loadURL(rendererURL.replace(/\/$/, '') + '/floating.html')
+      : win.loadFile(path.join(__dirname, '../renderer/floating.html'));
+    void load.then(() => this.loaded(win))
+      .catch(() => this.markRendererBroken(win, 'load-rejected'));
   }
 
   private place(bounds: Electron.Rectangle): void {

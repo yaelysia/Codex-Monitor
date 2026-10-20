@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen } from 'electron';
+import { app, BrowserWindow, powerMonitor, screen } from 'electron';
 import type { FloatingWindowState, MonitorState } from '../src/shared/types';
 import { MainWindowController } from './main-window';
 import { FloatingWindowController } from './floating';
@@ -113,8 +113,16 @@ if (firstInstance) {
     if (!process.argv.includes('--background')) mainWindow.show();
     if (saved.dock.visible) floating.show();
     monitor.start();
-    screen.on('display-removed', () => floating?.reposition());
-    screen.on('display-metrics-changed', () => floating?.reposition());
+    screen.on('display-added', () => floating?.resume());
+    screen.on('display-removed', () => floating?.resume());
+    screen.on('display-metrics-changed', () => floating?.resume());
+    // A sleep/hibernate cycle may invalidate DWM's layered/topmost native
+    // window without destroying the application. Reconcile after wake, but
+    // never re-show a dock the user explicitly hid.
+    powerMonitor.on('resume', () => {
+      const tick = setTimeout(() => floating?.resume(), 1_500);
+      tick.unref?.();
+    });
     app.on('activate', () => mainWindow?.show());
   }).catch(error => {
     console.error('Unable to start Codex Monitor:', error);

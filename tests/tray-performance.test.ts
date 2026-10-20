@@ -57,6 +57,7 @@ function fixture() {
       appearance:'moonsea',compactSize:'micro',
     }),
     setVisible: (value:boolean) => {floatingVisible=value;},
+    repair: vi.fn(() => {floatingVisible=true;}),
     setOpacity: (value:number) => {opacity=value;},
   } as unknown as FloatingWindowController;
   const resident={
@@ -94,6 +95,19 @@ describe('resident tray native-work avoidance', () => {
     expect(tray.tooltips).toHaveLength(count);
     ctx.controller.destroy();
     expect(tray.destroyed).toBe(true);
+  });
+
+  it('provides a direct recovery action even while the native window still claims to be visible', () => {
+    const ctx=fixture();
+    ctx.controller.start();
+    const tray=fake.trays[0]!;
+    const actions=(((tray.menus[0] as {items: Array<{label?:string;click?:()=>void}>}).items));
+    const repair=actions.find(row=>row.label==='修复悬浮窗（重建窗口）');
+    expect(repair?.click).toBeTypeOf('function');
+    repair?.click?.();
+    expect((ctx.controller as any).floating.repair).toHaveBeenCalledOnce();
+    // No expensive native-menu rebuild when visibility was already true.
+    expect(tray.menus).toHaveLength(1);
   });
 
   it('rebuilds only when a menu option changes, including dock opacity',()=>{
