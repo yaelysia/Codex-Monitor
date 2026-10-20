@@ -127,7 +127,7 @@ export class MonitorService {
   }
   diagnostics(): DiagnosticView {
     const health = this.native.health();
-    return this.recorder.snapshot(this.state(), health);
+    return this.recorder.snapshot(this.state(), health, Date.now(), this.native.coverage(this.lastScan));
   }
   clearDiagnostics(): DiagnosticView { this.recorder.clear(); return this.diagnostics(); }
   recordPopup(sessionKey: string, suppressed: boolean): void {

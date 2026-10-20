@@ -13,6 +13,7 @@ vi.mock('../electron/native-monitor', async () => {
     configure(rows: NativeConnection[]) { fake.configure(rows); fake.samples.clear(); fake.revision++; }
     setTargets() {} setHome() {} start() {} stop() { fake.samples.clear(); fake.revision++; }
     health() { return []; }
+    coverage() { return []; }
     project(scan: ScanResponse | null) { return projectNativeScan(scan, fake.samples); }
   } };
 });

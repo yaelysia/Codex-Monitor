@@ -30,7 +30,7 @@ describe('diagnostic center IPC and user-directed export', () => {
     for (const channel of fake.handlers.keys()) {
       const bad = { sender: {}, senderFrame: run.event.senderFrame };
       const child = { sender: run.sender, senderFrame: {} };
-      if (channel === 'diagnostics:export') {
+      if (channel === 'diagnostics:export' || channel === 'diagnostics:native-discover') {
         await expect(run.call(channel, undefined, bad)).rejects.toThrow('诊断接口');
         await expect(run.call(channel, undefined, child)).rejects.toThrow('诊断接口');
       } else {

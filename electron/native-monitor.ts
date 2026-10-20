@@ -1,6 +1,7 @@
 import { AppServerProbeClient, parseProbeEndpoint, type ProbeEndpoint } from '../scripts/app-server-probe/client.mjs';
-import { freshNative, isNativeWaiting, nativeFileChangedAt, parseNativeThread, projectNativeScan,
-  THREAD_UUID, type NativeConnection, type NativeHealth, type NativeSample, type NativeStatus } from '../src/shared/native-state';
+import { freshNative, isNativeWaiting, parseNativeThread, projectNativeScan,
+  THREAD_UUID, nativeConnectionKey, nativeFileChangedAt, type NativeConnection,
+  type NativeCoverageEntry, type NativeHealth, type NativeSample, type NativeStatus } from '../src/shared/native-state';
 import type { ScanResponse } from '../src/shared/types';
 import { chooseNativeReads, nativeListInterval, nextNativeReadDueIn,
   NATIVE_ACTIVE_READ_MS, NATIVE_PUSH_WAKE_MS, type NativeReadObservation } from '../src/shared/native-scheduling';
@@ -17,7 +18,7 @@ type NativeHint = { method?: unknown; threadId?: unknown; serverRequestIgnored?:
 type Factory = (endpoint: ProbeEndpoint, onEvent: (event: NativeHint) => void) => NativeClient;
 type Target = { id: string; key: string; changedAt: number | null };
 interface Slot {
-  config: NativeConnection; generation: number; client: NativeClient | null;
+  id: string; config: NativeConnection; generation: number; client: NativeClient | null;
   timer: ReturnType<typeof setTimeout> | null; timerAt: number;
   deadline: ReturnType<typeof setTimeout> | null;
   polling: boolean; failures: number; listAt: number;
@@ -50,7 +51,7 @@ export class NativeMonitor {
   configure(configs: readonly NativeConnection[]): void {
     this.configs = configs.map(config => ({ ...config }));
     for (const [id, slot] of this.slots) {
-      const next = this.configs.find(config => config.sourceId === id && config.enabled);
+      const next = this.configs.find(config => nativeConnectionKey(config) === id && config.enabled);
       if (!next || JSON.stringify(next) !== JSON.stringify(slot.config)) {
         this.dispose(slot); this.slots.delete(id);
       }
@@ -96,24 +97,25 @@ export class NativeMonitor {
   }
   private reconcile(): void {
     if (!this.running) return;
-    for (const [id, slot] of this.slots) if (!this.targets.has(id)) {
+    for (const [id, slot] of this.slots) if (!this.targets.has(slot.config.sourceId)) {
       this.dispose(slot); this.slots.delete(id); this.revision++;
     }
     for (const config of this.configs) {
-      if (!config.enabled || this.slots.has(config.sourceId) || !this.targets.has(config.sourceId)) continue;
+      const key = nativeConnectionKey(config);
+      if (!config.enabled || this.slots.has(key) || !this.targets.has(config.sourceId)) continue;
       const slot: Slot = {
-        config, generation: ++this.serial, client: null, timer: null, timerAt: 0, deadline: null,
+        id: key, config, generation: ++this.serial, client: null, timer: null, timerAt: 0, deadline: null,
         polling: false, failures: 0, listAt: 0, loaded: new Map(), samples: new Map(),
         attempts: new Map(), urgent: new Set(), previous: new Map(),
         health: { sourceId: config.sourceId, transport: config.transport, state: 'connecting', reason: 'connecting',
           loaded: 0, matched: 0, covered: 0, listComplete: false, lastSuccessAt: null, retries: 0,
           ignoredRequests: 0, readRequests: 0, passiveHints: 0 },
       };
-      this.slots.set(config.sourceId, slot); this.schedule(slot, 0);
+      this.slots.set(key, slot); this.schedule(slot, 0);
     }
   }
   private current(slot: Slot, generation: number): boolean {
-    return this.running && this.slots.get(slot.config.sourceId) === slot && slot.generation === generation;
+    return this.running && this.slots.get(slot.id) === slot && slot.generation === generation;
   }
   private drop(slot: Slot, key: string): void {
     if (slot.samples.delete(key)) this.revision++;
@@ -133,7 +135,7 @@ export class NativeMonitor {
    * never postpone it or create overlapping poll cycles.
    */
   private schedule(slot: Slot, delay: number): void {
-    if (!this.running || this.slots.get(slot.config.sourceId) !== slot) return;
+    if (!this.running || this.slots.get(slot.id) !== slot) return;
     const due = Date.now() + Math.max(0, delay);
     if (slot.timer && slot.timerAt <= due) return;
     if (slot.timer) clearTimeout(slot.timer);
@@ -163,9 +165,16 @@ export class NativeMonitor {
   }
   private collect(now = Date.now()): Map<string, NativeSample> {
     const samples = new Map<string, NativeSample>();
-    for (const slot of this.slots.values()) for (const [key, sample] of slot.samples) {
-      if (!freshNative(sample, now) || !slot.client || slot.client.closed) this.drop(slot, key);
-      else samples.set(key, sample);
+    // A source may have several independently-owned existing app servers.
+    // First configured healthy owner wins for identical source+thread UUIDs;
+    // later owners only provide fallback, never overwrite a conflicting status.
+    for (const config of this.configs) {
+      const slot = this.slots.get(nativeConnectionKey(config));
+      if (!slot) continue;
+      for (const [key, sample] of slot.samples) {
+        if (!freshNative(sample, now) || !slot.client || slot.client.closed) this.drop(slot, key);
+        else if (!samples.has(key)) samples.set(key, sample);
+      }
     }
     return samples;
   }
@@ -180,7 +189,7 @@ export class NativeMonitor {
   health(now = Date.now()): NativeHealth[] {
     this.collect(now);
     return this.configs.map((config): NativeHealth => {
-      const slot = this.slots.get(config.sourceId);
+      const slot = this.slots.get(nativeConnectionKey(config));
       if (!config.enabled || !slot) return { sourceId: config.sourceId, transport: config.transport,
         state: config.enabled ? 'degraded' : 'disabled', reason: config.enabled ? 'source-unavailable' : 'disabled',
         loaded: 0, matched: 0, covered: 0, listComplete: false, lastSuccessAt: null, retries: 0, ignoredRequests: 0 };
@@ -195,6 +204,54 @@ export class NativeMonitor {
           ? { state: 'degraded' as const, reason: 'connection-unavailable' as const } : {}) };
     });
   }
+  /** Explain a missing live status without guessing that a thread completed.
+   * Only the current source+UUID can match; result is for the local diagnostics
+   * window. The redacted report contains aggregate reason counters only.
+   */
+  coverage(scan: ScanResponse | null, now = Date.now()): NativeCoverageEntry[] {
+    const projected = this.project(scan, now);
+    const projectedBySource = new Map(projected?.sources.map(source => [source.id, source]));
+    const results: NativeCoverageEntry[] = [];
+    for (const source of (scan?.sources ?? []).slice(0, 40)) {
+      const slots = this.configs.filter(config => config.enabled && config.sourceId === source.id)
+        .map(config => this.slots.get(nativeConnectionKey(config))).filter((slot): slot is Slot => !!slot);
+      const matchingProjection = new Map(projectedBySource.get(source.id)?.sessions.map(row => [row.key, row]));
+      for (const row of source.sessions.slice(0, MAX_TARGETS)) {
+        let reason: NativeCoverageEntry['reason'];
+        if (source.error || source.stale) reason = 'source-unavailable';
+        else if (row.isSubagent) reason = 'subagent';
+        else if (!THREAD_UUID.test(row.id)) reason = 'invalid-thread-id';
+        else if (matchingProjection.get(row.key)?.nativeStatus) reason = 'covered';
+        else if (!this.configs.some(config => config.enabled && config.sourceId === source.id))
+          reason = 'not-configured';
+        else if (!slots.some(slot => slot.client && !slot.client.closed))
+          reason = 'endpoint-unavailable';
+        else {
+          const id = row.id.toLowerCase();
+          const matching = slots.filter(slot => slot.loaded.has(id));
+          if (!matching.length) reason = slots.every(slot => slot.health.listComplete)
+            ? 'not-loaded' : 'list-incomplete';
+          else if (matching.some(slot => {
+            const sample = slot.samples.get(row.key);
+            const changedAt = nativeFileChangedAt(source, row);
+            return sample && changedAt != null && sample.at < changedAt;
+          })) reason = 'file-newer-than-native';
+          else if (matching.some(slot => {
+            const previous = slot.attempts.get(row.key);
+            return previous && (now < previous.at || now - previous.at > 15_000);
+          })) reason = 'sample-expired';
+          else if (matching.some(slot => slot.attempts.get(row.key)?.state === 'unknown' ||
+            slot.attempts.get(row.key)?.state === 'notLoaded'))
+            reason = 'status-unrecognized';
+          else reason = 'pending-verification';
+        }
+        results.push({ sourceId: source.id, sessionKey: row.key, reason });
+        if (results.length >= 1000) return results;
+      }
+    }
+    return results;
+  }
+
   private async list(slot: Slot, client: NativeClient, generation: number): Promise<void> {
     const ids = new Map<string, string>(), cursors = new Set<string>();
     let cursor: string | null = null, complete = false;

@@ -1,6 +1,6 @@
 # 原生状态自适应监控（Windows / WSL / SSH）
 
-此功能在现有**用户主动启用的原生连接**上运行。不启动、恢复、接管或订阅 Codex 线程；只使用已有的只读 initialize、thread/loaded/list、thread/read(includeTurns:false) 白名单。
+此功能在现有**用户主动启用的原生连接**上运行。一个来源可同时接入多个已有端点，详见 [覆盖率与本地端点诊断](diagnostics-native-state.md)。不启动、恢复、接管或订阅 Codex 线程；只使用已有的只读 initialize、thread/loaded/list、thread/read(includeTurns:false) 白名单。
 
 ## 调度与安全边界
 

@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import { dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import type { MonitorService } from './monitor-service';
 import type { DiagnosticsWindowController } from './diagnostics-window';
+import { readSettings } from './config';
+import { resolveLocalRoot } from './local';
+import { discoverKnownLocalSocket } from './native-discovery';
 
 export function registerDiagnosticsIpc(monitor: MonitorService, center: DiagnosticsWindowController): void {
   const authorize = (event: IpcMainInvokeEvent) => {
@@ -15,6 +18,11 @@ export function registerDiagnosticsIpc(monitor: MonitorService, center: Diagnost
   ipcMain.handle('diagnostics:native-get', event => { authorize(event); return monitor.nativeConnections(); });
   ipcMain.handle('diagnostics:native-set', (event, raw: unknown) => {
     authorize(event); return monitor.setNativeConnections(raw);
+  });
+  ipcMain.handle('diagnostics:native-discover', async event => {
+    authorize(event);
+    const settings = await readSettings();
+    return discoverKnownLocalSocket(resolveLocalRoot(settings.localRoot));
   });
   let exporting = false;
   ipcMain.handle('diagnostics:export', async event => {

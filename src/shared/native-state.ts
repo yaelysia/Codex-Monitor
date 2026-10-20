@@ -9,6 +9,9 @@ export interface NativeSample extends NativeStatus {
 export interface NativeConnection {
   sourceId: string; enabled: boolean; transport: 'auto' | 'socket' | 'ws'; endpoint: string;
 }
+/** Internal connection identity; contains endpoint, NEVER include in diagnostic exports. */
+export const nativeConnectionKey = (row: NativeConnection): string =>
+  JSON.stringify([row.sourceId, row.transport, row.endpoint]);
 export type NativeHealthState = 'disabled' | 'connecting' | 'connected' | 'degraded';
 export type NativeHealthReason = 'disabled' | 'source-unavailable' | 'connecting' |
   'no-matching-threads' | 'metadata-only' | 'partial-coverage' | 'connection-unavailable' |
@@ -19,6 +22,16 @@ export interface NativeHealth {
   listComplete: boolean; lastSuccessAt: number | null; retries: number; ignoredRequests: number;
   /** Cumulative metadata reads and matched passive hint events (no message bodies). */
   readRequests?: number; passiveHints?: number;
+}
+export type NativeLocalDiscovery = { state:
+  'socket-found' | 'candidate-found' | 'not-found' | 'inaccessible' | 'unsafe' };
+/** Local-only coverage explanation. Never export sessionKey in a diagnostic report. */
+export type NativeCoverageReason = 'covered' | 'source-unavailable' | 'subagent' |
+  'invalid-thread-id' | 'not-configured' | 'endpoint-unavailable' | 'not-loaded' |
+  'list-incomplete' | 'pending-verification' | 'sample-expired' |
+  'file-newer-than-native' | 'status-unrecognized';
+export interface NativeCoverageEntry {
+  sourceId: string; sessionKey: string; reason: NativeCoverageReason;
 }
 export const NATIVE_SAMPLE_TTL_MS = 15_000;
 export const MAX_NATIVE_CONNECTIONS = 8;
