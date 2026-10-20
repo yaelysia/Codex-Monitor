@@ -55,7 +55,8 @@ export function parseWatcherDelta(line: string): (RemoteWatchChange | {kind: 'he
 }
 /** Stable legacy event-kind projection, retained for clients/tests. */
 export function parseWatcherSignal(line: string): 'ready' | 'change' | 'heartbeat' | null {
-  return parseWatcherDelta(line)?.kind ?? null;
+  const signal = parseWatcherDelta(line);
+  return signal && signal.kind !== 'lost' ? signal.kind : null;
 }
 
 /** Event notifications supplement the 12-second polling safety net.
