@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { WatchCoordinator, parseWatcherSignal } from '../electron/watchers';
+import { WatchCoordinator, parseWatcherSignal, parseWatcherDelta } from '../electron/watchers';
 import type { Settings, SourceResult } from '../src/shared/types';
 
 const folders: string[] = [];
@@ -13,6 +13,22 @@ afterEach(async () => {
 });
 
 describe('event watcher protocol', () => {
+  it('keeps only bounded, safe relative watcher delta locators', () => {
+    const path = '2026/10/19/rollout-abc.jsonl';
+    expect(parseWatcherDelta(JSON.stringify({ kind: 'ready' }))).toEqual({ kind: 'ready' });
+    expect(parseWatcherDelta(JSON.stringify({ kind: 'change', reset: false, paths: [path] })))
+      .toEqual({ kind: 'change', paths: [path] });
+    expect(parseWatcherDelta(JSON.stringify({ kind: 'change' }))).toEqual({ kind: 'change', reset: true });
+    for (const bad of ['../../outside.jsonl', '2026/10/19/../../unsafe.jsonl',
+      '2026/10/19/rollout-unsafe.jsonl\\extra']) {
+      expect(parseWatcherDelta(JSON.stringify({ kind: 'change', paths: [bad] })))
+        .toEqual({ kind: 'change', reset: true });
+    }
+    const huge = Array.from({ length: 65 }, (_, i) => '2026/10/19/rollout-' + i + '.jsonl');
+    expect(parseWatcherDelta(JSON.stringify({ kind: 'change', paths: huge })))
+      .toEqual({ kind: 'change', reset: true });
+  });
+
   it('accepts only bounded, well formed event signals', () => {
     expect(parseWatcherSignal('{"kind":"ready"}')).toBe('ready');
     expect(parseWatcherSignal('{"kind":"change"}')).toBe('change');
