@@ -29,6 +29,19 @@ describe('bounded privacy-safe diagnostic recorder', () => {
     expect(view.report.events.at(-1)?.kind).toBe('popup-requested');
     expect(view.report.events.at(-1)?.session).toBe(view.sessions[0]!.ref);
   });
+  it('summarizes per-thread coverage anonymously and carries read diagnostics through to export', () => {
+    const recorder = new DiagnosticRecorder(), input = state();
+    const h = { ...health, readRequests: 18, passiveHints: 2 };
+    const row = input.scan!.sources[0]!.sessions[0]!;
+    const result = recorder.snapshot(input, [h], NOW, [
+      { sourceId: 'ssh:SECRET_HOST', sessionKey: row.key, reason: 'not-loaded' },
+    ]);
+    expect(result.report.native[0]).toMatchObject({ readRequests: 18, passiveHints: 2 });
+    expect(result.report.coverage).toMatchObject([{ source: 'S1', reason: 'not-loaded', count: 1 }]);
+    expect(result.coverage[0]?.ref).toBe(result.sessions[0]?.ref);
+    expect(JSON.stringify(result.report)).not.toContain('SECRET');
+    expect(JSON.stringify(result.coverage)).not.toContain('SECRET');
+  });
   it('records actual transitions only; returned objects cannot mutate the recorder', () => {
     const recorder = new DiagnosticRecorder(), input = state();
     recorder.observe(input, NOW); const first = recorder.snapshot(input, [], NOW).report.events.length;

@@ -271,3 +271,75 @@ describe('adaptive read budget and optional passive wake hints', () => {
     expect(run.native.project(changed)?.sources[0]?.sessions[0]?.status).toBe('working');
   });
 });
+
+
+describe('multiple independent existing App Servers on the same scanned source', () => {
+  const second: NativeConnection = { ...config, endpoint: 'ws://127.0.0.1:9877/' };
+  it('unions distinct loaded threads without crossing sources or replaying initial waiting', async () => {
+    const first = new Client(), other = new Client(), changed = vi.fn();
+    first.ids = [uuid(0)]; first.status = { type: 'active', activeFlags: [] };
+    other.ids = [uuid(1)]; other.status = { type: 'active', activeFlags: ['waitingOnApproval'] };
+    const factory = vi.fn((endpoint: { kind: string; url?: string }) =>
+      endpoint.url?.includes('9877') ? other : first);
+    const scan = snapshot(2);
+    native = new NativeMonitor('/mock/.codex', changed, factory);
+    native.configure([config, second]); native.setTargets(scan); native.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.health().map(row => row.covered)).toEqual([1, 1]);
+    expect(native.project(scan)?.sources[0]!.sessions.map(row => row.status)).toEqual(['working', 'waiting']);
+    expect(changed.mock.calls.flatMap(([keys]) => keys)).toEqual([]);
+    expect(first.request.mock.calls.filter(([method]) => method === 'thread/read')
+      .map(([, args]) => args?.threadId)).toEqual([uuid(0)]);
+    expect(other.request.mock.calls.filter(([method]) => method === 'thread/read')
+      .map(([, args]) => args?.threadId)).toEqual([uuid(1)]);
+    other.status = { type: 'active', activeFlags: [] };
+    await vi.advanceTimersByTimeAsync(3000);
+    other.status = { type: 'active', activeFlags: ['waitingOnUserInput'] };
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(changed.mock.calls.flatMap(([keys]) => keys)).toEqual(['local:' + uuid(1)]);
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(changed.mock.calls.flatMap(([keys]) => keys)).toEqual(['local:' + uuid(1)]);
+  });
+
+  it('resolves duplicate UUIDs by configured priority and fails over when the first disappears', async () => {
+    const first = new Client(), other = new Client();
+    first.status = { type: 'idle' }; other.status = { type: 'active', activeFlags: [] };
+    native = new NativeMonitor('/mock/.codex', vi.fn(), endpoint =>
+      endpoint.kind === 'ws' && endpoint.url.includes('9877') ? other : first);
+    const scan = snapshot();
+    native.configure([config, second]); native.setTargets(scan); native.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(native.health().map(row => row.covered)).toEqual([1, 1]);
+    expect(native.project(scan)?.sources[0]?.sessions[0]?.status).toBe('unknown');
+    native.configure([second]);
+    expect(first.close).toHaveBeenCalled();
+    expect(other.close).not.toHaveBeenCalled();
+    expect(native.project(scan)?.sources[0]?.sessions[0]?.status).toBe('working');
+  });
+
+  it('explains not-loaded, invalid thread IDs, and expired evidence without guessing completion', async () => {
+    const client = new Client(), scan = snapshot(3);
+    scan.sources[0]!.sessions[2]!.id = 'file-name-only';
+    const run = setup(client, scan);
+    expect(run.native.coverage(scan).map(row => row.reason)).toEqual([
+      'endpoint-unavailable', 'endpoint-unavailable', 'invalid-thread-id',
+    ]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.native.coverage(scan).map(row => row.reason)).toEqual([
+      'covered', 'not-loaded', 'invalid-thread-id',
+    ]);
+    expect(run.native.coverage(scan, NOW + 15_001)[0]?.reason).toBe('sample-expired');
+  });
+
+  it('does not treat incomplete loaded-list enumeration as evidence of absence', async () => {
+    const client = new Client(); client.ids = [];
+    const raw = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, args) => method === 'thread/loaded/list'
+      ? { data: [uuid(999)], nextCursor: 'unfinished' }
+      : raw(method, args));
+    const run = setup(client);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(run.native.health()[0]?.listComplete).toBe(false);
+    expect(run.native.coverage(run.scan)[0]?.reason).toBe('list-incomplete');
+  });
+});

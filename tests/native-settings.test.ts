@@ -28,6 +28,16 @@ describe('opt-in native connection settings', () => {
       expect(() => validateNativeConnections([{ ...row, ...patch }])).toThrow();
     expect(() => validateNativeConnections(null)).toThrow();
   });
+  it('allows several different existing endpoints for one source, rejecting duplicates and keeping the total bound', () => {
+    const other = { ...row, endpoint: 'ws://127.0.0.1:2345/' };
+    expect(validateNativeConnections([row, other])).toEqual([row, other]);
+    expect(() => validateNativeConnections([row, { ...row, endpoint: '  ws://127.0.0.1:1234/  ' }])).toThrow();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-multi-')); roots.push(root);
+    const store = new NativeSettingsStore(root); store.save(validateNativeConnections([row, other]));
+    expect(store.load()).toEqual([row, other]);
+    expect(() => validateNativeConnections(Array.from({ length: 9 }, (_, i) =>
+      ({ ...row, endpoint: 'ws://127.0.0.1:' + (3000 + i) + '/' })))).toThrow();
+  });
   it('persists only explicit settings atomically and ignores corrupt/oversized legacy data', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-settings-')); roots.push(root);
     const store = new NativeSettingsStore(root), connections = validateNativeConnections([row]);

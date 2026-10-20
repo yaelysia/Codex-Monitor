@@ -14,6 +14,8 @@ describe('diagnostic center entry points and read-only presentation', () => {
   it('uses existing controls and a visibility-gated refresh without starting collectors', () => {
     const app = read('src/renderer/DiagnosticsApp.tsx');
     expect(app).toContain('SignalSelect'); expect(app).toContain('useVisibleInterval');
+    expect(app).toContain('检查已知本地共享端点');
+    expect(app).toContain('添加现有端点');
     expect(app).not.toContain('monitorApi.refresh(');
     expect(read('electron/tray.ts')).toContain('诊断中心 / 原生状态');
     expect(read('electron.vite.config.ts')).toContain('diagnostics.html');
