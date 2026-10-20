@@ -49,6 +49,7 @@ const diagnostics: DiagnosticsApi = {
   exportReport: () => ipcRenderer.invoke('diagnostics:export'),
   getConnections: () => ipcRenderer.invoke('diagnostics:native-get'),
   setConnections: value => ipcRenderer.invoke('diagnostics:native-set', value),
+  discoverLocal: () => ipcRenderer.invoke('diagnostics:native-discover'),
 };
 contextBridge.exposeInMainWorld('monitorApi', api);
 contextBridge.exposeInMainWorld('diagnosticsApi', diagnostics);

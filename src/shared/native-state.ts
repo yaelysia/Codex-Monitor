@@ -23,6 +23,8 @@ export interface NativeHealth {
   /** Cumulative metadata reads and matched passive hint events (no message bodies). */
   readRequests?: number; passiveHints?: number;
 }
+export type NativeLocalDiscovery = { state:
+  'socket-found' | 'candidate-found' | 'not-found' | 'inaccessible' | 'unsafe' };
 /** Local-only coverage explanation. Never export sessionKey in a diagnostic report. */
 export type NativeCoverageReason = 'covered' | 'source-unavailable' | 'subagent' |
   'invalid-thread-id' | 'not-configured' | 'endpoint-unavailable' | 'not-loaded' |

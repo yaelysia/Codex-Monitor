@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DiagnosticsApi, DiagnosticView } from '../shared/diagnostics';
-import type { NativeConnection, NativeHealthReason, NativeCoverageReason } from '../shared/native-state';
+import type { NativeConnection, NativeHealthReason, NativeCoverageReason,
+  NativeLocalDiscovery } from '../shared/native-state';
 import type { MonitorState, OriginalWindowStatus } from '../shared/types';
 import SignalSelect from './SignalSelect';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -36,6 +37,7 @@ export default function DiagnosticsApp() {
   const [view, setView] = useState<DiagnosticView | null>(null);
   const [monitor, setMonitor] = useState<MonitorState>(EMPTY);
   const [connections, setConnections] = useState<NativeConnection[]>([]);
+  const [discovery, setDiscovery] = useState<NativeLocalDiscovery | null>(null);
   const [tab, setTab] = useState('overview');
   const [selected, setSelected] = useState('all');
   const [windowStatus, setWindowStatus] = useState<OriginalWindowStatus | null>(null);
@@ -169,7 +171,22 @@ export default function DiagnosticsApp() {
     {tab === 'native' && <section className="panel">
       <h2>连接已有 App Server</h2>
       <p>默认关闭。同一来源可连接多个现有 App Server；按配置顺序选择同一会话的优先证据。仅执行只读调用，不启动新服务，不恢复、订阅或操作会话。</p>
-      <div className="help">本地自动模式只尝试当前 CODEX_HOME 的已有控制套接字。WSL / SSH 请填写已经建立的本机回环 WebSocket 转发地址；不要启动一个独立 App Server 来代替目标客户端。连接成功后还必须核对匹配会话数。</div>
+      <div className="help">本地自动模式只尝试当前 CODEX_HOME 的已有控制套接字；不会扫描端口或接管私有 stdio。WSL / SSH 仍需使用现成的本机回环转发端点。共享端点不存在时，日志监控继续工作。</div>
+      <div className="actions"><button disabled={busy} onClick={() => void action(async () => {
+        setDiscovery(await window.diagnosticsApi!.discoverLocal());
+      })}>检查已知本地共享端点</button>
+      {discovery && <span role="status">{({
+        'socket-found': '发现现有 Unix 套接字候选（尚未验证协议或会话匹配）',
+        'candidate-found': '发现候选文件，但不能确认是可用套接字',
+        'not-found': '当前本地 CODEX_HOME 没有共享控制套接字，客户端可能使用私有 stdio',
+        inaccessible: '无法访问已知控制套接字路径',
+        unsafe: '候选路径不安全或不是普通的本地文件/套接字',
+      } as const)[discovery.state]}</span>}
+      {discovery && ['socket-found', 'candidate-found'].includes(discovery.state) &&
+        !connections.some(row => row.sourceId === 'local' && row.transport === 'auto') &&
+        connections.length < 8 && <button disabled={busy} onClick={() =>
+          setConnections(rows => [...rows, { sourceId: 'local', transport: 'auto', endpoint: '', enabled: false }])
+        }>添加已发现的本地连接（需手动启用并保存）</button>}</div>
       {connections.map((row, index) => <fieldset key={index} className="connection" disabled={busy}>
         <legend>连接 {index + 1}</legend>
         <SignalSelect label={'连接来源 ' + (index + 1)} value={row.sourceId} appearance="moonsea"

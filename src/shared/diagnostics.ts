@@ -1,5 +1,6 @@
 import type { MonitorState, SessionStatus } from './types';
-import type { NativeHealth, NativeConnection, NativeCoverageEntry, NativeCoverageReason } from './native-state';
+import type { NativeHealth, NativeConnection, NativeCoverageEntry, NativeCoverageReason,
+  NativeLocalDiscovery } from './native-state';
 
 export const DIAGNOSTIC_EVENT_LIMIT = 400;
 const ENTITY_LIMIT = 1000;
@@ -34,6 +35,7 @@ export interface DiagnosticsApi {
   exportReport(): Promise<'saved' | 'cancelled'>;
   getConnections(): Promise<NativeConnection[]>;
   setConnections(value: NativeConnection[]): Promise<NativeConnection[]>;
+  discoverLocal(): Promise<NativeLocalDiscovery>;
 }
 const number = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
