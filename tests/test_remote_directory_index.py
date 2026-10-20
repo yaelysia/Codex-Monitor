@@ -41,7 +41,7 @@ class TestRemoteDirectoryIndex(unittest.TestCase):
         full = scanner.scan(self.root, now=NOW + 3000, cache_request={'version': 1})
         self.assertEqual(warm['metrics']['indexMode'], 'incremental')
         self.assertEqual(warm['metrics']['directoriesEnumerated'], 0)
-        self.assertLessEqual(warm['metrics']['statCalls'], 400)  # includes per-handle fstat after each parsed file
+        self.assertLessEqual(warm['metrics']['statCalls'], 600)  # Windows verifies before/after fstat separately
         self.assertEqual(warm['metrics']['indexedFiles'], 310)
         self.assertEqual(semantic(warm), semantic(full))
 
