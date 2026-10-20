@@ -149,7 +149,14 @@ export class FloatingWindowController {
       this.repairLimitWarned = false;
       this.autoRepairs.push(now);
       console.warn('[Codex Monitor] Rebuilding unavailable floating renderer:', reason);
-      this.rebuildAndShow();
+      try {
+        this.rebuildAndShow();
+      } catch {
+        // A transient native/GPU window-construction failure must not take
+        // down the resident monitor. Retry through the same bounded budget.
+        console.warn('[Codex Monitor] Floating renderer rebuild failed; retrying within limit');
+        this.scheduleRepair('native-create-failed');
+      }
     }, FLOAT_REPAIR_DELAY_MS);
     this.repairTick.unref?.();
   }
@@ -201,7 +208,12 @@ export class FloatingWindowController {
     this.autoRepairs = [];
     this.repairLimitWarned = false;
     this.dock.visible = true;
-    this.rebuildAndShow();
+    try { this.rebuildAndShow(); }
+    catch {
+      console.warn('[Codex Monitor] Manual floating repair failed; bounded retry scheduled');
+      this.ensureHealth();
+      this.scheduleRepair('manual-repair-failed');
+    }
     return this.state();
   }
 
