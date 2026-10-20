@@ -4,6 +4,7 @@ import type { FloatingWindowState } from '../src/shared/types';
 
 const fake = vi.hoisted(() => ({
   windows: [] as any[],
+  failNextLoad: false,
   displays: [
     { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
     { id: 2, workArea: { x: 1920, y: 0, width: 1600, height: 900 } },
@@ -13,6 +14,9 @@ const fake = vi.hoisted(() => ({
 vi.mock('electron', () => {
   class FakeBrowserWindow {
     private listeners = new Map<string, Array<(...args: any[]) => void>>();
+    private webListeners = new Map<string, Array<(...args: any[]) => void>>();
+    webDestroyed = false;
+    topmost = true;
     bounds: { x: number; y: number; width: number; height: number };
     opacity = 1;
     visible = false;
@@ -21,8 +25,15 @@ vi.mock('electron', () => {
     destroyed = false;
     readonly webContents = {
       setWindowOpenHandler: () => undefined,
-      on: () => undefined,
-      loadFile: () => Promise.resolve(),
+      on: (name: string, listener: (...args: any[]) => void) => {
+        const existing = this.webListeners.get(name) ?? [];
+        existing.push(listener);
+        this.webListeners.set(name, existing);
+      },
+      emit: (name: string, ...args: any[]) => {
+        for (const listener of this.webListeners.get(name) ?? []) listener(...args);
+      },
+      isDestroyed: () => this.webDestroyed || this.destroyed,
     };
     constructor(options: any) {
       this.bounds = {
@@ -35,7 +46,12 @@ vi.mock('electron', () => {
       listeners.push(listener);
       this.listeners.set(name, listeners);
     }
-    emit(name: string) { for (const listener of this.listeners.get(name) ?? []) listener(); }
+    emit(name: string, ...args: any[]) {
+      for (const listener of this.listeners.get(name) ?? []) listener(...args);
+    }
+    crash(reason: string = 'crashed') {
+      this.webContents.emit('render-process-gone', {}, { reason, exitCode: -1 });
+    }
     getBounds() { return { ...this.bounds }; }
     setBounds(bounds: typeof this.bounds) { this.bounds = { ...bounds }; }
     setOpacity(value: number) { this.opacity = value; }
@@ -47,9 +63,16 @@ vi.mock('electron', () => {
     loseFocus() { this.focused = false; this.emit('blur'); }
     hide() { this.visible = false; this.focused = false; }
     destroy() { this.destroyed = true; this.visible = false; this.emit('closed'); }
-    setAlwaysOnTop() {}
-    loadURL() { return Promise.resolve(); }
-    loadFile() { return Promise.resolve(); }
+    setAlwaysOnTop(value: boolean) { this.topmost = value; }
+    isAlwaysOnTop() { return this.topmost; }
+    loadURL() { return this.loadFile(); }
+    loadFile() {
+      if (fake.failNextLoad) {
+        fake.failNextLoad = false;
+        return Promise.reject(new Error('SIMULATED_LOAD_FAILURE'));
+      }
+      return Promise.resolve();
+    }
     drag(bounds: typeof this.bounds) { this.bounds = { ...bounds }; this.emit('moved'); }
   }
   const screen = {
@@ -62,7 +85,9 @@ vi.mock('electron', () => {
   return { BrowserWindow: FakeBrowserWindow, screen };
 });
 
-import { FloatingWindowController, HIDDEN_RENDERER_IDLE_MS, DOCK_EXPAND_MS, DOCK_COLLAPSE_MS } from '../electron/floating';
+import { FloatingWindowController, HIDDEN_RENDERER_IDLE_MS, DOCK_EXPAND_MS, DOCK_COLLAPSE_MS,
+  FLOAT_HEALTH_CHECK_MS, FLOAT_REPAIR_DELAY_MS, FLOAT_UNRESPONSIVE_GRACE_MS,
+  MAX_AUTO_FLOAT_REPAIRS } from '../electron/floating';
 
 const INITIAL = normalizeDock({
   side: 'left', displayId: 2, displayX: 1920, displayY: 0,
@@ -71,6 +96,7 @@ const INITIAL = normalizeDock({
 beforeEach(() => {
   vi.useFakeTimers();
   fake.windows.length = 0;
+  fake.failNextLoad = false;
   fake.displays = [
     { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
     { id: 2, workArea: { x: 1920, y: 0, width: 1600, height: 900 } },
@@ -388,5 +414,120 @@ describe('native floating transition under rapid interaction', () => {
     expect(win.bounds).toMatchObject({ width: 38, height: 78 });
     expect(controller.state()).toMatchObject({ expanded: false, motion: null });
     expect(fake.windows).toHaveLength(1);
+  });
+});
+
+
+describe('resident floating window self-recovery without restarting Monitor', () => {
+  it('rebuilds a crashed renderer even if the old HWND still says visible', async () => {
+    const states: FloatingWindowState[] = [], persisted: SavedDock[] = [];
+    const controller = new FloatingWindowController(
+      state => states.push(state), () => undefined,
+      INITIAL, value => persisted.push(value));
+    controller.show();
+    const first = fake.windows[0]!;
+    await vi.advanceTimersByTimeAsync(0);
+    first.crash();
+    // Native HWND is still reported visible; the new controller must not
+    // equate this with a healthy/paintable webContents.
+    expect(first.isVisible()).toBe(true);
+    await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS - 1);
+    expect(fake.windows).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(first.isDestroyed()).toBe(true);
+    expect(fake.windows).toHaveLength(2);
+    expect(controller.state()).toMatchObject({ visible: true, expanded: false,
+      side: 'left', opacity: 0.7 });
+    expect(fake.windows[1].bounds).toEqual(first.bounds);
+    expect(persisted.at(-1)).toMatchObject({ side: 'left', visible: true, opacity: 0.7 });
+    expect(states.at(-1)?.visible).toBe(true);
+    controller.allowQuit();
+  });
+
+  it('recovers an unexpectedly closed or externally hidden rail only if desired visible', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    const first = fake.windows[0]!;
+    first.destroy(); // bypass normal deliberate hide/close
+    await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS);
+    expect(fake.windows).toHaveLength(2);
+    const second = fake.windows[1]!;
+    second.hide(); // simulated DWM/window visibility loss; dock preference still visible
+    await vi.advanceTimersByTimeAsync(FLOAT_HEALTH_CHECK_MS + FLOAT_REPAIR_DELAY_MS);
+    expect(fake.windows).toHaveLength(3);
+    expect(second.destroyed).toBe(true);
+    controller.hide();
+    await vi.advanceTimersByTimeAsync(FLOAT_HEALTH_CHECK_MS * 3);
+    expect(fake.windows).toHaveLength(3);
+  });
+
+  it('never automatically reappears after explicit hide, including a late crash/close', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    const first = fake.windows[0]!;
+    await vi.advanceTimersByTimeAsync(0);
+    first.crash();
+    controller.hide();
+    await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS + FLOAT_HEALTH_CHECK_MS * 2);
+    expect(controller.state().visible).toBe(false);
+    expect(fake.windows).toHaveLength(1);
+    // Manual tray action must still be able to recreate the blank/damaged
+    // renderer, without starting another Monitor process.
+    controller.repair();
+    expect(fake.windows).toHaveLength(2);
+    expect(fake.windows[1]!.visible).toBe(true);
+  });
+
+  it('keeps the repair budget bounded but permits explicit recovery after the cap', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    for (let i=0; i<MAX_AUTO_FLOAT_REPAIRS; i++) {
+      await vi.advanceTimersByTimeAsync(0);
+      fake.windows.at(-1)!.crash();
+      await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS);
+    }
+    expect(fake.windows).toHaveLength(1 + MAX_AUTO_FLOAT_REPAIRS);
+    await vi.advanceTimersByTimeAsync(0);
+    fake.windows.at(-1)!.crash();
+    await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS + FLOAT_HEALTH_CHECK_MS);
+    expect(fake.windows).toHaveLength(1 + MAX_AUTO_FLOAT_REPAIRS);
+    controller.repair();
+    expect(fake.windows).toHaveLength(2 + MAX_AUTO_FLOAT_REPAIRS);
+    expect(controller.state().visible).toBe(true);
+  });
+
+  it('does not restart for a brief unresponsive frame, but rebuilds after sustained hang', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    await vi.advanceTimersByTimeAsync(0);
+    const first = fake.windows[0]!;
+    first.emit('unresponsive');
+    await vi.advanceTimersByTimeAsync(FLOAT_UNRESPONSIVE_GRACE_MS - 1000);
+    first.emit('responsive');
+    await vi.advanceTimersByTimeAsync(FLOAT_UNRESPONSIVE_GRACE_MS);
+    expect(fake.windows).toHaveLength(1);
+    first.emit('unresponsive');
+    await vi.advanceTimersByTimeAsync(FLOAT_UNRESPONSIVE_GRACE_MS + FLOAT_REPAIR_DELAY_MS);
+    expect(fake.windows).toHaveLength(2);
+  });
+
+  it('recovers a rejected page load and reasserts topmost placement after resume', async () => {
+    fake.failNextLoad = true;
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS);
+    expect(fake.windows).toHaveLength(2);
+    const win = fake.windows[1]!;
+    win.topmost = false;
+    controller.resume();
+    expect(win.topmost).toBe(true);
+    expect(win.focusCalls).toBe(0);
+    controller.allowQuit();
   });
 });
