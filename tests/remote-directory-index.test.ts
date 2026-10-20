@@ -20,7 +20,8 @@ const envelope = (directoryData: unknown = directory(), mode = 'full') => ({
     statCalls: mode === 'full' ? 10000 : 200, parsedFiles: 1, cacheHits: 0 },
 });
 async function run(cache: RemoteScanCache, full = false) {
-  const spy = vi.fn(async () => envelope(directory(), full ? 'full' : 'incremental'));
+  const spy = vi.fn(async (request: Record<string, unknown>) =>
+    envelope(directory(), request.directory ? 'incremental' : 'full'));
   const data = await cache.read(SOURCE, 'host', !full, spy, normalize);
   return { request: spy.mock.calls[0]![0] as Record<string, unknown>, data };
 }
@@ -53,11 +54,11 @@ describe('source-scoped remote candidate index safety', () => {
   it('never promotes another source, replaced connection, or expired audit deadline', async () => {
     const cache = new RemoteScanCache();
     await run(cache); cache.noteWatch(SOURCE, { kind: 'ready' }); await run(cache);
-    const other = vi.fn(async () => envelope());
+    const other = vi.fn(async (_request: Record<string, unknown>) => envelope());
     await cache.read('wsl:Ubuntu', 'host', true, other, rows =>
       normalizeRemote(rows, 'wsl:Ubuntu', 'Ubuntu'));
     expect(other.mock.calls[0]![0]).not.toHaveProperty('directory');
-    const changedTransport = vi.fn(async () => envelope());
+    const changedTransport = vi.fn(async (_request: Record<string, unknown>) => envelope());
     await cache.read(SOURCE, 'another-host', true, changedTransport, normalize);
     expect(changedTransport.mock.calls[0]![0]).not.toHaveProperty('directory');
   });

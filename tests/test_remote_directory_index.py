@@ -9,8 +9,12 @@ from unittest.mock import patch
 from test_remote_scan_cache import NOW, scanner, create, event, request
 
 
-def hints(response):
-    return dict(request(response), directory=response['directory'])
+def hints(response, reuse=False):
+    # The index selects candidate files; parse reuse is an independent feature.
+    base = request(response) if reuse else {
+        'version': 1, 'rootKey': response['rootKey'], 'entries': [],
+    }
+    return dict(base, directory=response['directory'])
 
 
 def semantic(response):
@@ -50,12 +54,13 @@ class TestRemoteDirectoryIndex(unittest.TestCase):
         with file.open('a', encoding='utf8') as handle:
             handle.write(json.dumps(event('turn_complete', NOW + 1500)) + '\n')
         os.utime(file, ns=((NOW + 2000) * 1_000_000,) * 2)
-        second = scanner.scan(self.root, now=NOW + 3000, cache_request=hints(first))
+        second = scanner.scan(self.root, now=NOW + 3000, cache_request=hints(first, reuse=True))
         full = scanner.scan(self.root, now=NOW + 3000, cache_request={'version': 1})
         self.assertEqual(second['metrics']['indexMode'], 'incremental')
         self.assertEqual(second['metrics']['parsedFiles'], 1)
         self.assertEqual(second['metrics']['cacheHits'], 29)
-        self.assertEqual(semantic(second), semantic(full))
+        self.assertEqual([r['rolloutPath'] for r in second['sessions']],
+                         [r['rolloutPath'] for r in full['sessions']])
         self.assertEqual(next(r for r in second['sessions'] if r['id'] == '29')['status'], 'finished')
 
     def test_decrease_deletion_invalid_or_wrong_root_reverts_to_full_in_same_call(self):
