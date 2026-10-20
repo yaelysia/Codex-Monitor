@@ -6,6 +6,8 @@ import { app } from 'electron';
 import type { Settings, SourceResult } from '../src/shared/types';
 import { resolveLocalRoot } from './local';
 import { noteLocalRolloutChange } from './local-file-index';
+import { validPinnedRolloutPath } from '../src/shared/pinned-rollouts';
+import type { RemoteWatchChange } from './remote-scan-cache';
 import { findDesktopLogRoots } from './desktop-runtime-logs';
 
 export type EventChannelMode = 'active' | 'connecting' | 'fallback';
@@ -33,15 +35,27 @@ function linuxWatchScript(): Promise<string> {
   return cachedScript;
 }
 
-/** The only remote payload is a tiny "change" signal, never session text or file paths. */
-export function parseWatcherSignal(line: string): 'ready' | 'change' | 'heartbeat' | null {
-  if (!line || line.length > 2048) return null;
+/** The remote agent transmits only bounded relative CODEX_HOME/sessions
+ * locators, never full paths, process credentials or JSONL contents. Unknown
+ * changes invalidate rather than accidentally preserving a stale index.
+ */
+export function parseWatcherDelta(line: string): (RemoteWatchChange | {kind: 'heartbeat'}) | null {
+  if (!line || line.length > 24_000) return null;
   try {
     const value: unknown = JSON.parse(line);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const kind = (value as { kind?: unknown }).kind;
-    return kind === 'ready' || kind === 'change' || kind === 'heartbeat' ? kind : null;
+    const raw = value as Record<string, unknown>;
+    if (raw.kind === 'ready' || raw.kind === 'heartbeat') return { kind: raw.kind };
+    if (raw.kind !== 'change') return null;
+    const paths = raw.paths;
+    if (raw.reset === true || !Array.isArray(paths) || !paths.length || paths.length > 64 ||
+        paths.some(path => !validPinnedRolloutPath(path))) return { kind: 'change', reset: true };
+    return { kind: 'change', paths: [...new Set(paths as string[])] };
   } catch { return null; }
+}
+/** Stable legacy event-kind projection, retained for clients/tests. */
+export function parseWatcherSignal(line: string): 'ready' | 'change' | 'heartbeat' | null {
+  return parseWatcherDelta(line)?.kind ?? null;
 }
 
 /** Event notifications supplement the 12-second polling safety net.
@@ -52,7 +66,8 @@ export class WatchCoordinator {
   private stopped = true;
 
   constructor(private readonly onChange: (sourceId: string) => void,
-    private readonly onHealth?: () => void) {}
+    private readonly onHealth?: () => void,
+    private readonly onRemoteIndex?: (sourceId: string, event: RemoteWatchChange) => void) {}
 
   status(): Record<string, EventChannelMode> {
     return Object.fromEntries(this.statuses);
@@ -245,14 +260,21 @@ export class WatchCoordinator {
         while ((pos = buffer.indexOf('\n')) >= 0) {
           const line = buffer.slice(0, pos).trim();
           buffer = buffer.slice(pos + 1);
-          const kind = parseWatcherSignal(line);
-          if (kind) lastSignalAt = Date.now();
-          if (kind === 'ready') {
+          const event = parseWatcherDelta(line);
+          if (event) lastSignalAt = Date.now();
+          if (event?.kind === 'ready') {
             ready = true;
             failures = 0;
+            this.onRemoteIndex?.(spec.id, { kind: 'ready' });
             this.statusFor(spec.id, 'active');
+            // First scan AFTER watcher registration establishes an exact
+            // incremental baseline; a pre-watcher full scan is not enough.
+            this.onChange(spec.id);
           }
-          if (kind === 'change' && ready) this.onChange(spec.id);
+          if (event?.kind === 'change' && ready) {
+            this.onRemoteIndex?.(spec.id, event);
+            this.onChange(spec.id);
+          }
         }
       });
       // Deliberately never relay remote stderr or user-configured paths into notifications.
@@ -261,7 +283,10 @@ export class WatchCoordinator {
       proc.once('close', () => {
         clearInterval(watchdog);
         if (child === proc) child = null;
-        if (alive && !this.stopped) scheduleRetry();
+        if (alive && !this.stopped) {
+          this.onRemoteIndex?.(spec.id, { kind: 'lost' });
+          scheduleRetry();
+        }
       });
       const options = Buffer.from(JSON.stringify({ root: spec.root }), 'utf8').toString('base64');
       proc.stdin.on('error', () => { /* process close will reconnect */ });
@@ -273,6 +298,7 @@ export class WatchCoordinator {
       dispose: () => {
         alive = false;
         if (retry) clearTimeout(retry);
+        this.onRemoteIndex?.(spec.id, { kind: 'lost' });
         child?.kill();
         child = null;
       },
