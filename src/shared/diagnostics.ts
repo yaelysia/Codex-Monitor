@@ -16,7 +16,9 @@ export interface DiagnosticReport {
   version: 1; generatedAt: number; capacity: number; dropped: number;
   sources: Array<{ ref: string; healthy: boolean; stale: boolean;
     channel: 'active' | 'connecting' | 'fallback'; capturedAt: number | null;
-    sessions: number; durationMs: number | null; statCalls: number | null; cacheHits: number | null }>;
+    sessions: number; durationMs: number | null; statCalls: number | null;
+    cacheHits: number | null; indexMode: 'full' | 'incremental' | null;
+    directoriesEnumerated: number | null }>;
   native: Array<Omit<NativeHealth, 'sourceId'> & { source: string }>;
   /** Counts only; never raw session IDs, endpoint addresses, or file paths. */
   coverage: Array<{ source: string; reason: NativeCoverageReason; count: number }>;
@@ -123,7 +125,9 @@ export class DiagnosticRecorder {
         stale: !!src.stale, channel: state.eventChannels?.[src.id] ?? 'fallback',
         capturedAt: number(src.capturedAt), sessions: src.sessions.length,
         durationMs: number(src.scanMetrics?.durationMs), statCalls: number(src.scanMetrics?.statCalls),
-        cacheHits: number(src.scanMetrics?.cacheHits) })),
+        cacheHits: number(src.scanMetrics?.cacheHits),
+        indexMode: src.scanMetrics?.indexMode ?? null,
+        directoriesEnumerated: number(src.scanMetrics?.directoriesEnumerated) })),
       native: native.slice(0, 8).map(item => ({ source: this.ref(item.sourceId, 'S'),
         transport: item.transport, state: item.state, reason: item.reason,
         loaded: item.loaded, matched: item.matched, covered: item.covered,

@@ -21,10 +21,12 @@ class WatcherProtocolTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             watcher.emit('change')
             watcher.emit('heartbeat')
-        self.assertEqual(
-            output.getvalue().splitlines(),
-            ['{"kind": "change"}', '{"kind": "heartbeat"}'],
-        )
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(events, [
+            {'kind': 'change', 'reset': False, 'paths': []},
+            {'kind': 'heartbeat'},
+        ])
+        self.assertNotIn('Do not transmit', output.getvalue())
 
     def test_missing_codex_home_uses_safe_polling_fallback(self):
         with tempfile.TemporaryDirectory() as root:
@@ -52,16 +54,16 @@ class WatcherProtocolTests(unittest.TestCase):
                     'payload': {'type': 'task_complete', 'message': 'Do not transmit'},
                 }))
                 self.assertTrue(select.select([monitor.fd], [], [], 3)[0])
-                self.assertTrue(monitor.consume())
+                self.assertTrue(monitor.consume()[0])
 
                 rollout.write_text(rollout.read_text() + '\\nnew checkpoint')
                 self.assertTrue(select.select([monitor.fd], [], [], 3)[0])
-                self.assertTrue(monitor.consume())
+                self.assertTrue(monitor.consume()[0])
 
                 unrelated = new_date / 'notes.txt'
                 unrelated.write_text('no Codex rollout here')
                 self.assertTrue(select.select([monitor.fd], [], [], 3)[0])
-                self.assertFalse(monitor.consume())
+                self.assertFalse(monitor.consume()[0])
             finally:
                 monitor.close()
 

@@ -57,3 +57,39 @@ describe('real Python stdin -> TypeScript remote-cache protocol', () => {
     expect(expired.sessions[0]!.status).toBe('unknown');
   });
 });
+
+
+describe('actual Python stdin incremental directory index', () => {
+  it.each(['ssh:host', 'wsl:Ubuntu'])('%s skips directory walk after watcher readiness; reset restores exact full selection', async source => {
+    const directory = root(), cache = new RemoteScanCache();
+    const normalize = (rows: unknown) => normalizeRemote(rows, source, source);
+    const read = (now: number, reuse = true) => cache.read(source, directory, reuse,
+      async hints => invoke(directory, now, hints), normalize);
+    const initial = await read(NOW);
+    expect(initial.metrics?.indexMode).toBe('full');
+    cache.noteWatch(source, { kind: 'ready' });
+    const baseline = await read(NOW + 1000);
+    expect(baseline.metrics?.indexMode).toBe('full');
+
+    // An append to a shortlisted file is safe; inspect only the shortlist.
+    const file = path.join(directory, 'sessions', '2026', '10', '19', 'rollout-one.jsonl');
+    writeFileSync(file, '\n' + JSON.stringify({ type: 'event_msg', payload: { type: 'turn_complete', turn_id: 'a' } }), { flag: 'a' });
+    utimesSync(file, new Date(NOW + 1200), new Date(NOW + 1200));
+    cache.noteWatch(source, { kind: 'change', paths: ['2026/10/19/rollout-one.jsonl'] });
+    const indexed = await read(NOW + 2000);
+    expect(indexed.metrics).toMatchObject({ indexMode: 'incremental', directoriesEnumerated: 0 });
+    expect(indexed.sessions).toEqual(normalize(invoke(directory, NOW + 2000)));
+    // A newly-created rollout (or a deletion / rename) must rebuild the
+    // selection; it cannot remain invisible behind a stale top-200 index.
+    const other = path.join(directory, 'sessions', '2026', '10', '19', 'rollout-new.jsonl');
+    writeFileSync(other, [
+      { type: 'session_meta', payload: { id: 'new', source: 'cli' } },
+      { type: 'event_msg', payload: { type: 'turn_complete', turn_id: 'b' } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    utimesSync(other, new Date(NOW + 2100), new Date(NOW + 2100));
+    cache.noteWatch(source, { kind: 'change', reset: true, paths: [] });
+    const recovered = await read(NOW + 3000);
+    expect(recovered.metrics?.indexMode).toBe('full');
+    expect(recovered.sessions.map(row => row.id)).toContain('new');
+  });
+});

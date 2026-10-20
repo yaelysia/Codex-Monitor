@@ -575,6 +575,51 @@ def rollout_candidates(base, metrics):
                 return
 
 
+
+def indexed_rollout_candidates(base, resolved_base, request, root_key, metrics, limit):
+    """Revalidate only the previous top-N when the live watcher guarantees
+    there were no creates, removals or writes outside this shortlist. Never
+    use a caller-supplied locator without root and lexical containment checks.
+    Return None on any ambiguity so the same scan falls back to os.walk.
+    """
+    if not isinstance(request, dict) or request.get('rootKey') != root_key:
+        return None
+    count, entries = request.get('count'), request.get('files')
+    if (type(count) is not int or not 0 < count <= MAX_DISCOVERED or
+            not isinstance(entries, list) or
+            not 0 < len(entries) <= max(1, min(limit, MAX_RETURNED))):
+        return None
+    candidates, seen_paths, seen_order = [], set(), set()
+    for row in entries:
+        if not isinstance(row, dict):
+            return None
+        rel, modified, order = row.get('path'), row.get('modified'), row.get('order')
+        if (not isinstance(rel, str) or not PINNED_PATH.fullmatch(rel) or
+                '..' in rel or type(modified) is not int or modified < 0 or
+                type(order) is not int or not 0 <= order < count or
+                rel in seen_paths or order in seen_order):
+            return None
+        seen_paths.add(rel)
+        seen_order.add(order)
+        file = base.joinpath(*rel.split('/'))
+        try:
+            # No symlinks may leave the expected sessions root.
+            actual = file.resolve(strict=True)
+            actual.relative_to(resolved_base)
+            metrics['statCalls'] += 1
+            stat = actual.stat()
+            if not S_ISREG(stat.st_mode) or stat.st_mtime_ns // 1000000 < modified:
+                return None
+        except (OSError, ValueError, RuntimeError):
+            return None
+        candidates.append((order, (stat.st_mtime_ns // 1000000, str(file), stat)))
+    metrics['indexedFiles'] = count
+    metrics['indexMode'] = 'incremental'
+    # Stable tie semantics of heapq.nlargest applied to original os.walk order.
+    candidates.sort(key=lambda item: (-item[1][0], item[0]))
+    return candidates
+
+
 def file_signature(stat):
     # Nanosecond values stay strings across JSON/JS; size+mtime alone misses replacements.
     # CPython Windows stat/fstat disagree on ctime (creation vs change time).
@@ -644,9 +689,25 @@ def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None, cache_request=No
     hints = cache_hints(cache_request, root_key, now) if conditional else {}
     metrics = dict(indexMode='full', indexedFiles=0, directoriesEnumerated=0,
                    statCalls=0, parsedFiles=0, cacheHits=0, logBytesRead=0)
-    # nlargest preserves stable mtime tie ordering, without sorting/retaining 10k Paths.
-    newest = heapq.nlargest(max(1, min(limit, MAX_RETURNED)),
-                           rollout_candidates(base, metrics), key=lambda item: item[0])
+    # Only a validated shortlist from a continuously healthy watcher can
+    # bypass the directory walk. Any invalid / decreasing / missing entry
+    # triggers a full scan in this same one-shot process.
+    size_limit = max(1, min(limit, MAX_RETURNED))
+    ranked = (indexed_rollout_candidates(base, resolved_base,
+              cache_request.get('directory') if conditional else None,
+              root_key, metrics, size_limit) if conditional else None)
+    if ranked is None:
+        metrics['indexMode'] = 'full'
+        metrics['indexedFiles'] = 0
+        metrics['statCalls'] = 0
+        ranked = heapq.nlargest(size_limit,
+                               enumerate(rollout_candidates(base, metrics)),
+                               key=lambda pair: pair[1][0])
+    newest = [item for _, item in ranked]
+    # An ordinal from the original walk is required for stable mtime ties.
+    directory = dict(rootKey=root_key, count=metrics['indexedFiles'], files=[
+        dict(path=Path(file).relative_to(base).as_posix(), modified=modified, order=order)
+        for order, (modified, file, _stat) in ranked])
     included = {file for _, file, _ in newest}
     # Preserve the existing bounded recovery of old active sessions beyond discovery limits.
     extra = []
@@ -734,7 +795,8 @@ def scan(root, now=None, limit=MAX_RETURNED, pinned_paths=None, cache_request=No
     # Titles/originator can change independently of JSONL. Never cache the enrichment.
     enrich_titles(Path(root).expanduser().resolve(), result)
     if conditional:
-        return dict(version=1, rootKey=root_key, sourceNow=now, sessions=result, metrics=metrics)
+        return dict(version=1, rootKey=root_key, sourceNow=now, sessions=result,
+                    metrics=metrics, directory=directory)
     return result
 
 

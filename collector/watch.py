@@ -10,6 +10,7 @@ import ctypes.util
 import errno
 import json
 import os
+import re
 import select
 import struct
 import sys
@@ -19,24 +20,32 @@ from pathlib import Path
 IN_MODIFY = 0x00000002
 IN_ATTRIB = 0x00000004
 IN_CLOSE_WRITE = 0x00000008
+IN_MOVED_FROM = 0x00000040
 IN_MOVED_TO = 0x00000080
 IN_CREATE = 0x00000100
+IN_DELETE = 0x00000200
 IN_DELETE_SELF = 0x00000400
 IN_MOVE_SELF = 0x00000800
 IN_Q_OVERFLOW = 0x00004000
 IN_IGNORED = 0x00008000
 IN_ISDIR = 0x40000000
-MASK = (IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_TO |
-        IN_CREATE | IN_DELETE_SELF | IN_MOVE_SELF)
+MASK = (IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_FROM |
+        IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF)
 MAX_WATCHED_DIRS = 2048
+MAX_CHANGED_PATHS = 64
+RELATIVE_ROLLOUT = re.compile(r'^\d{4}/\d{2}/\d{2}/[^/\\\x00-\x1f]{1,220}\.jsonl$', re.I)
 EMIT_INTERVAL_S = 0.3
 HEARTBEAT_S = 25.0
 HEADER = struct.Struct('iIII')
 
 
-def emit(kind):
-    # Only protocol names are sent to Windows, never paths, session IDs or text.
-    print(json.dumps({'kind': kind}), flush=True)
+def emit(kind, paths=None, reset=False):
+    # Only bounded relative rollout locators; no workspace roots or logs.
+    payload = {'kind': kind}
+    if kind == 'change':
+        payload['reset'] = bool(reset)
+        payload['paths'] = sorted(paths or [])[:MAX_CHANGED_PATHS]
+    print(json.dumps(payload), flush=True)
 
 
 class InotifyWatch:
@@ -55,6 +64,7 @@ class InotifyWatch:
             raise OSError(err, os.strerror(err))
         self.directories = {}
         self.paths = set()
+        self.root = os.path.abspath(os.fspath(root))
         try:
             self.add_tree(Path(root))
         except Exception:
@@ -90,8 +100,10 @@ class InotifyWatch:
             self.add_directory(folder)
 
     def consume(self):
-        """Return True when at least one Codex rollout may have changed."""
+        """Return modified rollout locators and reset on structural changes."""
         dirty = False
+        reset = False
+        paths = set()
         while True:
             try:
                 raw = os.read(self.fd, 65536)
@@ -106,29 +118,41 @@ class InotifyWatch:
                 name_bytes = raw[offset:offset + size]
                 offset += size
                 if mask & IN_Q_OVERFLOW:
-                    dirty = True  # Fall back to a complete trusted scan.
+                    dirty = reset = True
                     continue
                 if mask & IN_IGNORED:
                     old = self.directories.pop(wd, None)
                     if old:
                         self.paths.discard(old)
+                    dirty = reset = True
                     continue
                 directory = self.directories.get(wd)
                 if not directory:
+                    dirty = reset = True
                     continue
+                name = os.fsdecode(name_bytes.rstrip(b'\0'))
                 if mask & IN_ISDIR:
-                    if mask & (IN_CREATE | IN_MOVED_TO):
-                        name = os.fsdecode(name_bytes.rstrip(b'\0'))
-                        if name:
-                            self.add_tree(Path(directory) / name)
-                    elif mask & (IN_DELETE_SELF | IN_MOVE_SELF):
-                        # A future poll recreates the full watcher on failure.
-                        dirty = True
-                else:
-                    name = os.fsdecode(name_bytes.rstrip(b'\0'))
-                    if name.endswith('.jsonl') and mask & MASK:
-                        dirty = True
-        return dirty
+                    if mask & (IN_CREATE | IN_MOVED_TO) and name:
+                        self.add_tree(Path(directory) / name)
+                    # New, removed or renamed folders can introduce many
+                    # candidates before inotify finishes installing watches.
+                    dirty = reset = True
+                elif mask & (IN_DELETE_SELF | IN_MOVE_SELF):
+                    dirty = reset = True
+                elif name.endswith('.jsonl') and mask & MASK:
+                    dirty = True
+                    if mask & (IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO):
+                        reset = True
+                    else:
+                        relative = os.path.relpath(os.path.join(directory, name), self.root).replace(os.sep, '/')
+                        if (len(relative) > 280 or '..' in relative or
+                                not RELATIVE_ROLLOUT.fullmatch(relative)):
+                            reset = True
+                        else:
+                            paths.add(relative)
+                            if len(paths) > MAX_CHANGED_PATHS:
+                                reset = True
+        return dirty, paths, reset
 
 
 def run(root):
@@ -139,17 +163,24 @@ def run(root):
     try:
         emit('ready')
         dirty = False
+        pending_paths = set()
+        reset = False
         last_emit = time.monotonic()
         last_heartbeat = last_emit
         while True:
             interval = EMIT_INTERVAL_S if dirty else 1.0
             readable, _, _ = select.select([watcher.fd], [], [], interval)
             if readable:
-                dirty = watcher.consume() or dirty
+                changed, paths, invalidate = watcher.consume()
+                dirty = changed or dirty
+                pending_paths.update(paths)
+                reset = invalidate or reset or len(pending_paths) > MAX_CHANGED_PATHS
             now = time.monotonic()
             if dirty and now - last_emit >= EMIT_INTERVAL_S:
-                emit('change')
+                emit('change', pending_paths if not reset else [], reset)
                 dirty = False
+                reset = False
+                pending_paths.clear()
                 last_emit = now
             if now - last_heartbeat >= HEARTBEAT_S:
                 emit('heartbeat')

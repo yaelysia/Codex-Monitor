@@ -205,7 +205,7 @@ npm run diagnose:foreground -- --duration 20
 ## 增量索引、来源时间与性能诊断（2026-10）
 
 - **本地增量索引**：Windows 的 `fs.watch` 健康、且此次为事件触发的单来源刷新时，按受限 `YYYY/MM/DD/*.jsonl` 文件路径更新元数据索引；无需每次重新枚举和 stat 全部历史会话文件。目录变化、路径缺失/异常、超过 60 秒，或手动/周期性全量扫描时仍重新发现全部候选文件。原有每源最多 10,000 个候选、200 条常规会话及最多 16 条已固定会话限制保持不变。通过 `lstat` 和根目录内的 `realpath` 校验拒绝监听路径及父目录的越界符号链接。
-- **WSL/SSH 仍使用原有有界远程采集**：远程 watcher 只返回来源发生变化的信号，不回传 JSONL 路径；不会把 Windows 本地文件索引误当成远程也已增量化。
+- **WSL/SSH 目录增量索引**：远程 watcher 就绪后的第一轮完整扫描建立最近 200 个候选的内存索引；后续安全的日志追加，只需定向验证这一候选集（无全目录 `os.walk`）。远程传输只包含受限的 `YYYY/MM/DD/*.jsonl` **相对定位符**，不传输日志正文、绝对路径或 SSH 密钥。新增/删除/重命名、陌生文件变化、监听丢失或索引校验失败立即退回全量扫描；每约 60 秒仍执行全量审计，最多 10,000 个候选与 16 个历史活跃会话定位仍保持。详见 [远程目录增量索引](docs/remote-directory-index.md)。
 - **来源时钟统一**：UI 使用每个来源的 `capturedAt - ageAtSourceMs` 推导本机时间线，统一排序、近七天过滤、相对时间、最近完成与详情展示；原始采集记录、通知指纹及窗口绑定不被修改。缺乏可靠来源时间的旧记录退回原时间值。
 - **性能诊断**：主界面页脚常驻显示批次扫描耗时、本地增量/全量与 stat 次数，悬停可查看各来源耗时、会话数、索引文件数、缓存命中及重新解析量。可用时另外显示最近最多 128 条带有效持久化事件时间戳的“事件到 Monitor 发现”延迟 P95（含样本数）。这**不是 Windows 系统通知实际弹出的精确延迟**，没有有效源时间戳的事件不参与计算。
 - CI 覆盖跨机器时钟偏移、局部来源刷新、事件新增/删除、遗漏事件定期重扫、监听断线全量回退、缓存复用、原生中断通知标题和性能指标计算。整机长期性能及真实 Windows GUI 行为仍需实机验证。
@@ -215,7 +215,7 @@ npm run diagnose:foreground -- --duration 20
 Codex Monitor 现在采用 **事件触发的单源扫描 + 轮询兜底**：事件通道正常时约每 60 秒执行一次全量审计，不可用的数据源仍每约 12 秒补漏，继续共用现有状态机和通知去重逻辑：
 
 - **Windows 本地：** 使用 Node.js 的递归 `fs.watch` 监听 `CODEX_HOME/sessions` 下新增或变化的 JSONL。
-- **WSL / SSH Linux：** 通过现有 Python 3 与 OpenSSH 临时启动 `collector/watch.py`，调用 Linux `inotify` 等待磁盘事件；只发送 `ready` / `change` / `heartbeat` 三种小型 JSONL 信号，不传输会话内容、文件路径、密钥。
+- **WSL / SSH Linux：** 通过现有 Python 3 与 OpenSSH 临时启动 `collector/watch.py`，调用 Linux `inotify` 等待磁盘事件；发送 `ready` / `change` / `heartbeat` 小型 JSONL 信号。安全追加变化只携带有界、经过验证的 JSONL **相对路径**；创建/删除/目录结构改变/溢出则发送强制全量标记。不传输会话正文、工作区绝对路径或密钥。
 - **按来源刷新：** 一台服务器有变动，只重新采集该服务器的会话元数据。相同来源的事件 400ms 合并、最低 3 秒扫描间隔；不会因为每次文件追加而同时启动多个扫描。
 - **补漏 / 恢复：** 事件通道短暂断开时会指数退避自动重连（最多 60 秒）；日志读取失败、平台不支持 `inotify` 或触发目录监听上限时仍保留 12 秒全量轮询。事件发生在扫描过程中也会排队补做一次扫描。
 - **健康指示：** 主窗口左侧机器名称旁的小点显示文件事件通道状态：绿色为正在监听，暖色为连接中，灰色为仅轮询；将鼠标停留在数据源上可以查看文字说明。这里的“监听中”不代表 Codex 运行状态已由 App Server 实时确认。
@@ -451,7 +451,7 @@ src/renderer/                React + Vite desktop dashboard
 src/shared/types.ts          IPC contract and source/session DTOs
 ```
 
-Unlike a transcript viewer, this application does **not** read entire sessions, render chat content, or maintain a secondary database. Each refresh scans at most 10,000 file names per source and returns metadata from at most the 200 most recently modified rollouts. The first pass reads a 128 KiB head and 192 KiB tail. Recently modified sessions with missing lifecycle evidence get one more bounded read of at most 8 MiB; no unbounded transcript scan is performed. It polls every 12 seconds as a fallback and uses temporary, read-only filesystem event watchers while the application runs. No background service is installed on the target machine.
+Unlike a transcript viewer, this application does **not** read entire sessions, render chat content, or maintain a secondary database. Full refreshes scan at most 10,000 file names per source. Watcher-safe incremental WSL/SSH refreshes recheck at most the previous 200 newest candidates without a directory walk; structural events, watcher gaps and periodic audits still force full discovery. Metadata is returned from at most the 200 most recently modified rollouts (plus the existing bounded active pins). The first pass reads a 128 KiB head and 192 KiB tail. Recently modified sessions with missing lifecycle evidence get one more bounded read of at most 8 MiB; no unbounded transcript scan is performed. It polls every 12 seconds as a fallback and uses temporary, read-only filesystem event watchers while the application runs. No background service is installed on the target machine.
 
 ## Verify
 

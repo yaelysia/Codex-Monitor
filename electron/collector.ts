@@ -10,13 +10,19 @@ import { applyDesktopLogEvidence, DesktopLogEventCache, isActiveDesktopStart,
   type DesktopLogEvent } from '../src/shared/desktop-log-status';
 import { DesktopEvidenceStore } from './desktop-evidence-store';
 import { validPinnedRolloutPath, MAX_PINNED_ROLLOUTS } from '../src/shared/pinned-rollouts';
-import { RemoteScanCache, type RemoteScanResult } from './remote-scan-cache';
+import { RemoteScanCache, type RemoteScanResult, type RemoteWatchChange } from './remote-scan-cache';
 
 const SCRIPT_TIMEOUT_MS = 18_000;
 const MAX_STDOUT = 5 * 1024 * 1024;
 let wslCache: { at: number; distros: string[] } | null = null;
 let scriptCache: Promise<string> | null = null;
 const remoteScanCache = new RemoteScanCache();
+/** The remote watcher is the sole owner of delta-eligibility. This metadata
+ * remains in Monitor RAM, never in the remote CODEX_HOME or a persistent file.
+ */
+export function noteRemoteWatch(sourceId: string, event: RemoteWatchChange): void {
+  remoteScanCache.noteWatch(sourceId, event);
+}
 
 /** Docker Desktop's WSL distributions are internal infrastructure, not user workspaces. */
 export function isInternalWslDistro(name: string): boolean {
