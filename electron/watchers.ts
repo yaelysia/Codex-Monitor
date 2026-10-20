@@ -262,6 +262,12 @@ export class WatchCoordinator {
           const line = buffer.slice(0, pos).trim();
           buffer = buffer.slice(pos + 1);
           const event = parseWatcherDelta(line);
+          if (!event && ready) {
+            // An unrecognized line breaks the trust in path-only deltas.
+            // Invalidate rather than keeping a possibly incomplete index.
+            this.onRemoteIndex?.(spec.id, { kind: 'change', reset: true });
+            this.onChange(spec.id);
+          }
           if (event) lastSignalAt = Date.now();
           if (event?.kind === 'ready') {
             ready = true;

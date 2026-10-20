@@ -170,7 +170,8 @@ export class RemoteScanCache {
           const mode = object(envelope.metrics)?.indexMode;
           // An incremental scan cannot extend the full-audit deadline.
           slot.directory = saved && mode === 'incremental' && index
-            ? { ...saved, baselineAt: index.baselineAt } : saved;
+            ? { ...saved, baselineAt: index.baselineAt }
+            : mode === 'full' ? saved : null;
         } else slot.directory = null;
       }
       const rawMetrics = object(envelope.metrics);
