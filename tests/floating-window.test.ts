@@ -5,6 +5,7 @@ import type { FloatingWindowState } from '../src/shared/types';
 const fake = vi.hoisted(() => ({
   windows: [] as any[],
   failNextLoad: false,
+  failNextCreate: false,
   displays: [
     { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
     { id: 2, workArea: { x: 1920, y: 0, width: 1600, height: 900 } },
@@ -36,6 +37,10 @@ vi.mock('electron', () => {
       isDestroyed: () => this.webDestroyed || this.destroyed,
     };
     constructor(options: any) {
+      if (fake.failNextCreate) {
+        fake.failNextCreate = false;
+        throw new Error('SIMULATED_NATIVE_CONSTRUCTION_FAILURE');
+      }
       this.bounds = {
         x: options.x, y: options.y, width: options.width, height: options.height,
       };
@@ -98,6 +103,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   fake.windows.length = 0;
   fake.failNextLoad = false;
+  fake.failNextCreate = false;
   fake.displays = [
     { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
     { id: 2, workArea: { x: 1920, y: 0, width: 1600, height: 900 } },
@@ -498,6 +504,24 @@ describe('resident floating window self-recovery without restarting Monitor', ()
     controller.repair();
     expect(fake.windows).toHaveLength(2 + MAX_AUTO_FLOAT_REPAIRS);
     expect(controller.state().visible).toBe(true);
+  });
+
+  it('does not kill the resident monitor if one native rebuild fails, then retries safely', async () => {
+    const controller = new FloatingWindowController(
+      () => undefined, () => undefined, INITIAL, () => undefined);
+    controller.show();
+    await vi.advanceTimersByTimeAsync(0);
+    fake.failNextCreate = true;
+    const original = fake.windows[0]!;
+    original.crash();
+    await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS);
+    expect(original.destroyed).toBe(true);
+    expect(fake.windows).toHaveLength(1);
+    expect(controller.state().visible).toBe(false);
+    await vi.advanceTimersByTimeAsync(FLOAT_REPAIR_DELAY_MS);
+    expect(fake.windows).toHaveLength(2);
+    expect(controller.state().visible).toBe(true);
+    controller.allowQuit();
   });
 
   it('does not restart for a brief unresponsive frame, but rebuilds after sustained hang', async () => {
