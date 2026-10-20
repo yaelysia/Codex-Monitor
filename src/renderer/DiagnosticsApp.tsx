@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DiagnosticsApi, DiagnosticView } from '../shared/diagnostics';
-import type { NativeConnection, NativeHealthReason } from '../shared/native-state';
+import type { NativeConnection, NativeHealthReason, NativeCoverageReason } from '../shared/native-state';
 import type { MonitorState, OriginalWindowStatus } from '../shared/types';
 import SignalSelect from './SignalSelect';
 import { useVisibleInterval } from './useVisibleInterval';
@@ -17,6 +17,18 @@ const REASON: Record<NativeHealthReason, string> = {
   'partial-coverage': '部分覆盖；列表分页或单批读取有上限', 'connection-unavailable': '连接不可用，已降级',
   'request-failed': '部分状态读取失败，未确认项使用日志', 'protocol-unsupported': '未识别的协议或状态，未作运行推断',
   stale: '原生证据已过期',
+};
+const COVERAGE: Record<NativeCoverageReason, string> = {
+  covered: '原生已确认', 'not-configured': '此来源尚未启用连接',
+  'source-unavailable': '来源采集失败或数据已过期', subagent: '子代理不参与主线程原生匹配',
+  'invalid-thread-id': '会话缺少可匹配的标准 UUID',
+  'endpoint-unavailable': '没有可用的已配置服务连接',
+  'not-loaded': '所有已完整枚举的服务均未加载该会话',
+  'list-incomplete': '已加载列表未完整，无法确认此会话是否存在',
+  'pending-verification': '已匹配，等待下一次只读核验',
+  'sample-expired': '最近的原生证据已过期',
+  'file-newer-than-native': '日志文件比原生读取更新，等待重新核验',
+  'status-unrecognized': '原生状态未识别或暂不可用',
 };
 const time = (at: number | null) => at == null ? '—' : new Date(at).toLocaleTimeString('zh-CN', { hour12: false });
 
@@ -76,6 +88,8 @@ export default function DiagnosticsApp() {
     (selected === 'all' || event.session === selected) && (frozenAt == null || event.sequence <= frozenAt));
   const maxSequence = report?.events.at(-1)?.sequence ?? 0;
   const selectedRow = view?.sessions.find(row => row.ref === selected);
+  const selectedCoverage = view?.coverage.find(row => row.ref === selected);
+  const coverageSummary = report?.coverage ?? [];
   const live = sources.flatMap(source => source.sessions).find(row => row.key === selectedRow?.key);
   const updateConnection = (index: number, patch: Partial<NativeConnection>) =>
     setConnections(rows => rows.map((row, i) => i === index ? { ...row, ...patch } : row));
@@ -119,6 +133,11 @@ export default function DiagnosticsApp() {
           <div><b>连接 {i + 1} · {row.source} · {row.transport}</b><p>{REASON[row.reason]}</p></div>
           <div>已加载 {row.loaded} · 匹配 {row.matched} · 有效证据 {row.covered}<p>最近成功 {time(row.lastSuccessAt)} · 重试 {row.retries} · 未代答请求 {row.ignoredRequests} · 状态读取 {row.readRequests ?? 0} · 被动唤醒 {row.passiveHints ?? 0}</p></div>
         </article>)}
+        {!!coverageSummary.length && <div className="table-scroll"><table>
+          <thead><tr><th>来源</th><th>会话覆盖原因</th><th>数量</th></tr></thead>
+          <tbody>{coverageSummary.map((row, i) => <tr key={i}>
+            <td>{row.source}</td><td>{COVERAGE[row.reason]}</td><td>{row.count}</td>
+          </tr>)}</tbody></table></div>}
       </section>
       <aside className="help">导出只含时间、计数、状态和本次运行的匿名编号。不含对话、标题、工作区、连接地址、原始错误、窗口句柄或进程 ID。未自动上传任何报告。</aside>
     </>}
@@ -133,6 +152,7 @@ export default function DiagnosticsApp() {
       ]} onChange={ref => void choose(ref)} />
       {selectedRow && <div className="session-summary"><b>{selectedRow.title}</b><p>{selectedRow.sourceLabel} · {live ? STATUS[live.status] : '暂无当前记录'} · {live?.nativeStatus ? '原生证据' : '日志证据'}</p>
         {live && <p>{live.statusReason}</p>}
+        {selectedCoverage && <p>原生覆盖：{COVERAGE[selectedCoverage.reason]}</p>}
         <p>窗口绑定：{windowStatus?.message ?? '正在读取只读诊断…'}</p>
       </div>}
       <div className="replay-controls"><label>回看位置 <input aria-label="状态轨迹回看位置" type="range" min={0} max={maxSequence}

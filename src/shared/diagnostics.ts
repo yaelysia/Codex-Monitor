@@ -1,5 +1,5 @@
 import type { MonitorState, SessionStatus } from './types';
-import type { NativeHealth, NativeConnection } from './native-state';
+import type { NativeHealth, NativeConnection, NativeCoverageEntry, NativeCoverageReason } from './native-state';
 
 export const DIAGNOSTIC_EVENT_LIMIT = 400;
 const ENTITY_LIMIT = 1000;
@@ -17,12 +17,16 @@ export interface DiagnosticReport {
     channel: 'active' | 'connecting' | 'fallback'; capturedAt: number | null;
     sessions: number; durationMs: number | null; statCalls: number | null; cacheHits: number | null }>;
   native: Array<Omit<NativeHealth, 'sourceId'> & { source: string }>;
+  /** Counts only; never raw session IDs, endpoint addresses, or file paths. */
+  coverage: Array<{ source: string; reason: NativeCoverageReason; count: number }>;
   events: DiagnosticEvent[];
 }
 export interface DiagnosticView {
   report: DiagnosticReport;
   /** Display-only identities: never included in report/export. */
   sessions: Array<{ key: string; ref: string; title: string; sourceLabel: string }>;
+  /** Current session-specific cause, visible locally only; not in report/export. */
+  coverage: Array<{ ref: string; source: string; reason: NativeCoverageReason }>;
 }
 export interface DiagnosticsApi {
   get(): Promise<DiagnosticView>;
@@ -100,8 +104,17 @@ export class DiagnosticRecorder {
     }
     this.read = reads;
   }
-  snapshot(state: MonitorState, native: readonly NativeHealth[], now = Date.now()): DiagnosticView {
+  snapshot(state: MonitorState, native: readonly NativeHealth[], now = Date.now(),
+    coverage: readonly NativeCoverageEntry[] = []): DiagnosticView {
     const sources = (state.scan?.sources ?? []).slice(0, 40);
+    const summary = new Map<string, { source: string; reason: NativeCoverageReason; count: number }>();
+    for (const row of coverage.slice(0, 1000)) {
+      const source = this.ref(row.sourceId, 'S');
+      const key = JSON.stringify([source, row.reason]);
+      const previous = summary.get(key);
+      if (previous) previous.count++;
+      else summary.set(key, { source, reason: row.reason, count: 1 });
+    }
     const report: DiagnosticReport = {
       version: 1, generatedAt: now, capacity: DIAGNOSTIC_EVENT_LIMIT, dropped: this.dropped,
       sources: sources.map(src => ({ ref: this.ref(src.id, 'S'), healthy: !src.error,
@@ -113,12 +126,17 @@ export class DiagnosticRecorder {
         transport: item.transport, state: item.state, reason: item.reason,
         loaded: item.loaded, matched: item.matched, covered: item.covered,
         listComplete: item.listComplete, lastSuccessAt: number(item.lastSuccessAt),
-        retries: item.retries, ignoredRequests: item.ignoredRequests })),
+        retries: item.retries, ignoredRequests: item.ignoredRequests,
+        readRequests: item.readRequests ?? 0, passiveHints: item.passiveHints ?? 0 })),
+      coverage: [...summary.values()].map(row => ({ ...row })),
       events: this.events.map(event => ({ ...event })),
     };
     return { report, sessions: sources.flatMap(src => src.sessions.slice(0,216).map(row => ({
       key: row.key, ref: this.ref(row.key, 'T'), title: row.title || '未命名会话', sourceLabel: src.label,
-    }))).slice(0, ENTITY_LIMIT) };
+    }))).slice(0, ENTITY_LIMIT),
+      coverage: coverage.slice(0, 1000).map(row => ({
+        ref: this.ref(row.sessionKey, 'T'), source: this.ref(row.sourceId, 'S'), reason: row.reason,
+      })) };
   }
   clear(): void {
     this.events = []; this.previous.clear(); this.identities.clear(); this.read.clear();

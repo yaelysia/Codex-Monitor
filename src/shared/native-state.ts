@@ -23,6 +23,14 @@ export interface NativeHealth {
   /** Cumulative metadata reads and matched passive hint events (no message bodies). */
   readRequests?: number; passiveHints?: number;
 }
+/** Local-only coverage explanation. Never export sessionKey in a diagnostic report. */
+export type NativeCoverageReason = 'covered' | 'source-unavailable' | 'subagent' |
+  'invalid-thread-id' | 'not-configured' | 'endpoint-unavailable' | 'not-loaded' |
+  'list-incomplete' | 'pending-verification' | 'sample-expired' |
+  'file-newer-than-native' | 'status-unrecognized';
+export interface NativeCoverageEntry {
+  sourceId: string; sessionKey: string; reason: NativeCoverageReason;
+}
 export const NATIVE_SAMPLE_TTL_MS = 15_000;
 export const MAX_NATIVE_CONNECTIONS = 8;
 export const THREAD_UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;

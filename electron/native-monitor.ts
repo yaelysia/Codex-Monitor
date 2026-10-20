@@ -1,7 +1,7 @@
 import { AppServerProbeClient, parseProbeEndpoint, type ProbeEndpoint } from '../scripts/app-server-probe/client.mjs';
-import { freshNative, isNativeWaiting, nativeFileChangedAt, parseNativeThread, projectNativeScan,
-  THREAD_UUID, nativeConnectionKey, type NativeConnection, type NativeHealth,
-  type NativeSample, type NativeStatus } from '../src/shared/native-state';
+import { freshNative, isNativeWaiting, parseNativeThread, projectNativeScan,
+  THREAD_UUID, nativeConnectionKey, nativeFileChangedAt, type NativeConnection,
+  type NativeCoverageEntry, type NativeHealth, type NativeSample, type NativeStatus } from '../src/shared/native-state';
 import type { ScanResponse } from '../src/shared/types';
 import { chooseNativeReads, nativeListInterval, nextNativeReadDueIn,
   NATIVE_ACTIVE_READ_MS, NATIVE_PUSH_WAKE_MS, type NativeReadObservation } from '../src/shared/native-scheduling';
@@ -204,6 +204,54 @@ export class NativeMonitor {
           ? { state: 'degraded' as const, reason: 'connection-unavailable' as const } : {}) };
     });
   }
+  /** Explain a missing live status without guessing that a thread completed.
+   * Only the current source+UUID can match; result is for the local diagnostics
+   * window. The redacted report contains aggregate reason counters only.
+   */
+  coverage(scan: ScanResponse | null, now = Date.now()): NativeCoverageEntry[] {
+    const projected = this.project(scan, now);
+    const projectedBySource = new Map(projected?.sources.map(source => [source.id, source]));
+    const results: NativeCoverageEntry[] = [];
+    for (const source of (scan?.sources ?? []).slice(0, 40)) {
+      const slots = this.configs.filter(config => config.enabled && config.sourceId === source.id)
+        .map(config => this.slots.get(nativeConnectionKey(config))).filter((slot): slot is Slot => !!slot);
+      const matchingProjection = new Map(projectedBySource.get(source.id)?.sessions.map(row => [row.key, row]));
+      for (const row of source.sessions.slice(0, MAX_TARGETS)) {
+        let reason: NativeCoverageEntry['reason'];
+        if (source.error || source.stale) reason = 'source-unavailable';
+        else if (row.isSubagent) reason = 'subagent';
+        else if (!THREAD_UUID.test(row.id)) reason = 'invalid-thread-id';
+        else if (matchingProjection.get(row.key)?.nativeStatus) reason = 'covered';
+        else if (!this.configs.some(config => config.enabled && config.sourceId === source.id))
+          reason = 'not-configured';
+        else if (!slots.some(slot => slot.client && !slot.client.closed))
+          reason = 'endpoint-unavailable';
+        else {
+          const id = row.id.toLowerCase();
+          const matching = slots.filter(slot => slot.loaded.has(id));
+          if (!matching.length) reason = slots.every(slot => slot.health.listComplete)
+            ? 'not-loaded' : 'list-incomplete';
+          else if (matching.some(slot => {
+            const sample = slot.samples.get(row.key);
+            const changedAt = nativeFileChangedAt(source, row);
+            return sample && changedAt != null && sample.at < changedAt;
+          })) reason = 'file-newer-than-native';
+          else if (matching.some(slot => {
+            const previous = slot.attempts.get(row.key);
+            return previous && (now < previous.at || now - previous.at > 15_000);
+          })) reason = 'sample-expired';
+          else if (matching.some(slot => slot.attempts.get(row.key)?.state === 'unknown' ||
+            slot.attempts.get(row.key)?.state === 'notLoaded'))
+            reason = 'status-unrecognized';
+          else reason = 'pending-verification';
+        }
+        results.push({ sourceId: source.id, sessionKey: row.key, reason });
+        if (results.length >= 1000) return results;
+      }
+    }
+    return results;
+  }
+
   private async list(slot: Slot, client: NativeClient, generation: number): Promise<void> {
     const ids = new Map<string, string>(), cursors = new Set<string>();
     let cursor: string | null = null, complete = false;
