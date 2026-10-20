@@ -201,6 +201,9 @@ export class FloatingWindowController {
   resume(): void {
     if (this.quitting || !this.dock.visible) return;
     this.reposition();
+    const win = this.win;
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed() && win.isVisible())
+      win.setAlwaysOnTop(true, 'floating');
     this.checkHealth();
   }
 

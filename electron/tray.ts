@@ -45,6 +45,10 @@ export class TrayController {
       { label: '诊断中心 / 原生状态', click: () => this.showDiagnostics() },
       { label: '显示悬浮窗', type: 'checkbox', checked: floatingVisible,
         click: () => { this.floating.setVisible(!floatingVisible); this.refresh(); } },
+      // A live BrowserWindow can outlast a crashed/blank renderer. This is an
+      // explicit HWND rebuild, not a visibility toggle or a process restart.
+      { label: '修复悬浮窗（重建窗口）',
+        click: () => { this.floating.repair(); this.refresh(); } },
       { label: '系统通知静音', type: 'checkbox', checked: muted,
         click: () => { this.monitor.setMuted(!muted); this.refresh(); } },
       { label: '悬浮窗不透明度', submenu: [1, 0.85, 0.7, 0.55, 0.4].map(value => ({
