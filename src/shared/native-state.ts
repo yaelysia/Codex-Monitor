@@ -9,6 +9,9 @@ export interface NativeSample extends NativeStatus {
 export interface NativeConnection {
   sourceId: string; enabled: boolean; transport: 'auto' | 'socket' | 'ws'; endpoint: string;
 }
+/** Internal connection identity; contains endpoint, NEVER include in diagnostic exports. */
+export const nativeConnectionKey = (row: NativeConnection): string =>
+  JSON.stringify([row.sourceId, row.transport, row.endpoint]);
 export type NativeHealthState = 'disabled' | 'connecting' | 'connected' | 'degraded';
 export type NativeHealthReason = 'disabled' | 'source-unavailable' | 'connecting' |
   'no-matching-threads' | 'metadata-only' | 'partial-coverage' | 'connection-unavailable' |

@@ -98,7 +98,8 @@ export default function DiagnosticsApp() {
     {tab === 'overview' && <>
       <section className="metrics" aria-label="诊断概览">
         <article><span>监控来源</span><strong>{report?.sources.length ?? 0}</strong></article>
-        <article><span>原生覆盖会话</span><strong>{report?.native.reduce((sum, row) => sum + row.covered, 0) ?? 0}</strong></article>
+        <article><span>原生覆盖会话</span><strong>{sources.reduce((sum, source) =>
+          sum + source.sessions.filter(row => !!row.nativeStatus).length, 0)}</strong></article>
         <article><span>近期诊断事件</span><strong>{report?.events.length ?? 0}<small> / 400</small></strong></article>
         <article><span>最近扫描</span><strong>{monitor.performance?.sourceScanDurationMs ?? '—'}<small> ms</small></strong></article>
       </section>
@@ -114,8 +115,8 @@ export default function DiagnosticsApp() {
       </section>
       <section className="panel"><h2>原生连接覆盖</h2>
         {!report?.native.length && <p>尚未启用原生接入。现有日志监控保持不变，可在「原生状态接入」中配置。</p>}
-        {report?.native.map(row => <article className="health-row" key={row.source}>
-          <div><b>{row.source} · {row.transport}</b><p>{REASON[row.reason]}</p></div>
+        {report?.native.map((row, i) => <article className="health-row" key={i}>
+          <div><b>连接 {i + 1} · {row.source} · {row.transport}</b><p>{REASON[row.reason]}</p></div>
           <div>已加载 {row.loaded} · 匹配 {row.matched} · 有效证据 {row.covered}<p>最近成功 {time(row.lastSuccessAt)} · 重试 {row.retries} · 未代答请求 {row.ignoredRequests} · 状态读取 {row.readRequests ?? 0} · 被动唤醒 {row.passiveHints ?? 0}</p></div>
         </article>)}
       </section>
@@ -147,7 +148,7 @@ export default function DiagnosticsApp() {
     </section>}
     {tab === 'native' && <section className="panel">
       <h2>连接已有 App Server</h2>
-      <p>默认关闭。只调用 initialize、thread/loaded/list、thread/read(includeTurns:false)，不启动新服务，不恢复、订阅或操作任何会话。</p>
+      <p>默认关闭。同一来源可连接多个现有 App Server；按配置顺序选择同一会话的优先证据。仅执行只读调用，不启动新服务，不恢复、订阅或操作会话。</p>
       <div className="help">本地自动模式只尝试当前 CODEX_HOME 的已有控制套接字。WSL / SSH 请填写已经建立的本机回环 WebSocket 转发地址；不要启动一个独立 App Server 来代替目标客户端。连接成功后还必须核对匹配会话数。</div>
       {connections.map((row, index) => <fieldset key={index} className="connection" disabled={busy}>
         <legend>连接 {index + 1}</legend>
@@ -166,10 +167,11 @@ export default function DiagnosticsApp() {
         <label><input type="checkbox" checked={row.enabled} onChange={event => updateConnection(index, { enabled: event.target.checked })} /> 启用只读状态采集</label>
         <button onClick={() => setConnections(rows => rows.filter((_, i) => i !== index))}>移除</button>
       </fieldset>)}
-      <div className="actions"><button disabled={busy || connections.length >= 8 || !sources.some(source => !connections.some(row => row.sourceId === source.id))}
-        onClick={() => { const source = sources.find(source => !connections.some(row => row.sourceId === source.id));
+      <div className="actions"><button disabled={busy || connections.length >= 8 || !sources.length}
+        onClick={() => { const source = sources.find(source => !connections.some(row => row.sourceId === source.id)) ?? sources[0];
           if (source) setConnections(rows => [...rows, { sourceId: source.id, enabled: false,
-            transport: source.id === 'local' ? 'auto' : 'ws', endpoint: '' }]); }}>添加来源连接</button>
+            transport: source.id === 'local' && !rows.some(row => row.sourceId === 'local') ? 'auto' : 'ws',
+            endpoint: '' }]); }}>添加现有端点</button>
         <button disabled={busy} onClick={() => void action(async () => {
           setConnections(await window.diagnosticsApi!.setConnections(connections));
           setNotice('设置已保存；可在健康总览核对实际覆盖范围'); await refresh();
