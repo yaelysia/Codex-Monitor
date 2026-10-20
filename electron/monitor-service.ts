@@ -1,7 +1,8 @@
 import { AlertTracker } from '../src/shared/alert-tracker';
 import type { MonitorAlert, MonitorState, ScanResponse, SourceResult, AlertKind } from '../src/shared/types';
 import { readSettings } from './config';
-import { refresh as collect, projectDesktopRuntime, recentDesktopCompletions } from './collector';
+import { refresh as collect, projectDesktopRuntime, recentDesktopCompletions,
+  noteRemoteWatch } from './collector';
 import { WatchCoordinator } from './watchers';
 import { mergeSourceSnapshots } from '../src/shared/scan-merge';
 import { AlertStateStore } from './alert-store';
@@ -72,6 +73,7 @@ export class MonitorService {
   private watchers = new WatchCoordinator(
     sourceId => this.queueSource(sourceId),
     () => { if (this.running) this.publishState(); },
+    (sourceId, event) => noteRemoteWatch(sourceId, event),
   );
   private pendingSources = new Set<string>();
   private lastEventScan = new Map<string, number>();

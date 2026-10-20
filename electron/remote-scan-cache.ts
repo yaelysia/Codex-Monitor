@@ -177,7 +177,7 @@ export class RemoteScanCache {
       const metrics: Partial<SourceScanMetrics> = {
         indexMode: rawMetrics?.indexMode === 'incremental' ? 'incremental' : 'full',
       };
-      for (const key of ['indexedFiles', 'statCalls', 'parsedFiles', 'cacheHits'] as const) {
+      for (const key of ['indexedFiles', 'directoriesEnumerated', 'statCalls', 'parsedFiles', 'cacheHits'] as const) {
         const count = rawMetrics?.[key];
         if (integer(count) && count >= 0) metrics[key] = count;
       }

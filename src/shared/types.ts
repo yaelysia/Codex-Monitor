@@ -67,6 +67,8 @@ export interface SourceScanMetrics {
   sessionCount: number;
   indexMode?: 'full' | 'incremental';
   indexedFiles?: number;
+  /** Number of remote directories enumerated in this scan (zero on trusted incremental hit). */
+  directoriesEnumerated?: number;
   statCalls?: number;
   parsedFiles?: number;
   cacheHits?: number;
