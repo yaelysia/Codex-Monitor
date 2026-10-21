@@ -249,6 +249,9 @@ export async function refresh(settings: Settings, sourceIds?: ReadonlySet<string
           indexMode: stats.index.mode, indexedFiles: stats.index.indexedFiles,
           statCalls: stats.index.statCalls, parsedFiles: stats.cacheMisses,
           cacheHits: stats.cacheHits,
+          desktopIndexed: stats.desktopIndexed,
+          desktopMetadataOnly: stats.desktopMetadataOnly,
+          desktopExtraRollouts: stats.desktopExtraRollouts,
         });
         return source;
       }));

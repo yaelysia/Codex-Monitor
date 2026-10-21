@@ -8,6 +8,7 @@ import { extractSessionClientKind, extractSessionOrigin } from '../src/shared/se
 import { LocalScanCache } from '../src/shared/local-scan-cache';
 import { indexedRollouts, localFileIndexDiagnostics, mapLimited } from './local-file-index';
 import { MAX_PINNED_ROLLOUTS, validPinnedRolloutPath } from '../src/shared/pinned-rollouts';
+import { readDesktopThreadHints, MAX_DESKTOP_EXTRA_ROLLOUTS } from './desktop-thread-index';
 
 const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 192 * 1024;
@@ -21,7 +22,8 @@ const MAX_RETURNED = 200;
 const cache = new LocalScanCache();
 export function localScanCacheStats(): ReturnType<LocalScanCache['stats']> { return cache.stats(); }
 const lastScanStats = new Map<string, {index: ReturnType<typeof localFileIndexDiagnostics>;
-  parsed: number; cacheHits: number; cacheMisses: number}>();
+  parsed: number; cacheHits: number; cacheMisses: number;
+  desktopIndexed: number; desktopExtraRollouts: number; desktopMetadataOnly: number }>();
 export function localScanDiagnostics(root: string) { return lastScanStats.get(path.resolve(root)) ?? null; }
 
 export function resolveLocalRoot(customRoot: string): string {
@@ -71,11 +73,22 @@ export async function scanLocal(root: string, sourceId = 'local',
   sourceLabel = 'Windows', now = Date.now(),
   pinnedPaths: readonly string[] = [], useIncrementalIndex = false): Promise<SessionRecord[]> {
   const sessionsDir = path.join(root, 'sessions');
+  // Desktop may have multiple user-owned threads without a currently selected
+  // recent rollout (especially paginated histories and busy subagent trees).
+  // The existing SQLite index supplies only bounded metadata, never status.
+  const desktop = sourceId === 'local' ? await readDesktopThreadHints(root) : [];
   const candidates = await indexedRollouts(root, now, useIncrementalIndex);
   const newest = candidates.slice(0, MAX_RETURNED);
   const included = new Set(newest.map(item => path.normalize(item.file)));
-  const extras = await mapLimited([...new Set(pinnedPaths)]
-    .filter(validPinnedRolloutPath).slice(0, MAX_PINNED_ROLLOUTS), 8, async relative => {
+  const existingPins = [...new Set(pinnedPaths)]
+    .filter(validPinnedRolloutPath).slice(0, MAX_PINNED_ROLLOUTS);
+  // Do not let 200 newly active subagents evict another user's Desktop task.
+  // Only append up to 32 verified extra files; no full transcript scanning.
+  const dbPins = [...new Set(desktop.filter(thread => !thread.isSubagent)
+    .map(thread => thread.relativePath).filter((value): value is string =>
+      validPinnedRolloutPath(value) && !included.has(path.resolve(sessionsDir, ...value.split('/')))))]
+    .slice(0, MAX_DESKTOP_EXTRA_ROLLOUTS);
+  const extras = await mapLimited([...new Set([...existingPins, ...dbPins])], 8, async relative => {
     const file = path.resolve(sessionsDir, ...relative.split('/'));
     if (included.has(file)) return null;
     try {
@@ -139,10 +152,28 @@ export async function scanLocal(root: string, sourceId = 'local',
   });
   const seen = new Set<string>();
   const unique = sessions.filter((s): s is SessionRecord => {
-    if (!s || seen.has(s.id)) return false;
-    seen.add(s.id);
+    if (!s || seen.has(s.id.toLowerCase())) return false;
+    seen.add(s.id.toLowerCase());
     return true;
   });
+  // A Desktop thread indexed in SQLite but missing a readable rollout is a
+  // visible UNKNOWN session, not a fabricated working/finished turn. Its
+  // identity and origin are verified by Codex's own SQLite metadata.
+  let desktopMetadataOnly = 0;
+  for (const thread of desktop) {
+    if (seen.has(thread.id)) continue;
+    unique.push({
+      id: thread.id, key: sourceId + ':' + thread.id, sourceId, sourceLabel,
+      title: thread.title, workspace: thread.workspace, clientKind: 'desktop',
+      isSubagent: thread.isSubagent, parentThreadId: thread.parentThreadId,
+      rolloutPath: null, updatedAt: thread.updatedAt,
+      ageAtSourceMs: now - thread.updatedAt, startedAt: null,
+      status: 'unknown', statusReason:
+        'Codex Desktop 已在本地线程索引中登记此任务，但暂未取得匹配的完整 JSONL 轮次证据；无法确认是否正在执行或已完成',
+    });
+    seen.add(thread.id);
+    desktopMetadataOnly++;
+  }
   cache.retain(new Set(selected.map(item => item.file)));
   await enrichLocalTitles(root, unique);
   const cacheAfter = cache.stats();
@@ -153,6 +184,9 @@ export async function scanLocal(root: string, sourceId = 'local',
     index: localFileIndexDiagnostics(root), parsed: selected.length,
     cacheHits: cacheAfter.hits - cacheBefore.hits,
     cacheMisses: cacheAfter.misses - cacheBefore.misses,
+    desktopIndexed: desktop.length,
+    desktopExtraRollouts: extras.filter(x => !!x).length,
+    desktopMetadataOnly,
   });
   return unique;
 }

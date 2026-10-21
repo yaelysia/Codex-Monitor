@@ -72,6 +72,10 @@ export interface SourceScanMetrics {
   statCalls?: number;
   parsedFiles?: number;
   cacheHits?: number;
+  /** Desktop state_5.sqlite root-thread discovery (metadata only). */
+  desktopIndexed?: number;
+  desktopMetadataOnly?: number;
+  desktopExtraRollouts?: number;
 }
 
 export interface SourceResult {

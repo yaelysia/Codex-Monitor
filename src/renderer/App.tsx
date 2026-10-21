@@ -555,7 +555,10 @@ export default function App() {
       ' · 候选 ' + metrics.indexedFiles +
       ' · stat ' + metrics.statCalls +
       ' · 缓存命中 ' + metrics.cacheHits +
-      ' · 重新解析 ' + metrics.parsedFiles : '')).join('\n');
+      ' · 重新解析 ' + metrics.parsedFiles : '') +
+    (metrics.desktopIndexed != null ? ' · Desktop 索引 ' + metrics.desktopIndexed +
+      ' · 补读文件 ' + (metrics.desktopExtraRollouts ?? 0) +
+      ' · 仅元数据 ' + (metrics.desktopMetadataOnly ?? 0) : '')).join('\n');
   async function updateAppearance(next: SignalAppearance): Promise<void> {
     try { setAppearance(next); const saved = await window.monitorApi.setFloatingAppearance(next); setAppearance(saved.appearance); }
     catch (cause) { setError(describeError(cause)); }
