@@ -19,12 +19,16 @@ const health: NativeHealth = { sourceId: 'ssh:SECRET_HOST', transport: 'ws', sta
 describe('bounded privacy-safe diagnostic recorder', () => {
   it('exports whitelisted counters and anonymous identities, never labels or payloads', () => {
     const recorder = new DiagnosticRecorder(), input = state();
-    input.scan!.sources[0]!.scanMetrics = { durationMs: 4, sessionCount: 1, statCalls: 8, cacheHits: 2 };
+    input.scan!.sources[0]!.scanMetrics = { durationMs: 4, sessionCount: 1, statCalls: 8,
+      cacheHits: 2, desktopIndexed: 3, desktopMetadataOnly: 2, desktopExtraRollouts: 1 };
     recorder.observe(input, NOW);
     recorder.recordPopup(input.scan!.sources[0]!.sessions[0]!.key, false, input, NOW + 1);
     const view = recorder.snapshot(input, [health], NOW + 2);
     expect(JSON.stringify(view.report)).not.toContain('SECRET');
-    expect(view.report.sources[0]).toMatchObject({ durationMs: 4, statCalls: 8, cacheHits: 2, channel: 'active' });
+    expect(view.report.sources[0]).toMatchObject({
+      durationMs: 4, statCalls: 8, cacheHits: 2, channel: 'active',
+      desktopIndexed: 3, desktopMetadataOnly: 2, desktopExtraRollouts: 1,
+    });
     expect(view.sessions[0]!.title).toBe('SECRET_TITLE');
     expect(view.report.events.at(-1)?.kind).toBe('popup-requested');
     expect(view.report.events.at(-1)?.session).toBe(view.sessions[0]!.ref);

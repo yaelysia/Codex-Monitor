@@ -121,12 +121,14 @@ export default function DiagnosticsApp() {
       </section>
       <section className="panel"><h2>来源健康与采集成本</h2>
         <p>文件监听正常不等于原生状态已接入；两条链路分开显示。</p>
-        <div className="table-scroll"><table><thead><tr><th>来源</th><th>采集</th><th>文件事件通道</th><th>最近采集</th><th>扫描模式 / 耗时 / 遍历目录 / stat / 缓存</th></tr></thead>
+        <div className="table-scroll"><table><thead><tr><th>来源</th><th>采集</th><th>文件事件通道</th><th>最近采集</th><th>扫描模式 / 耗时 / 遍历目录 / stat / 缓存</th><th>Desktop 索引 / 无日志证据</th></tr></thead>
           <tbody>{report?.sources.map((row, i) => <tr key={row.ref}>
             <td>{row.ref} · {sources[i]?.label ?? '来源'}</td><td>{row.healthy && !row.stale ? '正常' : '异常 / 过期'}</td>
             <td>{row.channel === 'active' ? '监听中' : row.channel === 'connecting' ? '连接中' : '轮询兜底'}</td>
             <td>{time(row.capturedAt)}</td><td>{row.indexMode === 'incremental' ? '增量' : row.indexMode === 'full' ? '全量' : '—'}
               {' / '}{row.durationMs ?? '—'} ms / {row.directoriesEnumerated ?? '—'} / {row.statCalls ?? '—'} / {row.cacheHits ?? '—'}</td>
+            <td>{row.desktopIndexed == null ? '—' :
+              row.desktopIndexed + ' 登记 / ' + (row.desktopMetadataOnly ?? 0) + ' 未取得日志证据'}</td>
           </tr>)}</tbody></table></div>
         {!report?.sources.length && <p>尚未完成首次采集。诊断视图不会主动启动额外扫描。</p>}
       </section>
