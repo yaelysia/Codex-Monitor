@@ -22,7 +22,7 @@ export const MAX_DESKTOP_EXTRA_ROLLOUTS = 32;
 type Row = Record<string, unknown>;
 // Exact canonical Codex Desktop originators allow SQLite to use an index when
 // available; LOWER()/TRIM() on every row would force a full table scan.
-const originators = ['codex_desktop', 'codex_work_desktop', 'Codex Desktop'];
+const originators = ['codex_desktop', 'codex_work_desktop', 'Codex Desktop', 'codex desktop'];
 function object(value: unknown): Row | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Row : null;
 }
@@ -72,7 +72,7 @@ export async function readDesktopThreadHints(root: string): Promise<DesktopThrea
       ...(columns.has('archived') ? ['archived = 0'] : []),
     ];
     const sql = 'SELECT ' + fields.join(', ') + ' FROM threads WHERE ' +
-      "originator IN (?, ?, ?)" +
+      "originator IN (?, ?, ?, ?)" +
       (archive.length ? ' AND ' + archive.join(' AND ') : '') +
       ' ORDER BY ' + updated + ' DESC, id DESC LIMIT ' + MAX_DESKTOP_THREAD_HINTS;
     const seen = new Set<string>(), result: DesktopThreadHint[] = [];

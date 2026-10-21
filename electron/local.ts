@@ -88,7 +88,8 @@ export async function scanLocal(root: string, sourceId = 'local',
     .map(thread => thread.relativePath).filter((value): value is string =>
       validPinnedRolloutPath(value) && !included.has(path.resolve(sessionsDir, ...value.split('/')))))]
     .slice(0, MAX_DESKTOP_EXTRA_ROLLOUTS);
-  const extras = await mapLimited([...new Set([...existingPins, ...dbPins])], 8, async relative => {
+  const extraCandidates = [...new Set([...existingPins, ...dbPins])];
+  const extras = await mapLimited(extraCandidates, 8, async relative => {
     const file = path.resolve(sessionsDir, ...relative.split('/'));
     if (included.has(file)) return null;
     try {
@@ -185,7 +186,8 @@ export async function scanLocal(root: string, sourceId = 'local',
     cacheHits: cacheAfter.hits - cacheBefore.hits,
     cacheMisses: cacheAfter.misses - cacheBefore.misses,
     desktopIndexed: desktop.length,
-    desktopExtraRollouts: extras.filter(x => !!x).length,
+    desktopExtraRollouts: extras.filter((row, i) =>
+      !!row && dbPins.includes(extraCandidates[i]!) && !existingPins.includes(extraCandidates[i]!)).length,
     desktopMetadataOnly,
   });
   return unique;
