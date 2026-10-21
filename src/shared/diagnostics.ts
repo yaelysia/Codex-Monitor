@@ -18,7 +18,10 @@ export interface DiagnosticReport {
     channel: 'active' | 'connecting' | 'fallback'; capturedAt: number | null;
     sessions: number; durationMs: number | null; statCalls: number | null;
     cacheHits: number | null; indexMode: 'full' | 'incremental' | null;
-    directoriesEnumerated: number | null }>;
+    directoriesEnumerated: number | null;
+    /** Anonymous local Desktop root-thread coverage counters only. */
+    desktopIndexed: number | null; desktopMetadataOnly: number | null;
+    desktopExtraRollouts: number | null }>;
   native: Array<Omit<NativeHealth, 'sourceId'> & { source: string }>;
   /** Counts only; never raw session IDs, endpoint addresses, or file paths. */
   coverage: Array<{ source: string; reason: NativeCoverageReason; count: number }>;
@@ -127,7 +130,10 @@ export class DiagnosticRecorder {
         durationMs: number(src.scanMetrics?.durationMs), statCalls: number(src.scanMetrics?.statCalls),
         cacheHits: number(src.scanMetrics?.cacheHits),
         indexMode: src.scanMetrics?.indexMode ?? null,
-        directoriesEnumerated: number(src.scanMetrics?.directoriesEnumerated) })),
+        directoriesEnumerated: number(src.scanMetrics?.directoriesEnumerated),
+        desktopIndexed: number(src.scanMetrics?.desktopIndexed),
+        desktopMetadataOnly: number(src.scanMetrics?.desktopMetadataOnly),
+        desktopExtraRollouts: number(src.scanMetrics?.desktopExtraRollouts) })),
       native: native.slice(0, 8).map(item => ({ source: this.ref(item.sourceId, 'S'),
         transport: item.transport, state: item.state, reason: item.reason,
         loaded: item.loaded, matched: item.matched, covered: item.covered,
