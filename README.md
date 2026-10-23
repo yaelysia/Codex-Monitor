@@ -21,10 +21,10 @@ No Codex modifications, hooks, remote daemon, credentials stored in the applicat
 
 ## Quick start (Windows)
 
-Requirements: Windows 10/11, Node.js 22+ for development; system OpenSSH client for remote hosts; `python3` on WSL and remote Linux for scanning. Codex session data must be accessible under the executing user's `CODEX_HOME`.
+Requirements: Windows 10/11, Node.js 22.12+ (22.x), 24.x, or 26+ for development; system OpenSSH client for remote hosts; `python3` on WSL and remote Linux for scanning. Codex session data must be accessible under the executing user's `CODEX_HOME`.
 
 ```powershell
-npm install
+npm ci
 npm run dev
 ```
 
@@ -240,7 +240,7 @@ npm run dev
 第一步验证的是真实会话是否位于**同一个已经运行的共享 App Server**：
 
 ```powershell
-npm install
+npm ci
 npm run probe:app-server -- --duration 20 --poll-ms 2000 --max-threads 15
 ```
 

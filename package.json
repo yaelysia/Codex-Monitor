@@ -4,6 +4,9 @@
   "private": true,
   "description": "Read-only Codex session monitor for Windows, WSL and SSH",
   "main": "./out/main/index.js",
+  "engines": {
+    "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "gpu:compat": "node scripts/configure-gpu.mjs compat",
@@ -37,12 +40,12 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "electron": "^38.0.0",
+    "electron": "^45.0.0",
     "electron-builder": "^26.0.0",
     "electron-vite": "^4.0.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.0",
-    "vitest": "^3.2.4"
+    "vitest": "^5.0.5"
   },
   "build": {
     "appId": "dev.yaelysia.codex-monitor",
